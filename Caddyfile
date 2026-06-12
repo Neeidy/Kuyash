@@ -1,0 +1,38 @@
+# Kuyash — Caddy config (written in Phase 1, NOT yet validated:
+# Caddy is intentionally not installed on this machine — see phase plan;
+# run `caddy validate` + a real `caddy run` during Phase 13 hardening).
+#
+# Local dev today uses PHP's built-in server instead:
+#   /opt/homebrew/opt/php@8.3/bin/php -S 127.0.0.1:8080 -t public public/index.php
+#
+# Production shape: Caddy behind Cloudflare Tunnel (no exposed ports, TLS at
+# the edge). php_fastcgi expects php-fpm from the php@8.3 Homebrew keg.
+
+# explicit http:// — otherwise Caddy auto-provisions internal-CA HTTPS on :8080,
+# which would conflict with APP_URL=http://localhost:8080
+http://localhost:8080 {
+	# run caddy from the project root so this relative path resolves
+	root * ./public
+
+	encode gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# style-src 'unsafe-inline': the base layout ships a small inline
+		# <style> block; replace with a served stylesheet + drop the
+		# exception when the real UI arrives in later phases
+		Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+		-X-Powered-By
+	}
+
+	# block dotfiles and anything that should never be served
+	@blocked path /.* /storage/* /src/* /config/* /templates/*
+	respond @blocked 404
+
+	php_fastcgi 127.0.0.1:9000
+	file_server
+}
