@@ -7,6 +7,8 @@ use Kuyash\Controllers\AuthController;
 use Kuyash\Controllers\DashboardController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
+use Kuyash\Controllers\LibraryController;
+use Kuyash\Controllers\MediaController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Response;
@@ -37,6 +39,12 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/logout', $protected([AuthController::class, 'logout']));
 
     $router->get('/dashboard', $protected([DashboardController::class, 'index']));
+
+    $router->get('/library', $protected([LibraryController::class, 'index']));
+    $router->post('/library/upload', $protected([LibraryController::class, 'upload']));
+    $router->get('/library/asset/{id}', $protected([LibraryController::class, 'show']));
+    $router->post('/library/asset/{id}/delete', $protected([LibraryController::class, 'delete']));
+    $router->get('/media/{id}', $protected([MediaController::class, 'serve']));
 
     // dev-only: verifies the central error handler (log + generic 500)
     if ($config->get('app.debug') === true) {

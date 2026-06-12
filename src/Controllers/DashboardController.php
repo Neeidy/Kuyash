@@ -38,11 +38,12 @@ final class DashboardController
 
         return Response::html($this->view->render('dashboard', [
             'title' => 'Dashboard — Kuyash',
+            'active' => 'dashboard',
             'email' => (string) $user['email'],
             'name' => (string) ($user['name'] ?? ''),
             'workspaceName' => $workspace['name'],
             'role' => $workspace['role'],
             'csrfField' => $this->csrf->field(),
-        ]));
+        ], 'layout/app'));
     }
 }

@@ -46,6 +46,17 @@ final class WorkspaceContext
     }
 
     /**
+     * Display name of the active workspace (id comes from the session, where
+     * it was placed only after a membership check at login).
+     */
+    public function currentName(): string
+    {
+        $row = $this->db->one('SELECT name FROM workspaces WHERE id = ?', [$this->id()]);
+
+        return (string) ($row['name'] ?? 'Workspace');
+    }
+
+    /**
      * The workspace a user lands in at login: their owner membership first,
      * then the oldest membership.
      *

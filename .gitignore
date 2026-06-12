@@ -36,3 +36,4 @@ build/
 # Phase 2 runtime state
 storage/sessions/
 storage/database/
+storage/assets/

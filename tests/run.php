@@ -14,16 +14,27 @@ declare(strict_types=1);
 use Kuyash\Auth\Auth;
 use Kuyash\Auth\LoginResult;
 use Kuyash\Auth\LoginThrottle;
+use Kuyash\Controllers\LibraryController;
+use Kuyash\Controllers\MediaController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Database;
 use Kuyash\Core\ErrorHandler;
+use Kuyash\Core\Flash;
 use Kuyash\Core\Response;
 use Kuyash\Core\Router;
 use Kuyash\Core\Session;
 use Kuyash\Core\View;
 use Kuyash\Database\Migrator;
+use Kuyash\Core\Format;
+use Kuyash\Library\AssetIngest;
+use Kuyash\Library\AssetRepository;
+use Kuyash\Library\AssetStorage;
+use Kuyash\Library\AssetValidator;
+use Kuyash\Library\InvalidUploadException;
+use Kuyash\Library\MediaProbe;
+use Kuyash\Library\UploadedFile;
 use Kuyash\Workspace\WorkspaceContext;
 
 $basePath = dirname(__DIR__);
@@ -246,9 +257,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies 0001_init', $applied === ['0001_init.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking row recorded', ($mdb->one('SELECT filename FROM migrations')['filename'] ?? null) === '0001_init.sql');
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 2);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -415,6 +426,361 @@ for ($i = 0; $i < 5; $i++) {
 }
 check('auth: mixed-case failures fill one bucket', $auth->attempt('case@example.com', 'CasePassword1234', '10.1.0.5') === LoginResult::Locked);
 
+/* ---------- Phase 3: synthetic ISO BMFF builders (no binary fixtures) ---------- */
+
+function bmffBox(string $type, string $payload): string
+{
+    return pack('N', 8 + strlen($payload)) . $type . $payload;
+}
+
+function bmffFullBox(string $type, int $version, string $rest): string
+{
+    return bmffBox($type, chr($version) . "\x00\x00\x00" . $rest);
+}
+
+function bmffFtyp(string $brand = 'isom'): string
+{
+    return bmffBox('ftyp', $brand . "\x00\x00\x02\x00" . 'isomiso2avc1mp41');
+}
+
+function bmffMvhdV0(int $timescale, int $duration): string
+{
+    return bmffFullBox('mvhd', 0, pack('N', 0) . pack('N', 0) . pack('N', $timescale) . pack('N', $duration));
+}
+
+function bmffMvhdV1(int $timescale, int $duration): string
+{
+    return bmffFullBox('mvhd', 1, pack('J', 0) . pack('J', 0) . pack('N', $timescale) . pack('J', $duration));
+}
+
+/** @param list<int> $matrixABCD cells a,b,c,d as 16.16 fixed (signed) */
+function bmffTkhdV0(int $width, int $height, array $matrixABCD = [0x10000, 0, 0, 0x10000]): string
+{
+    [$a, $b, $c, $d] = $matrixABCD;
+    $pre = pack('N', 0) . pack('N', 0) . pack('N', 1) . pack('N', 0) . pack('N', 0)
+        . str_repeat("\x00", 8) . pack('n', 0) . pack('n', 0) . pack('n', 0) . pack('n', 0);
+    $matrix = pack('N', $a & 0xFFFFFFFF) . pack('N', $b & 0xFFFFFFFF) . pack('N', 0)
+        . pack('N', $c & 0xFFFFFFFF) . pack('N', $d & 0xFFFFFFFF) . pack('N', 0)
+        . pack('N', 0) . pack('N', 0) . pack('N', 0x40000000);
+
+    return bmffFullBox('tkhd', 0, $pre . $matrix . pack('N', $width << 16) . pack('N', $height << 16));
+}
+
+function writeTempMedia(string $bytes, string $suffix = '.mp4'): string
+{
+    $path = tempDir('media') . '/probe' . $suffix;
+    file_put_contents($path, $bytes);
+
+    return $path;
+}
+
+function makePng(int $width, int $height): string
+{
+    $img = imagecreatetruecolor($width, $height);
+    $path = tempDir('png') . '/img.png';
+    imagepng($img, $path);
+    imagedestroy($img);
+
+    return $path;
+}
+
+echo "== MediaProbe (synthetic ISO BMFF) ==\n";
+
+$probe = new MediaProbe();
+$identity = [0x10000, 0, 0, 0x10000];
+$rot90 = [0, 0x10000, -0x10000, 0];
+
+$plain = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV0(1000, 30000) . bmffBox('trak', bmffTkhdV0(1920, 1080))));
+$r = $probe->probe($plain, 'video');
+check('probe: mvhd v0 duration', $r['duration_s'] === 30.0);
+check('probe: tkhd dimensions', $r['width'] === 1920 && $r['height'] === 1080);
+check('probe: landscape classifies 16:9', $r['aspect'] === '16:9');
+
+$v1 = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV1(90000, 90000 * 42) . bmffBox('trak', bmffTkhdV0(1080, 1920))));
+$r = $probe->probe($v1, 'video');
+check('probe: mvhd v1 (64-bit) duration', $r['duration_s'] === 42.0);
+check('probe: native portrait classifies 9:16', $r['aspect'] === '9:16');
+
+$rotated = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV0(600, 6000) . bmffBox('trak', bmffTkhdV0(1920, 1080, $rot90))));
+$r = $probe->probe($rotated, 'video');
+check('probe: 90° matrix swaps to portrait 9:16', $r['width'] === 1080 && $r['height'] === 1920 && $r['aspect'] === '9:16');
+
+$moovLast = writeTempMedia(bmffFtyp() . bmffBox('mdat', str_repeat('x', 64)) . bmffBox('moov', bmffMvhdV0(1000, 15000) . bmffBox('trak', bmffTkhdV0(1080, 1920))));
+check('probe: moov after mdat still parsed', $probe->probe($moovLast, 'video')['duration_s'] === 15.0);
+
+$largeMdat = pack('N', 1) . 'mdat' . pack('J', 16 + 32) . str_repeat('x', 32);
+$withLarge = writeTempMedia(bmffFtyp() . $largeMdat . bmffBox('moov', bmffMvhdV0(1000, 5000) . bmffBox('trak', bmffTkhdV0(1080, 1920))));
+check('probe: 64-bit largesize box skipped', $probe->probe($withLarge, 'video')['duration_s'] === 5.0);
+
+$audioFirst = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV0(1000, 9000) . bmffBox('trak', bmffTkhdV0(0, 0)) . bmffBox('trak', bmffTkhdV0(1080, 1920))));
+$r = $probe->probe($audioFirst, 'video');
+check('probe: 0×0 audio trak skipped for dims', $r['width'] === 1080 && $r['height'] === 1920);
+
+$truncated = writeTempMedia(substr(bmffFtyp() . bmffBox('moov', bmffMvhdV0(1000, 30000)), 0, 20));
+$r = $probe->probe($truncated, 'video');
+check('probe: truncated file → all null', $r['duration_s'] === null && $r['aspect'] === null);
+
+$garbage = writeTempMedia(random_bytes(256));
+$r = $probe->probe($garbage, 'video');
+check('probe: garbage → all null, no throw', $r['duration_s'] === null && $r['width'] === null);
+
+check('probe: aspect tolerance + labels', MediaProbe::classifyAspect(1082, 1920) === '9:16'
+    && MediaProbe::classifyAspect(1000, 1000) === '1:1'
+    && MediaProbe::classifyAspect(1080, 1350) === '4:5'
+    && MediaProbe::classifyAspect(1234, 777) === 'other');
+
+$photo = makePng(540, 960);
+$r = $probe->probe($photo, 'photo');
+check('probe: photo via getimagesize → 9:16, no duration', $r['duration_s'] === null && $r['width'] === 540 && $r['aspect'] === '9:16');
+
+echo "== AssetValidator ==\n";
+
+$libConfig = require $basePath . '/config/library.php';
+$validator = new AssetValidator($libConfig['allowed'], 1024 * 1024, 512 * 1024); // tiny caps for tests
+
+$upload = static fn (string $path, string $name, int $err = UPLOAD_ERR_OK): UploadedFile => new UploadedFile($name, $path, is_file($path) ? (int) filesize($path) : 0, $err);
+$rejects = static function (UploadedFile $f, string $key) use ($validator): bool {
+    try {
+        $validator->validate($f);
+
+        return false;
+    } catch (InvalidUploadException $e) {
+        return $e->messageKey === $key;
+    }
+};
+
+$tinyMp4 = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV0(1000, 1000) . bmffBox('trak', bmffTkhdV0(1080, 1920))));
+$meta = $validator->validate($upload($tinyMp4, 'clip.mp4'));
+check('validate: happy mp4', $meta === ['kind' => 'video', 'mime' => 'video/mp4', 'ext' => 'mp4']);
+
+$movFile = writeTempMedia(bmffFtyp('qt  ') . bmffBox('moov', bmffMvhdV0(1000, 1000)), '.mov');
+$meta = $validator->validate($upload($movFile, 'clip.MOV'));
+check('validate: happy mov (case-insensitive ext)', $meta['kind'] === 'video' && $meta['mime'] === 'video/quicktime');
+
+$pngFile = makePng(100, 100);
+check('validate: happy png', $validator->validate($upload($pngFile, 'pic.png'))['kind'] === 'photo');
+
+check('validate: PHP error code rejected', $rejects($upload($tinyMp4, 'clip.mp4', UPLOAD_ERR_PARTIAL), 'upload.failed'));
+check('validate: ini-size error → too_large', $rejects($upload($tinyMp4, 'clip.mp4', UPLOAD_ERR_INI_SIZE), 'upload.too_large'));
+check('validate: empty file rejected', $rejects($upload(writeTempMedia(''), 'clip.mp4'), 'upload.empty'));
+check('validate: extension not allowlisted', $rejects($upload($tinyMp4, 'clip.webm'), 'upload.extension_not_allowed'));
+check('validate: no extension rejected', $rejects($upload($tinyMp4, 'clip'), 'upload.extension_not_allowed'));
+
+$bigVideo = writeTempMedia(bmffFtyp() . str_repeat('x', 1024 * 1024 + 1));
+check('validate: oversize video rejected', $rejects($upload($bigVideo, 'big.mp4'), 'upload.video_too_large'));
+$bigPhotoPath = tempDir('big') . '/big.png';
+file_put_contents($bigPhotoPath, file_get_contents($pngFile) . str_repeat('x', 512 * 1024));
+check('validate: oversize photo rejected', $rejects($upload($bigPhotoPath, 'big.png'), 'upload.photo_too_large'));
+
+check('validate: png bytes named .mp4 → mismatch', $rejects($upload($pngFile, 'sneaky.mp4'), 'upload.content_mismatch'));
+check('validate: text bytes named .png → mismatch', $rejects($upload(writeTempMedia('just some text'), 'fake.png'), 'upload.content_mismatch'));
+
+// JPEG magic + garbage: finfo says image/jpeg (2-byte magic) but getimagesize
+// fails on the missing SOF segments → exercises the broken-image branch
+$brokenJpg = writeTempMedia("\xFF\xD8\xFF\xE0" . random_bytes(64), '.jpg');
+check('validate: jpeg magic + garbage → broken image', $rejects($upload($brokenJpg, 'broken.jpg'), 'upload.broken_image'));
+
+// audit fix: a multipart field named file[] makes every $_FILES entry an array
+$weird = UploadedFile::fromArray(['name' => ['a', 'b'], 'tmp_name' => ['x'], 'size' => [1], 'error' => [0]]);
+check('validate: non-scalar $_FILES degrades to no_file, no crash', $weird->errorCode === UPLOAD_ERR_NO_FILE && $weird->tmpPath === '');
+
+echo "== AssetStorage ==\n";
+
+$storageRoot = tempDir('assets');
+$storage = new AssetStorage($storageRoot, static fn (string $from, string $to): bool => rename($from, $to));
+
+$storedName = $storage->newStoredName('mp4');
+check('storage: name is 32-hex + validated ext', preg_match('/^[0-9a-f]{32}\.mp4$/', $storedName) === 1);
+
+$src = writeTempMedia('file-bytes');
+$storedPath = $storage->store(7, $src, $storedName);
+check('storage: stored under workspace dir', str_starts_with($storedPath, $storageRoot . '/7/') && is_file($storedPath));
+check('storage: source moved away', !is_file($src));
+check('storage: path() resolves the same file', $storage->path(7, $storedName) === $storedPath);
+check('storage: delete unlinks', $storage->delete(7, $storedName) && !is_file($storedPath));
+check('storage: delete of missing file is false, no throw', $storage->delete(7, $storedName) === false);
+check('storage: malformed stored name throws (traversal guard)', throws(static fn () => $storage->path(7, '../../evil.txt'), RuntimeException::class)
+    && throws(static fn () => $storage->path(7, 'short.mp4'), RuntimeException::class));
+
+echo "== AssetRepository (tenant isolation) ==\n";
+
+$_SESSION = [];
+$ldb = migratedDb($basePath);
+$repo = new AssetRepository($ldb);
+$lctx = new WorkspaceContext($ldb);
+[$libUserA, $libWsA] = seedUser($ldb, 'lib-a@example.com', $argonHash, 'Lib A');
+[$libUserB, $libWsB] = seedUser($ldb, 'lib-b@example.com', $argonHash, 'Lib B');
+
+$assetData = static fn (string $title, array $tags = []): array => [
+    'kind' => 'video', 'type' => 'own', 'title' => $title,
+    'original_filename' => $title . '.mp4', 'stored_name' => bin2hex(random_bytes(16)) . '.mp4',
+    'mime' => 'video/mp4', 'size_bytes' => 1234, 'sha256' => hash('sha256', $title),
+    'duration_s' => 21.5, 'width' => 1080, 'height' => 1920, 'aspect' => '9:16', 'tags' => $tags,
+];
+
+$lctx->set($libWsA);
+$assetA1 = $repo->create($lctx, $assetData('Sunset run', ['outdoor', 'b-roll']));
+$assetA2 = $repo->create($lctx, $assetData('Studio 100% take', ['studio']));
+$lctx->set($libWsB);
+$assetB1 = $repo->create($lctx, $assetData('Tenant B private'));
+
+$lctx->set($libWsA);
+check('repo: create/find round-trip with tags + derived ai flag', (static function () use ($repo, $lctx, $assetA1): bool {
+    $a = $repo->find($lctx, $assetA1);
+
+    return $a !== null && $a['tags'] === ['outdoor', 'b-roll'] && $a['ai_label_required'] === false;
+})());
+check('repo: list scoped to workspace A', count($repo->listFor($lctx)) === 2);
+check('repo: A cannot find B\'s asset', $repo->find($lctx, $assetB1) === null);
+check('repo: A deleting B\'s asset is a no-op', $repo->delete($lctx, $assetB1) === false);
+check('repo: search matches title', count($repo->listFor($lctx, 'sunset')) === 1);
+check('repo: search matches tags', count($repo->listFor($lctx, 'studio')) === 1
+    && ($repo->listFor($lctx, 'studio')[0]['title'] ?? '') === 'Studio 100% take');
+check('repo: LIKE wildcard escaped', count($repo->listFor($lctx, '100%')) === 1
+    && count($repo->listFor($lctx, '%')) === 1);
+check('repo: type filter', count($repo->listFor($lctx, null, 'own')) === 2 && $repo->listFor($lctx, null, 'ai') === []);
+$lctx->set($libWsB);
+check('repo: B still has its asset after A\'s no-op delete', $repo->find($lctx, $assetB1) !== null);
+$lctx->set($libWsA);
+check('repo: own delete works', $repo->delete($lctx, $assetA2) === true && $repo->find($lctx, $assetA2) === null);
+check('repo: bad kind rejected by CHECK', throws(static fn () => $ldb->run(
+    "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes, sha256, tags, status, created_at, updated_at)
+     VALUES (?, 'gif', 'own', 't', 'o', 's1.gif', 'image/gif', 1, 'h', '[]', 'ready', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    [$libWsA],
+), PDOException::class));
+
+echo "== Response::file + Range math ==\n";
+
+$streamPath = tempDir('stream') . '/data.bin';
+file_put_contents($streamPath, 'HelloWorldStream');
+
+$capture = static function (Response $r): string {
+    ob_start();
+    $r->send();
+
+    return (string) ob_get_clean();
+};
+
+check('file: streams full content', $capture(Response::file($streamPath, 200, [])) === 'HelloWorldStream');
+check('file: offset+length slice', $capture(Response::file($streamPath, 206, [], 5, 5)) === 'World');
+
+$_SERVER['REQUEST_METHOD'] = 'HEAD';
+check('file: HEAD skips the body server-side', $capture(Response::file($streamPath, 200, [])) === '');
+unset($_SERVER['REQUEST_METHOD']);
+
+check('range: no header → full', MediaController::parseRange('', 1000) === null);
+check('range: start-end', MediaController::parseRange('bytes=0-499', 1000) === [0, 499]);
+check('range: open end', MediaController::parseRange('bytes=500-', 1000) === [500, 999]);
+check('range: suffix', MediaController::parseRange('bytes=-200', 1000) === [800, 999]);
+check('range: end clamped to size', MediaController::parseRange('bytes=900-2000', 1000) === [900, 999]);
+check('range: start beyond size → invalid (416)', MediaController::parseRange('bytes=1000-', 1000) === 'invalid');
+check('range: inverted → invalid', MediaController::parseRange('bytes=600-500', 1000) === 'invalid');
+check('range: multi-range → full 200', MediaController::parseRange('bytes=0-1,5-9', 1000) === null);
+check('range: malformed → full 200', MediaController::parseRange('bytes=abc', 1000) === null
+    && MediaController::parseRange('items=0-1', 1000) === null);
+
+echo "== Flash ==\n";
+
+$_SESSION = [];
+$flash = new Flash();
+$flash->add('success', 'upload.success');
+$flash->add('error', 'upload.empty');
+$pulled = $flash->pull();
+check('flash: queued messages pulled in order', $pulled === [
+    ['type' => 'success', 'key' => 'upload.success'],
+    ['type' => 'error', 'key' => 'upload.empty'],
+]);
+check('flash: pull clears the queue', $flash->pull() === []);
+
+echo "== Format helper ==\n";
+
+check('format: duration', Format::duration(null) === 'unknown' && Format::duration(21.5) === '0:22'
+    && Format::duration(21.5, true) === '0:22 (21.5s)' && Format::duration(95.0) === '1:35');
+check('format: bytes', Format::bytes(209715200) === '200.0 MB' && Format::bytes(500) === '1 KB');
+
+echo "== Library + Media controllers (unit) ==\n";
+
+$_SESSION = [];
+$_GET = [];
+$cdb = migratedDb($basePath);
+$crepo = new AssetRepository($cdb);
+$cctx = new WorkspaceContext($cdb);
+[$cUser, $cWs] = seedUser($cdb, 'ctl@example.com', $argonHash, 'Ctl WS');
+[, $cWsOther] = seedUser($cdb, 'ctl2@example.com', $argonHash, 'Other WS');
+$cstorageRoot = tempDir('cassets');
+$cstorage = new AssetStorage($cstorageRoot, static fn (string $f, string $t): bool => rename($f, $t));
+$cingest = new AssetIngest($validator, $probe, $cstorage, $crepo, 10, 32);
+$libCtl = new LibraryController(
+    $view, $crepo, $cingest, $cstorage, $cctx, new Csrf(), new Flash(), $libConfig,
+);
+$mediaCtl = new MediaController($crepo, $cstorage, $cctx);
+
+$cctx->set($cWs);
+check('library ctl: empty state renders', str_contains($libCtl->index()->body(), 'The library is empty'));
+check('library ctl: upload copy derived from config', str_contains($libCtl->index()->body(), 'MP4/MOV video (≤200.0 MB)'));
+check('library ctl: non-numeric id → 404', $libCtl->show(['id' => 'abc'])->status() === 404);
+
+check('ingest: tags normalized, deduped, capped', $cingest->parseTags('  Alpha, beta ,alpha,,C  ') === ['alpha', 'beta', 'c']);
+
+$ingestSrc = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV0(1000, 30000) . bmffBox('trak', bmffTkhdV0(1080, 1920))));
+$ingestId = $cingest->ingest($cctx, new UploadedFile('My Clip.mp4', $ingestSrc, (int) filesize($ingestSrc), UPLOAD_ERR_OK), 'own', '  ', 'one,two');
+$ingestRow = $crepo->find($cctx, $ingestId);
+check('ingest: full pipeline (validate→probe→hash→store→create)', $ingestRow !== null
+    && $ingestRow['title'] === 'My Clip'             // title defaults from filename
+    && $ingestRow['aspect'] === '9:16'               // probe ran
+    && $ingestRow['sha256'] === hash('sha256', (string) file_get_contents($cstorage->path($cWs, (string) $ingestRow['stored_name'])))
+    && $ingestRow['tags'] === ['one', 'two']);
+
+$orphanSrc = writeTempMedia(bmffFtyp() . bmffBox('moov', bmffMvhdV0(1000, 1000)));
+$filesBefore = count(glob($cstorageRoot . '/' . $cWs . '/*') ?: []);
+check('ingest: DB failure removes stored file (no orphan)', throws(
+    static fn () => $cingest->ingest($cctx, new UploadedFile('x.mp4', $orphanSrc, (int) filesize($orphanSrc), UPLOAD_ERR_OK), 'bogus-type', '', ''),
+    PDOException::class,
+) && count(glob($cstorageRoot . '/' . $cWs . '/*') ?: []) === $filesBefore);
+
+$cleanupId = $ingestId; // remove the happy-path asset so later grid checks see only "Serve me"
+$libCtl->delete(['id' => (string) $cleanupId]);
+
+$mediaBytes = 'MEDIA-BYTES-0123456789';
+$mediaSrc = writeTempMedia($mediaBytes, '.bin');
+$mediaName = $cstorage->newStoredName('mp4');
+$cstorage->store($cWs, $mediaSrc, $mediaName);
+$mediaId = $crepo->create($cctx, [
+    'kind' => 'video', 'type' => 'face', 'title' => 'Serve me',
+    'original_filename' => 'serve.mp4', 'stored_name' => $mediaName, 'mime' => 'video/mp4',
+    'size_bytes' => strlen($mediaBytes), 'sha256' => hash('sha256', $mediaBytes),
+    'duration_s' => null, 'width' => null, 'height' => null, 'aspect' => null, 'tags' => [],
+]);
+
+unset($_SERVER['HTTP_RANGE']);
+$full = $mediaCtl->serve(['id' => (string) $mediaId]);
+check('media ctl: 200 with type from DB + nosniff', $full->status() === 200
+    && $full->headers()['Content-Type'] === 'video/mp4'
+    && $full->headers()['X-Content-Type-Options'] === 'nosniff'
+    && $full->headers()['Content-Length'] === (string) strlen($mediaBytes));
+check('media ctl: full body streamed', $capture($full) === $mediaBytes);
+
+$_SERVER['HTTP_RANGE'] = 'bytes=6-11';
+$partial = $mediaCtl->serve(['id' => (string) $mediaId]);
+check('media ctl: 206 partial with Content-Range', $partial->status() === 206
+    && $partial->headers()['Content-Range'] === 'bytes 6-11/' . strlen($mediaBytes)
+    && $capture($partial) === substr($mediaBytes, 6, 6));
+
+$_SERVER['HTTP_RANGE'] = 'bytes=999-';
+check('media ctl: unsatisfiable range → 416', $mediaCtl->serve(['id' => (string) $mediaId])->status() === 416);
+unset($_SERVER['HTTP_RANGE']);
+
+$cctx->set($cWsOther);
+check('media ctl: cross-tenant id → 404', $mediaCtl->serve(['id' => (string) $mediaId])->status() === 404);
+$cctx->set($cWs);
+
+check('library ctl: grid renders asset card', str_contains($libCtl->index()->body(), 'Serve me'));
+check('library ctl: detail page renders', str_contains($libCtl->show(['id' => (string) $mediaId])->body(), 'SHA-256'));
+$deleteResponse = $libCtl->delete(['id' => (string) $mediaId]);
+check('library ctl: delete removes row + file', $deleteResponse->status() === 303
+    && $crepo->find($cctx, $mediaId) === null
+    && !is_file($cstorage->path($cWs, $mediaName)));
+
 echo "== Bootstrap (integration) ==\n";
 
 $_SESSION = [];
@@ -441,6 +807,12 @@ $healthResponse = $appRouter->dispatch('GET', '/health');
 check('bootstrap: /health minimal public payload', $healthResponse->status() === 200 && $healthResponse->body() === '{"status":"ok"}');
 check('bootstrap: /health content-type json', str_contains($healthResponse->headers()['Content-Type'] ?? '', 'application/json'));
 check('bootstrap: HEAD /health falls back to GET', $appRouter->dispatch('HEAD', '/health')->status() === 200);
+
+$lib = $appRouter->dispatch('GET', '/library');
+check('bootstrap: /library guarded → redirect /login', $lib->status() === 302 && ($lib->headers()['Location'] ?? '') === '/login');
+check('bootstrap: /media/{id} guarded → redirect /login', $appRouter->dispatch('GET', '/media/1')->status() === 302);
+$uploadGet = $appRouter->dispatch('GET', '/library/upload');
+check('bootstrap: GET /library/upload is 405 Allow POST', $uploadGet->status() === 405 && ($uploadGet->headers()['Allow'] ?? '') === 'POST');
 
 echo "\n" . $pass . ' PASS, ' . count($failures) . " FAIL\n";
 
