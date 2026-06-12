@@ -157,6 +157,8 @@
 .chip--ai { color: var(--ai); border-color: rgba(232, 121, 249, 0.25); background: var(--ai-dim); }
 .chip--neutral { color: var(--text-2); }
 .chip--faint { color: var(--text-3); border-style: dashed; }
+/* approval records hold ~60 chars — must wrap instead of forcing 375px overflow */
+.chip--record { white-space: normal; line-height: 1.5; max-width: 100%; }
 
 .tag {
   display: inline-block; padding: 1px 7px; border-radius: var(--r-ctl);
@@ -167,6 +169,10 @@
 
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--text-3); flex: none; }
 .dot--ok { background: var(--ok); }
+.dot--info { background: var(--info); }
+.dot--warn { background: var(--warn); }
+.dot--err { background: var(--err); }
+.dot--neutral { background: var(--text-3); }
 
 /* ---------- cards ---------- */
 .card {
@@ -339,6 +345,141 @@
   .asset-grid > * { animation: none; }
 }
 
+/* ---------- workflows (Phase 4; ported from demo screens.css §5/§6) ---------- */
+.wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: var(--gap-grid); }
+.wf-card {
+  display: flex; flex-direction: column; gap: var(--s2);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: var(--s4);
+  transition: transform var(--dur-quick) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+.wf-card:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+.wf-card__top { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); }
+.wf-card__top h3 { font-size: 14px; }
+.wf-card__desc { color: var(--text-2); font-size: 12.5px; line-height: 1.55; flex: 1; }
+.wf-card__meta { display: flex; gap: var(--s1); flex-wrap: wrap; }
+
+.wf-canvas {
+  background:
+    radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 20px 20px,
+    var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: var(--s5) var(--s4); overflow-x: auto; min-width: 0;
+}
+.node-track { display: flex; align-items: stretch; min-width: max-content; }
+.node-wrap { display: flex; align-items: center; }
+.node-wrap:last-child .node-connector { display: none; }
+.node {
+  display: flex; flex-direction: column; gap: var(--s1); text-align: left;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: var(--r-ctl); padding: var(--s2) var(--s3);
+  width: 132px; min-height: 64px; position: relative;
+}
+.node--locked { background: var(--surface-3); }
+.node--pending { opacity: 0.55; }
+.node__name { font-weight: 500; font-size: 10.5px; letter-spacing: 0.04em; display: flex; align-items: center; gap: 5px; color: var(--text); }
+.node__lock svg { width: 10px; height: 10px; color: var(--text-2); }
+.node__desc { color: var(--text-3); font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.node__status { width: 7px; height: 7px; border-radius: 50%; background: var(--surface-3); position: absolute; top: 8px; right: 8px; }
+.node__status--done { background: var(--ok); }
+.node__status--running { background: var(--info); }
+.node__status--awaiting { background: var(--warn); }
+.node__status--failed { background: var(--err); }
+.node__status--cancelled { background: var(--text-3); }
+
+.node-connector { width: 22px; height: 1px; background: var(--border-strong); position: relative; flex: none; }
+.node-connector::after {
+  content: ""; position: absolute; right: 0; top: -2.5px;
+  border: 3px solid transparent; border-left-color: var(--border-strong);
+}
+
+/* ---------- queue (Phase 4; ported from demo screens.css §6) ---------- */
+.main > .card + .card { margin-top: var(--s3); }
+
+.job-list { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.job-row {
+  display: flex; align-items: center; gap: var(--s3);
+  padding: var(--s2) 0; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.job-row:last-child { border-bottom: 0; }
+.job-row__main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 180px; }
+.job-row__type { font-weight: 500; font-size: 12px; }
+.job-row__entity { color: var(--text-3); font-size: 11.5px; }
+.job-row__error { color: var(--err); font-size: 11.5px; margin-top: 2px; overflow-wrap: anywhere; }
+
+.approve-list { display: flex; flex-direction: column; gap: var(--s2); }
+.approve-card {
+  display: flex; gap: var(--s3); align-items: center;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-ctl);
+  padding: var(--s3); flex-wrap: wrap;
+}
+.approve-card__main { flex: 1; min-width: 220px; }
+.approve-card__main h3 { font-size: 13px; }
+.approve-card__meta { display: flex; gap: var(--s1); flex-wrap: wrap; margin-top: var(--s1); align-items: center; }
+.approve-card__note { color: var(--text-2); font-size: 11.5px; margin-top: var(--s2); line-height: 1.5; }
+.approve-card__quote {
+  font-size: 12.5px; color: var(--text-2); line-height: 1.55;
+  border-left: 2px solid var(--border-strong); padding-left: var(--s3); margin: var(--s2) 0 0;
+}
+.approve-card__actions { display: flex; gap: var(--s2); flex: none; flex-wrap: wrap; }
+
+/* ---------- logs terminal (Phase 4; ported from demo motion.css §9) ---------- */
+.term {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--term-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+.term__head {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.term__body { padding: var(--s2) var(--s3); overflow-y: auto; }
+.term--page .term__body { min-height: 300px; max-height: calc(100vh - 320px); }
+.term__line { display: flex; gap: var(--s3); align-items: baseline; padding: 1px 0; min-width: 0; }
+.term__time { color: var(--text-3); flex: none; }
+.term__lvl { flex: none; width: 4.5ch; text-transform: uppercase; font-weight: 500; }
+.term__lvl--info { color: var(--info); }
+.term__lvl--warn { color: var(--warn); }
+.term__lvl--error { color: var(--err); }
+.term__msg { color: var(--text-2); overflow-wrap: anywhere; }
+/* info tone, NOT --ai: fuchsia stays reserved for AI-content labels (style guide) */
+.term__kind { color: var(--info); }
+.term__link { color: var(--text-3); text-decoration: underline; text-underline-offset: 2px; }
+.term__link:hover { color: var(--accent); }
+
+.chip-row--filters { margin-bottom: var(--s4); }
+
+/* ---------- run timeline (Phase 4; ported from demo components.css) ---------- */
+.tl { display: flex; flex-direction: column; }
+.tl__step {
+  position: relative; display: flex; align-items: baseline; gap: var(--s3);
+  padding: 5px 0 5px var(--s5);
+}
+.tl__step::before {
+  content: ""; position: absolute; left: 5px; top: 0; bottom: 0;
+  width: 1px; background: var(--border);
+}
+.tl__step:first-child::before { top: 50%; }
+.tl__step:last-child::before { bottom: 50%; }
+.tl__dot {
+  position: absolute; left: 1.5px; top: calc(50% - 4px);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--surface-3); border: 1px solid var(--border-strong);
+}
+.tl__dot--info { background: var(--text-3); border-color: var(--text-3); }
+.tl__dot--warn { background: var(--warn); border-color: var(--warn); }
+.tl__dot--error { background: var(--err); border-color: var(--err); }
+.tl__label { font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.tl__label--compliance { color: var(--info); }
+.tl__time { margin-left: auto; font-size: 11px; color: var(--text-3); flex: none; }
+
 /* ---------- responsive frame ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; grid-template-areas: "topbar" "main"; }
@@ -352,11 +493,17 @@
   .topbar .topbar__menu { display: inline-flex; }
   .main { padding: var(--s4) var(--s4) var(--s7); }
   .show-grid { grid-template-columns: 1fr; }
+  /* node graph mobile fallback: stacked cards (frontend rule) */
+  .node-track { flex-direction: column; min-width: 0; gap: var(--s2); }
+  .node-wrap { flex-direction: column; align-items: stretch; }
+  .node { width: 100%; min-height: 0; }
+  .node-connector { display: none; }
 }
 
 @media (max-width: 480px) {
   h1 { font-size: 18px; }
   .main { padding: var(--s3) var(--s3) var(--s6); }
   .topbar { padding: 0 var(--s3); gap: var(--s2); }
-  .mode-chip span { display: none; }
+  /* hide the whole chip — hiding only its inner spans left an empty pill */
+  .mode-chip { display: none; }
 }

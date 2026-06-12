@@ -86,6 +86,22 @@ final class AssetRepository
         return array_map(self::shape(...), $this->db->all($sql, $params));
     }
 
+    /**
+     * Ready video assets — what a distribution run may select (Phase 4
+     * run trigger). Newest first.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function readyVideosFor(WorkspaceContext $ctx): array
+    {
+        return array_map(self::shape(...), $this->db->all(
+            "SELECT * FROM assets
+             WHERE workspace_id = ? AND kind = 'video' AND status = 'ready'
+             ORDER BY created_at DESC, id DESC",
+            [$ctx->id()],
+        ));
+    }
+
     /** @return array<string, mixed>|null null = not found OR other tenant's asset */
     public function find(WorkspaceContext $ctx, int $id): ?array
     {

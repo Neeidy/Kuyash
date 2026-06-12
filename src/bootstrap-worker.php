@@ -3,10 +3,9 @@
 declare(strict_types=1);
 
 /**
- * Web bootstrap: autoloader + env + core/web bindings.
- * Returns the configured Container — the contract public/index.php, bin/
- * scripts and tests rely on. The worker process uses bootstrap-worker.php
- * (core + worker bindings, no session machinery).
+ * Worker bootstrap: autoloader + env + core/worker bindings.
+ * Returns the configured Container. No Session, Csrf, View or
+ * WorkspaceContext is bound here — see src/bindings/worker.php.
  */
 
 use Kuyash\Core\Config;
@@ -30,6 +29,6 @@ Config::loadEnvFile($basePath . '/.env');
 
 $container = new Container();
 (require __DIR__ . '/bindings/core.php')($container, $basePath);
-(require __DIR__ . '/bindings/web.php')($container, $basePath);
+(require __DIR__ . '/bindings/worker.php')($container, $basePath);
 
 return $container;

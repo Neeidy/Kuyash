@@ -16,7 +16,8 @@ use Kuyash\Core\View;
       <span class="mono">(<?= View::e($email) ?>)</span></p>
   </div>
   <div class="screen-head__actions">
-    <a class="btn btn--primary" href="/library">Open Library</a>
+    <a class="btn btn--ghost" href="/workflows">Workflows</a>
+    <a class="btn btn--primary" href="/queue">Open Queue</a>
   </div>
 </div>
 
@@ -27,7 +28,8 @@ use Kuyash\Core\View;
       <div class="kv"><dt>Workspace</dt><dd><?= View::e($workspaceName) ?></dd></div>
       <div class="kv"><dt>Your role</dt><dd><?= View::e($role) ?></dd></div>
     </dl>
-    <p class="note">Nothing else here yet — workflows, render queue and analytics
-    arrive with Phases 4–7. The Content Library is live in the sidebar.</p>
+    <p class="note">Library, Workflows, Queue and Logs are live in the sidebar — start a run
+    from a <a href="/workflows">workflow</a> and approve it in the <a href="/queue">queue</a>.
+    Analytics and KPI cards arrive with later phases.</p>
   </div>
 </div>

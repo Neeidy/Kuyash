@@ -8,7 +8,10 @@ use Kuyash\Controllers\DashboardController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
 use Kuyash\Controllers\LibraryController;
+use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
+use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Response;
@@ -45,6 +48,18 @@ return static function (Router $router, Config $config, Container $container): v
     $router->get('/library/asset/{id}', $protected([LibraryController::class, 'show']));
     $router->post('/library/asset/{id}/delete', $protected([LibraryController::class, 'delete']));
     $router->get('/media/{id}', $protected([MediaController::class, 'serve']));
+
+    $router->get('/workflows', $protected([WorkflowController::class, 'index']));
+    $router->get('/workflows/{id}', $protected([WorkflowController::class, 'show']));
+    $router->post('/workflows/{id}/run', $protected([WorkflowController::class, 'run']));
+    $router->get('/runs/{id}', $protected([WorkflowController::class, 'showRun']));
+
+    $router->get('/queue', $protected([QueueController::class, 'index']));
+    $router->post('/queue/job/{id}/approve', $protected([QueueController::class, 'approve']));
+    $router->post('/queue/job/{id}/reject', $protected([QueueController::class, 'reject']));
+    $router->post('/queue/job/{id}/retry', $protected([QueueController::class, 'retry']));
+
+    $router->get('/logs', $protected([LogsController::class, 'index']));
 
     // dev-only: verifies the central error handler (log + generic 500)
     if ($config->get('app.debug') === true) {

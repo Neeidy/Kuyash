@@ -12,13 +12,18 @@ use Throwable;
  * user only ever sees a generic 500 page — unless app.debug is true, in which
  * case the message and trace are shown (dev only; .env controls the flag).
  * No silent catches anywhere else: let errors bubble up to this handler.
+ *
+ * CLI mode (worker processes): plain text to STDERR + the same log file —
+ * no HTML, no View. The flag is explicit, never sniffed from PHP_SAPI,
+ * because tests exercise the web path under the cli SAPI.
  */
 final class ErrorHandler
 {
     public function __construct(
         private readonly Config $config,
-        private readonly View $view,
+        private readonly ?View $view,
         private readonly string $logDir,
+        private readonly bool $cliMode = false,
     ) {
     }
 
@@ -27,7 +32,7 @@ final class ErrorHandler
     {
         self::hardenTraceLogging();
         error_reporting(E_ALL);
-        ini_set('display_errors', $this->isDebug() ? '1' : '0');
+        ini_set('display_errors', $this->isDebug() && !$this->cliMode ? '1' : '0');
         ini_set('log_errors', '1');
 
         set_error_handler(function (int $severity, string $message, string $file, int $line): bool {
@@ -38,21 +43,59 @@ final class ErrorHandler
         });
 
         set_exception_handler(function (Throwable $e): void {
+            if ($this->cliMode) {
+                $this->reportCli($e);
+                exit(1);
+            }
             $this->renderException($e)->send();
         });
 
         register_shutdown_function(function (): void {
             $error = error_get_last();
             if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
-                $this->renderException(new ErrorException(
+                $fatal = new ErrorException(
                     $error['message'],
                     0,
                     $error['type'],
                     $error['file'],
                     $error['line'],
-                ))->send();
+                );
+                if ($this->cliMode) {
+                    $this->reportCli($fatal);
+
+                    return;
+                }
+                $this->renderException($fatal)->send();
             }
         });
+    }
+
+    /**
+     * CLI path: log the throwable, write a one-line plain-text summary to
+     * STDERR (full trace stays in the log file only). Returns the line so
+     * tests can assert the format; tests may also pass their own stream.
+     *
+     * @param resource|null $stream defaults to STDERR
+     */
+    public function reportCli(Throwable $e, $stream = null): string
+    {
+        $this->log($e);
+
+        $line = sprintf(
+            '[%s] %s: %s in %s:%d',
+            date('Y-m-d H:i:s'),
+            $e::class,
+            $e->getMessage(),
+            $e->getFile(),
+            $e->getLine(),
+        );
+
+        $stream ??= defined('STDERR') ? STDERR : null;
+        if (is_resource($stream)) {
+            fwrite($stream, $line . PHP_EOL);
+        }
+
+        return $line;
     }
 
     /**
@@ -82,9 +125,13 @@ final class ErrorHandler
         }
 
         try {
+            if ($this->view === null) {
+                throw new \RuntimeException('No view bound (CLI container)');
+            }
+
             return Response::html($this->view->render('errors/500', ['title' => '500 — Server Error']), 500);
         } catch (Throwable) {
-            // last resort: template rendering itself failed
+            // last resort: template rendering itself failed (or no view exists)
             return Response::html('<h1>Server Error</h1><p>Something went wrong. The error has been logged.</p>', 500);
         }
     }

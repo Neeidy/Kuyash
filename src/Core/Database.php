@@ -49,6 +49,9 @@ final class Database
         $pdo->exec('PRAGMA busy_timeout=5000');
         $pdo->exec('PRAGMA foreign_keys=ON');
         $pdo->exec('PRAGMA synchronous=NORMAL');
+        // without this, INSERT OR REPLACE skips BEFORE DELETE triggers and
+        // could silently rewrite "append-only" audit rows (security audit)
+        $pdo->exec('PRAGMA recursive_triggers=ON');
 
         return $this->pdo = $pdo;
     }

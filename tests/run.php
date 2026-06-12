@@ -235,6 +235,7 @@ $db = new Database(':memory:');
 
 check('db: foreign_keys pragma ON', (int) ($db->one('PRAGMA foreign_keys')['foreign_keys'] ?? 0) === 1);
 check('db: busy_timeout 5000', (int) ($db->one('PRAGMA busy_timeout')['timeout'] ?? 0) === 5000);
+check('db: recursive_triggers ON (REPLACE cannot skip triggers)', (int) ($db->one('PRAGMA recursive_triggers')['recursive_triggers'] ?? 0) === 1);
 
 $fileDb = new Database(tempDir('db') . '/t.sqlite');
 check('db: WAL journal mode on file DB', strtolower((string) ($fileDb->one('PRAGMA journal_mode')['journal_mode'] ?? '')) === 'wal');
@@ -257,9 +258,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 2);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 3);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -813,6 +814,912 @@ check('bootstrap: /library guarded → redirect /login', $lib->status() === 302 
 check('bootstrap: /media/{id} guarded → redirect /login', $appRouter->dispatch('GET', '/media/1')->status() === 302);
 $uploadGet = $appRouter->dispatch('GET', '/library/upload');
 check('bootstrap: GET /library/upload is 405 Allow POST', $uploadGet->status() === 405 && ($uploadGet->headers()['Allow'] ?? '') === 'POST');
+
+check('bootstrap: /workflows guarded → redirect /login', $appRouter->dispatch('GET', '/workflows')->status() === 302);
+check('bootstrap: /queue guarded → redirect /login', $appRouter->dispatch('GET', '/queue')->status() === 302);
+check('bootstrap: /logs guarded → redirect /login', $appRouter->dispatch('GET', '/logs')->status() === 302);
+$approveGet = $appRouter->dispatch('GET', '/queue/job/1/approve');
+check('bootstrap: GET approve route is 405 Allow POST', $approveGet->status() === 405 && ($approveGet->headers()['Allow'] ?? '') === 'POST');
+
+$workerApp = require $basePath . '/src/bootstrap-worker.php';
+check('bootstrap-worker: returns container', $workerApp instanceof Container);
+check('bootstrap-worker: Worker + Maintenance resolvable', $workerApp->get(Kuyash\Workflow\Worker::class) instanceof Kuyash\Workflow\Worker
+    && $workerApp->get(Kuyash\Workflow\Maintenance::class) instanceof Kuyash\Workflow\Maintenance);
+check('bootstrap-worker: NO session/csrf/view/workspace bindings', !$workerApp->has(Session::class)
+    && !$workerApp->has(Csrf::class) && !$workerApp->has(View::class) && !$workerApp->has(WorkspaceContext::class));
+check('bootstrap-worker: ErrorHandler resolvable (CLI mode)', $workerApp->get(ErrorHandler::class) instanceof ErrorHandler);
+
+/* ================== Phase 4: Workflow Engine ================== */
+
+use Kuyash\Controllers\LogsController;
+use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\WorkflowController;
+use Kuyash\Core\Messages;
+use Kuyash\Workflow\Decision;
+use Kuyash\Workflow\Engine;
+use Kuyash\Workflow\EventLog;
+use Kuyash\Workflow\ExecutorRegistry;
+use Kuyash\Workflow\JobExecutor;
+use Kuyash\Workflow\JobRepository;
+use Kuyash\Workflow\JobResult;
+use Kuyash\Workflow\Maintenance;
+use Kuyash\Workflow\MockExecutor;
+use Kuyash\Workflow\Nodes;
+use Kuyash\Workflow\RunRepository;
+use Kuyash\Workflow\Watchdog;
+use Kuyash\Workflow\Worker;
+use Kuyash\Workflow\WorkflowException;
+use Kuyash\Workflow\WorkflowRepository;
+use Kuyash\Workflow\WorkflowValidator;
+
+/** Executor that always throws — exercises retry/backoff/dead-letter. */
+final class AlwaysThrowsExecutor implements JobExecutor
+{
+    public function execute(array $job, array $prior): JobResult
+    {
+        throw new RuntimeException('synthetic executor failure');
+    }
+}
+
+/** Executor that records claim order. */
+final class RecordingExecutor implements JobExecutor
+{
+    /** @var list<int> */
+    public array $seen = [];
+
+    public function execute(array $job, array $prior): JobResult
+    {
+        $this->seen[] = (int) $job['id'];
+
+        return JobResult::ready(['ok' => true], 'mock');
+    }
+}
+
+function seedReadyVideo(Database $db, int $wsId, string $title = 'Distribute me'): int
+{
+    $now = gmdate(NOW_ISO);
+    $db->run(
+        "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name,
+            mime, size_bytes, sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at)
+         VALUES (?, 'video', 'own', ?, 'clip.mp4', ?, 'video/mp4', 100, 'h', 21.5, 1080, 1920,
+            '9:16', '[]', 'ready', ?, ?)",
+        [$wsId, $title, bin2hex(random_bytes(16)) . '.mp4', $now, $now],
+    );
+
+    return $db->lastInsertId();
+}
+
+/** Engine + Worker wired to a shared, controllable clock string. */
+function makeRig(Database $db, JobExecutor $executor, string &$now): array
+{
+    $clock = static function () use (&$now): string {
+        return $now;
+    };
+    $events = new EventLog($db);
+    $engine = new Engine($db, $events, new WorkflowValidator(), $clock);
+    $registry = new ExecutorRegistry();
+    $registry->registerForAll($executor);
+    $watchdog = new Watchdog($db, $events);
+    $worker = new Worker($db, $engine, $registry, $events, $watchdog, 'test-worker:1:abcd', $clock);
+
+    return [$engine, $worker, $events, $watchdog];
+}
+
+const FULL_TYPES = ['trend_fetch', 'idea_generation', 'script_draft', 'tts', 'asset_fetch',
+    'assembly', 'caption_generation', 'hashtag_generation', 'music_note', 'preview',
+    'compliance_check', 'render_review', 'publish'];
+const DIST_TYPES = ['asset_fetch', 'caption_generation', 'hashtag_generation', 'music_note',
+    'preview', 'compliance_check', 'render_review', 'publish'];
+
+echo "== 0003 schema: tables + CHECKs ==\n";
+
+$p4db = migratedDb($basePath);
+[$p4UserA, $p4WsA] = seedUser($p4db, 'wf-a@example.com', $argonHash, 'WF Tenant A');
+[$p4UserB, $p4WsB] = seedUser($p4db, 'wf-b@example.com', $argonHash, 'WF Tenant B');
+$nowIso = gmdate(NOW_ISO);
+
+check('schema: all 5 workflow tables exist', count($p4db->all(
+    "SELECT name FROM sqlite_master WHERE type = 'table'
+     AND name IN ('workflows', 'runs', 'jobs', 'events', 'approvals')"
+)) === 5);
+check('schema: bad workflow template rejected', throws(static fn () => $p4db->run(
+    "INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+     VALUES (?, 'X', 'fancy', '[]', ?, ?)",
+    [$p4WsA, $nowIso, $nowIso],
+), PDOException::class));
+check('schema: bad run entity_type + status rejected', (static function () use ($p4db, $p4WsA, $p4UserA, $nowIso): bool {
+    $p4db->run(
+        "INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+         VALUES (?, 'T', 'full', '[]', ?, ?)",
+        [$p4WsA, $nowIso, $nowIso],
+    );
+    $wfId = $p4db->lastInsertId();
+    $badEntity = throws(static fn () => $p4db->run(
+        "INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, created_by, created_at, updated_at)
+         VALUES (?, ?, 'spaceship', '[]', ?, ?, ?)",
+        [$p4WsA, $wfId, $p4UserA, $nowIso, $nowIso],
+    ), PDOException::class);
+    $badStatus = throws(static fn () => $p4db->run(
+        "INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at)
+         VALUES (?, ?, 'trend', '[]', 'paused', ?, ?, ?)",
+        [$p4WsA, $wfId, $p4UserA, $nowIso, $nowIso],
+    ), PDOException::class);
+    $p4db->run('DELETE FROM workflows WHERE id = ?', [$wfId]);
+
+    return $badEntity && $badStatus;
+})());
+check('schema: bad event level/kind rejected', throws(static fn () => $p4db->run(
+    "INSERT INTO events (workspace_id, level, kind, key, created_at) VALUES (?, 'debug', 'transition', 'x', ?)",
+    [$p4WsA, $nowIso],
+), PDOException::class) && throws(static fn () => $p4db->run(
+    "INSERT INTO events (workspace_id, level, kind, key, created_at) VALUES (?, 'info', 'gossip', 'x', ?)",
+    [$p4WsA, $nowIso],
+), PDOException::class));
+
+echo "== 0003 schema: events append-only triggers ==\n";
+
+$p4db->run(
+    "INSERT INTO events (workspace_id, level, kind, key, params_json, created_at) VALUES (?, 'info', 'transition', 'probe', '{}', ?)",
+    [$p4WsA, $nowIso],
+);
+$probeEventId = $p4db->lastInsertId();
+
+check('events: UPDATE rejected at SQL level', throws(static fn () => $p4db->run(
+    "UPDATE events SET key = 'tampered' WHERE id = ?",
+    [$probeEventId],
+), PDOException::class));
+check('events: DELETE rejected at SQL level', throws(static fn () => $p4db->run(
+    'DELETE FROM events WHERE id = ?',
+    [$probeEventId],
+), PDOException::class));
+check('events: row untouched after rejected tampering', ($p4db->one(
+    'SELECT key FROM events WHERE id = ?',
+    [$probeEventId],
+)['key'] ?? '') === 'probe');
+// security audit: with recursive_triggers OFF, REPLACE would skip the BEFORE
+// DELETE trigger and silently rewrite the audit row — must be rejected
+check('events: INSERT OR REPLACE cannot rewrite audit rows', throws(static fn () => $p4db->run(
+    "INSERT OR REPLACE INTO events (id, workspace_id, level, kind, key, params_json, created_at)
+     VALUES (?, ?, 'info', 'transition', 'replaced', '{}', ?)",
+    [$probeEventId, $p4WsA, $nowIso],
+), PDOException::class) && ($p4db->one('SELECT key FROM events WHERE id = ?', [$probeEventId])['key'] ?? '') === 'probe');
+
+echo "== Nodes registry + chain expansion ==\n";
+
+check('nodes: full chain is 13 jobs in canonical order', array_column(Nodes::expand(Nodes::FULL), 'type') === FULL_TYPES);
+check('nodes: distribution chain is 8 jobs', array_column(Nodes::expand(Nodes::DISTRIBUTION), 'type') === DIST_TYPES);
+check('nodes: PUBLISH expands to render_review + publish', Nodes::NODE_JOBS['PUBLISH'] === ['render_review', 'publish']);
+check('nodes: steps are 1-based and contiguous', array_column(Nodes::expand(Nodes::FULL), 'step') === range(1, 13));
+check('nodes: every job type has defaults', array_keys(Nodes::JOB_DEFAULTS) === Nodes::jobTypes()
+    && Nodes::timeoutFor('assembly') === 900 && Nodes::maxRetriesFor('publish') === 3);
+
+echo "== WorkflowValidator ==\n";
+
+$validator4 = new WorkflowValidator();
+
+check('validator: default full template passes', $validator4->validate('full', Nodes::defaultNodes('full')) === []);
+check('validator: default distribution template passes', $validator4->validate('distribution', Nodes::defaultNodes('distribution')) === []);
+check('validator: unknown template rejected', $validator4->validate('fancy', []) !== []);
+check('validator: non-canonical node rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    $nodes[0]['node'] = 'DRIVE';
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: wrong order rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    [$nodes[0], $nodes[1]] = [$nodes[1], $nodes[0]];
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: missing node rejected (no subset logic)', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    array_pop($nodes);
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: unlocked COMPLIANCE rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    foreach ($nodes as &$n) {
+        if ($n['node'] === 'COMPLIANCE') {
+            $n['locked'] = false;
+        }
+    }
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: locking a non-locked node rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    $nodes[0]['locked'] = true;
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: invalid VISUALS source rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    foreach ($nodes as &$n) {
+        if ($n['node'] === 'VISUALS') {
+            $n['settings']['source'] = 'darkweb';
+        }
+    }
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: nested settings rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    $nodes[0]['settings']['nested'] = ['a' => 1];
+
+    return $validator4->validate('full', $nodes) !== [];
+})());
+check('validator: oversized settings rejected', (static function () use ($validator4): bool {
+    $nodes = Nodes::defaultNodes('full');
+    $tooMany = Nodes::defaultNodes('full');
+    for ($i = 0; $i < 20; $i++) {
+        $tooMany[0]['settings']["k{$i}"] = 'v';
+    }
+    $nodes[0]['settings']['long'] = str_repeat('x', 301);
+
+    return $validator4->validate('full', $nodes) !== [] && $validator4->validate('full', $tooMany) !== [];
+})());
+
+echo "== WorkflowRepository: defaults + tenant isolation ==\n";
+
+$_SESSION = [];
+$p4ctx = new WorkspaceContext($p4db);
+$p4events = new EventLog($p4db);
+$p4workflows = new WorkflowRepository($p4db, $validator4);
+$p4runs = new RunRepository($p4db);
+$p4jobs = new JobRepository($p4db);
+
+$p4ctx->set($p4WsA);
+$p4workflows->ensureDefaults($p4ctx);
+$p4workflows->ensureDefaults($p4ctx); // idempotent
+$wsAWorkflows = $p4workflows->listFor($p4ctx);
+
+check('workflows: defaults seeded once (idempotent)', count($wsAWorkflows) === 2
+    && array_column($wsAWorkflows, 'template') === ['full', 'distribution']);
+check('workflows: seeded nodes validate', $validator4->validate('full', $wsAWorkflows[0]['nodes']) === []
+    && $validator4->validate('distribution', $wsAWorkflows[1]['nodes']) === []);
+
+$fullWfA = $wsAWorkflows[0]['id'];
+$distWfA = $wsAWorkflows[1]['id'];
+
+$p4ctx->set($p4WsB);
+check('workflows: tenant B sees none of A\'s workflows', $p4workflows->listFor($p4ctx) === []
+    && $p4workflows->find($p4ctx, $fullWfA) === null);
+$p4workflows->ensureDefaults($p4ctx);
+check('workflows: tenant B gets its own defaults', count($p4workflows->listFor($p4ctx)) === 2);
+$p4ctx->set($p4WsA);
+
+echo "== Engine: startRun guards ==\n";
+
+$now4 = '2026-06-12T10:00:00Z';
+[$p4engine, $p4worker] = makeRig($p4db, new MockExecutor($p4db), $now4);
+
+check('startRun: unknown workflow → not_found key', (static function () use ($p4engine, $p4ctx, $p4UserA): bool {
+    try {
+        $p4engine->startRun($p4ctx, 99999, null, $p4UserA);
+
+        return false;
+    } catch (WorkflowException $e) {
+        return $e->messageKey === 'workflow.not_found';
+    }
+})());
+check('startRun: distribution without asset → asset_required', (static function () use ($p4engine, $p4ctx, $distWfA, $p4UserA): bool {
+    try {
+        $p4engine->startRun($p4ctx, $distWfA, null, $p4UserA);
+
+        return false;
+    } catch (WorkflowException $e) {
+        return $e->messageKey === 'run.asset_required';
+    }
+})());
+check('startRun: cross-tenant asset → asset_not_ready', (static function () use ($p4engine, $p4ctx, $p4db, $distWfA, $p4UserA, $p4WsB): bool {
+    $foreignAsset = seedReadyVideo($p4db, $p4WsB, 'Tenant B clip');
+    try {
+        $p4engine->startRun($p4ctx, $distWfA, $foreignAsset, $p4UserA);
+
+        return false;
+    } catch (WorkflowException $e) {
+        return $e->messageKey === 'run.asset_not_ready';
+    }
+})());
+
+echo "== E2E: full run with approval stops ==\n";
+
+$fullRunId = $p4engine->startRun($p4ctx, $fullWfA, null, $p4UserA);
+
+check('full run: created running with first job queued', (static function () use ($p4runs, $p4jobs, $p4ctx, $fullRunId): bool {
+    $run = $p4runs->find($p4ctx, $fullRunId);
+    $jobs = $p4jobs->jobsForRun($p4ctx, $fullRunId);
+
+    return $run !== null && $run['status'] === 'running' && $run['current_node'] === 'TREND'
+        && $run['entity_type'] === 'trend' && $run['entity_id'] === null
+        && count($jobs) === 1 && $jobs[0]['type'] === 'trend_fetch' && $jobs[0]['status'] === 'queued';
+})());
+
+while ($p4worker->tick()) {
+}
+
+check('full run: stops at script approval', (static function () use ($p4runs, $p4jobs, $p4ctx, $fullRunId): bool {
+    $run = $p4runs->find($p4ctx, $fullRunId);
+    $jobs = $p4jobs->jobsForRun($p4ctx, $fullRunId);
+    $last = end($jobs);
+
+    return $run['status'] === 'awaiting_approval' && $run['current_node'] === 'SCRIPT'
+        && count($jobs) === 3 && $last['type'] === 'script_draft' && $last['status'] === 'awaiting_approval';
+})());
+check('full run: prior results flow between mocks', (static function () use ($p4jobs, $p4ctx, $fullRunId): bool {
+    $jobs = $p4jobs->jobsForRun($p4ctx, $fullRunId);
+    $trend = $jobs[0]['result']['trend'] ?? '';
+    $idea = $jobs[1]['result']['idea'] ?? '';
+    $script = $jobs[2]['result']['script'] ?? '';
+
+    return $trend !== '' && str_contains($idea, $trend) && str_contains($script, 'Mock script');
+})());
+
+$scriptJob = $p4jobs->awaitingApproval($p4ctx)[0];
+$approveResult = $p4engine->approve($p4ctx, $scriptJob['id'], $p4UserA, 'wf-a@example.com');
+
+check('full run: approve resumes the chain', $approveResult === Decision::Ok
+    && ($p4runs->find($p4ctx, $fullRunId)['status'] ?? '') === 'running');
+check('full run: double approve loses calmly', $p4engine->approve($p4ctx, $scriptJob['id'], $p4UserA, 'wf-a@example.com') === Decision::AlreadyDecided);
+
+while ($p4worker->tick()) {
+}
+
+check('full run: stops again at render review', (static function () use ($p4runs, $p4jobs, $p4ctx, $fullRunId): bool {
+    $run = $p4runs->find($p4ctx, $fullRunId);
+    $awaiting = $p4jobs->awaitingApproval($p4ctx);
+
+    return $run['status'] === 'awaiting_approval' && $run['current_node'] === 'PUBLISH'
+        && count($awaiting) === 1 && $awaiting[0]['type'] === 'render_review'
+        && str_contains((string) ($awaiting[0]['result']['summary'] ?? ''), 'mock-v0');
+})());
+
+$reviewJob = $p4jobs->awaitingApproval($p4ctx)[0];
+$p4engine->approve($p4ctx, $reviewJob['id'], $p4UserA, 'wf-a@example.com');
+
+while ($p4worker->tick()) {
+}
+
+check('full run: completes with published tail', (static function () use ($p4runs, $p4jobs, $p4ctx, $fullRunId): bool {
+    $run = $p4runs->find($p4ctx, $fullRunId);
+    $jobs = $p4jobs->jobsForRun($p4ctx, $fullRunId);
+    $statuses = array_column($jobs, 'status', 'type');
+
+    return $run['status'] === 'completed'
+        && count($jobs) === 13
+        && $statuses['publish'] === 'published'
+        && $statuses['script_draft'] === 'ready'
+        && $statuses['render_review'] === 'ready';
+})());
+check('full run: execution order matches the template exactly', array_column(
+    $p4jobs->jobsForRun($p4ctx, $fullRunId),
+    'type',
+) === FULL_TYPES);
+check('full run: approval records are truthful', (static function () use ($p4runs, $p4ctx, $fullRunId, $p4UserA): bool {
+    $records = $p4runs->approvalsForRun($p4ctx, $fullRunId);
+
+    return count($records) === 2
+        && array_column($records, 'decision') === ['approved', 'approved']
+        && array_column($records, 'node') === ['SCRIPT', 'PUBLISH']
+        && (int) $records[0]['decided_by'] === $p4UserA
+        && $records[0]['decided_by_email'] === 'wf-a@example.com'
+        && $records[0]['mode'] === 'manual';
+})());
+check('full run: extra tick is a no-op', (static function () use ($p4worker, $p4jobs, $p4ctx): bool {
+    $before = count($p4jobs->listFor($p4ctx, 500));
+    $did = $p4worker->tick();
+
+    return $did === false && count($p4jobs->listFor($p4ctx, 500)) === $before;
+})());
+check('full run: publish job carries idempotency key', (static function () use ($p4jobs, $p4ctx, $fullRunId): bool {
+    $jobs = $p4jobs->jobsForRun($p4ctx, $fullRunId);
+    $publish = array_values(array_filter($jobs, static fn (array $j): bool => $j['type'] === 'publish'))[0] ?? null;
+
+    return $publish !== null && $publish['idempotency_key'] === "run:{$fullRunId}:publish";
+})());
+check('full run: timeline starts with run.started, ends with run.completed', (static function () use ($p4events, $p4ctx, $fullRunId): bool {
+    $timeline = $p4events->timelineForRun($p4ctx, $fullRunId);
+    $keys = array_column($timeline, 'key');
+
+    return $keys[0] === 'run.started' && end($keys) === 'run.completed'
+        && in_array('approval.approved', $keys, true) && in_array('job.claimed', $keys, true);
+})());
+check('full run: compliance event recorded with mock-v0 policy', (static function () use ($p4events, $p4ctx, $fullRunId): bool {
+    $compliance = array_values(array_filter(
+        $p4events->timelineForRun($p4ctx, $fullRunId),
+        static fn (array $e): bool => $e['kind'] === 'compliance',
+    ));
+
+    return count($compliance) === 1 && $compliance[0]['key'] === 'compliance.passed'
+        && ($compliance[0]['params']['policy'] ?? '') === 'mock-v0';
+})());
+
+echo "== E2E: distribution run with a REAL library asset ==\n";
+
+$distAssetId = seedReadyVideo($p4db, $p4WsA, 'My real clip');
+$distRunId = $p4engine->startRun($p4ctx, $distWfA, $distAssetId, $p4UserA);
+
+while ($p4worker->tick()) {
+}
+
+check('distribution: asset_fetch resolved the real asset', (static function () use ($p4jobs, $p4ctx, $distRunId, $distAssetId): bool {
+    $jobs = $p4jobs->jobsForRun($p4ctx, $distRunId);
+    $fetch = $jobs[0];
+
+    return $fetch['type'] === 'asset_fetch'
+        && ($fetch['result']['source'] ?? '') === 'library'
+        && ($fetch['result']['asset_id'] ?? 0) === $distAssetId
+        && ($fetch['result']['title'] ?? '') === 'My real clip'
+        && ($fetch['result']['duration_s'] ?? 0.0) === 21.5
+        && ($fetch['result']['ai_label_required'] ?? null) === false;
+})());
+
+$distReview = $p4jobs->awaitingApproval($p4ctx)[0];
+$p4engine->approve($p4ctx, $distReview['id'], $p4UserA, 'wf-a@example.com');
+while ($p4worker->tick()) {
+}
+
+check('distribution: completes with 8 jobs in template order', (static function () use ($p4runs, $p4jobs, $p4ctx, $distRunId): bool {
+    $run = $p4runs->find($p4ctx, $distRunId);
+    $jobs = $p4jobs->jobsForRun($p4ctx, $distRunId);
+
+    return $run['status'] === 'completed' && array_column($jobs, 'type') === DIST_TYPES;
+})());
+check('distribution: entity recorded on run and copied to jobs', (static function () use ($p4runs, $p4jobs, $p4ctx, $distRunId, $distAssetId): bool {
+    $run = $p4runs->find($p4ctx, $distRunId);
+    $jobs = $p4jobs->jobsForRun($p4ctx, $distRunId);
+
+    return $run['entity_type'] === 'library' && $run['entity_id'] === $distAssetId
+        && $jobs[5]['entity_id'] === $distAssetId;
+})());
+
+echo "== E2E: reject cancels the run ==\n";
+
+$rejectRunId = $p4engine->startRun($p4ctx, $distWfA, $distAssetId, $p4UserA);
+while ($p4worker->tick()) {
+}
+$rejectJob = $p4jobs->awaitingApproval($p4ctx)[0];
+$rejectResult = $p4engine->reject($p4ctx, $rejectJob['id'], $p4UserA, 'wf-a@example.com');
+$jobsAfterReject = count($p4jobs->jobsForRun($p4ctx, $rejectRunId));
+while ($p4worker->tick()) {
+}
+
+check('reject: run cancelled, job cancelled, record truthful', (static function () use ($p4runs, $p4jobs, $p4ctx, $rejectRunId, $rejectJob, $rejectResult): bool {
+    $run = $p4runs->find($p4ctx, $rejectRunId);
+    $job = $p4jobs->find($p4ctx, $rejectJob['id']);
+    $records = $p4runs->approvalsForRun($p4ctx, $rejectRunId);
+
+    return $rejectResult === Decision::Ok && $run['status'] === 'cancelled'
+        && $job['status'] === 'cancelled'
+        && count($records) === 1 && $records[0]['decision'] === 'rejected';
+})());
+check('reject: no further jobs were enqueued', count($p4jobs->jobsForRun($p4ctx, $rejectRunId)) === $jobsAfterReject);
+
+echo "== Tenant isolation: runs/jobs/events/decisions ==\n";
+
+$p4ctx->set($p4WsB);
+check('isolation: B sees no runs/jobs/events of A', $p4runs->listFor($p4ctx) === []
+    && $p4jobs->listFor($p4ctx) === [] && $p4events->listFor($p4ctx) === []
+    && $p4runs->find($p4ctx, $fullRunId) === null && $p4jobs->find($p4ctx, $scriptJob['id']) === null);
+check('isolation: B cannot approve/retry A\'s job', $p4engine->approve($p4ctx, $scriptJob['id'], $p4UserB, 'wf-b@example.com') === Decision::NotFound
+    && $p4engine->retryJob($p4ctx, $scriptJob['id'], $p4UserB, 'wf-b@example.com') === Decision::NotFound);
+$p4ctx->set($p4WsA);
+
+echo "== Claim: order, atomicity, future jobs ==\n";
+
+$claimDb = migratedDb($basePath);
+[$claimUser, $claimWs] = seedUser($claimDb, 'claim@example.com', $argonHash, 'Claim WS');
+$_SESSION = [];
+$claimCtx = new WorkspaceContext($claimDb);
+$claimCtx->set($claimWs);
+$claimNow = '2026-06-12T12:00:00Z';
+$recorder = new RecordingExecutor();
+[$claimEngine, $claimWorker] = makeRig($claimDb, $recorder, $claimNow);
+(new WorkflowRepository($claimDb, $validator4))->ensureDefaults($claimCtx);
+$claimWf = (new WorkflowRepository($claimDb, $validator4))->listFor($claimCtx)[1]; // distribution
+$claimAsset = seedReadyVideo($claimDb, $claimWs);
+$claimRun = $claimEngine->startRun($claimCtx, $claimWf['id'], $claimAsset, $claimUser);
+$firstJobId = (int) $claimDb->one('SELECT id FROM jobs WHERE run_id = ?', [$claimRun])['id'];
+
+// Two extra queued jobs far beyond the chain end (steps 90/91): claim
+// mechanics only. NOTE: finalizing a step-90 job finds no step-91 in the
+// snapshot chain, so the run completes early — fine here (this section only
+// asserts claim order/atomicity), but do not extend it assuming a live run.
+$rawJob = static function (int $priority, int $step, string $runAfter) use ($claimDb, $claimWs, $claimRun, $claimNow): int {
+    $claimDb->run(
+        "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json,
+            max_retries, priority, run_after, created_at)
+         VALUES (?, ?, 'PREVIEW', ?, 'preview', 'queued', '{}', 3, ?, ?, ?)",
+        [$claimWs, $claimRun, $step, $priority, $runAfter, $claimNow],
+    );
+
+    return $claimDb->lastInsertId();
+};
+$lowPrioJob = $rawJob(50, 90, $claimNow);
+$samePrioJob = $rawJob(100, 91, $claimNow);
+$futureJob = $rawJob(10, 92, '2026-06-12T13:00:00Z');
+
+$claimWorker->tick();
+$claimWorker->tick();
+$claimWorker->tick();
+
+check('claim: priority first, then id among equals', $recorder->seen === [$lowPrioJob, $firstJobId, $samePrioJob]);
+check('claim: future run_after is invisible', $claimWorker->tick() === false);
+$claimNow = '2026-06-12T13:00:01Z';
+check('claim: due job claimed once the clock passes run_after', $claimWorker->tick() === true
+    && end($recorder->seen) === $futureJob);
+check('claim: raw double-claim returns no second row', (static function () use ($claimDb, $claimWs, $claimRun, $claimNow): bool {
+    $claimDb->run(
+        "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, max_retries, priority, run_after, created_at)
+         VALUES (?, ?, 'PREVIEW', 93, 'preview', 'queued', '{}', 3, 100, ?, ?)",
+        [$claimWs, $claimRun, $claimNow, $claimNow],
+    );
+    $claimSql = "UPDATE jobs SET status = 'processing', worker_id = ?, started_at = ?
+        WHERE id = (SELECT id FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY priority, id LIMIT 1)
+        RETURNING id";
+    $first = $claimDb->run($claimSql, ['w1', $claimNow, $claimNow])->fetch();
+    $second = $claimDb->run($claimSql, ['w2', $claimNow, $claimNow])->fetch();
+
+    return $first !== false && $second === false;
+})());
+
+echo "== Retry: exponential backoff + dead-letter ==\n";
+
+$failDb = migratedDb($basePath);
+[$failUser, $failWs] = seedUser($failDb, 'fail@example.com', $argonHash, 'Fail WS');
+$_SESSION = [];
+$failCtx = new WorkspaceContext($failDb);
+$failCtx->set($failWs);
+$failNow = '2026-06-12T14:00:00Z';
+[$failEngine, $failWorker, $failEvents] = makeRig($failDb, new AlwaysThrowsExecutor(), $failNow);
+(new WorkflowRepository($failDb, $validator4))->ensureDefaults($failCtx);
+$failWf = (new WorkflowRepository($failDb, $validator4))->listFor($failCtx)[1];
+$failAsset = seedReadyVideo($failDb, $failWs);
+$failRunId = $failEngine->startRun($failCtx, $failWf['id'], $failAsset, $failUser);
+$failJobs = new JobRepository($failDb);
+$failRuns = new RunRepository($failDb);
+
+$failWorker->tick(); // attempt 1 → requeue with backoff
+
+check('backoff: first failure requeues into the future', (static function () use ($failJobs, $failCtx, $failRunId): bool {
+    $job = $failJobs->jobsForRun($failCtx, $failRunId)[0];
+
+    return $job['status'] === 'queued' && $job['retry_count'] === 1
+        && $job['run_after'] === '2026-06-12T14:00:10Z' // now + 2^1 * 5s
+        && str_contains((string) $job['error_message'], 'synthetic executor failure');
+})());
+check('backoff: not claimable before run_after', $failWorker->tick() === false);
+
+$failNow = '2026-06-12T14:00:11Z';
+$failWorker->tick(); // attempt 2 → requeue (+20s)
+check('backoff: second failure doubles the delay', (static function () use ($failJobs, $failCtx, $failRunId): bool {
+    $job = $failJobs->jobsForRun($failCtx, $failRunId)[0];
+
+    return $job['status'] === 'queued' && $job['retry_count'] === 2
+        && $job['run_after'] === '2026-06-12T14:00:31Z'; // 14:00:11 + 2^2 * 5s
+})());
+
+$failNow = '2026-06-12T14:00:32Z';
+$failWorker->tick(); // attempt 3 = max_retries → dead-letter
+
+check('dead-letter: exhausted job failed + run failed', (static function () use ($failJobs, $failRuns, $failCtx, $failRunId): bool {
+    $job = $failJobs->jobsForRun($failCtx, $failRunId)[0];
+    $run = $failRuns->find($failCtx, $failRunId);
+
+    return $job['status'] === 'failed' && $job['retry_count'] === 3
+        && $job['error_message'] !== null && $run['status'] === 'failed';
+})());
+check('dead-letter: visible in the queue list', (static function () use ($failJobs, $failCtx): bool {
+    $listed = $failJobs->listFor($failCtx);
+
+    return count($listed) === 1 && $listed[0]['status'] === 'failed';
+})());
+check('dead-letter: requeue + failure events recorded', (static function () use ($failEvents, $failCtx, $failRunId): bool {
+    $keys = array_column($failEvents->timelineForRun($failCtx, $failRunId), 'key');
+
+    return count(array_keys($keys, 'job.requeued')) === 2
+        && in_array('job.failed', $keys, true) && in_array('run.failed', $keys, true);
+})());
+
+echo "== Manual retry resets and reruns ==\n";
+
+$deadJob = $failJobs->jobsForRun($failCtx, $failRunId)[0];
+$retryResult = $failEngine->retryJob($failCtx, $deadJob['id'], $failUser, 'fail@example.com');
+
+check('manual retry: resets counters and requeues', (static function () use ($failJobs, $failRuns, $failCtx, $failRunId, $retryResult): bool {
+    $job = $failJobs->jobsForRun($failCtx, $failRunId)[0];
+    $run = $failRuns->find($failCtx, $failRunId);
+
+    return $retryResult === Decision::Ok && $job['status'] === 'queued'
+        && $job['retry_count'] === 0 && $job['error_message'] === null
+        && $run['status'] === 'running' && $run['current_node'] === 'LIBRARY';
+})());
+check('manual retry: only failed jobs qualify', $failEngine->retryJob($failCtx, $deadJob['id'], $failUser, 'fail@example.com') === Decision::AlreadyDecided);
+
+// swap to a WORKING executor on the same db: the retried job now succeeds
+[, $healWorker] = makeRig($failDb, new MockExecutor($failDb), $failNow);
+while ($healWorker->tick()) {
+}
+check('manual retry: healed run reaches render review', (static function () use ($failJobs, $failRuns, $failCtx, $failRunId): bool {
+    $run = $failRuns->find($failCtx, $failRunId);
+    $awaiting = $failJobs->awaitingApproval($failCtx);
+
+    return $run['status'] === 'awaiting_approval' && count($awaiting) === 1
+        && $awaiting[0]['type'] === 'render_review';
+})());
+
+echo "== Watchdog: stale processing jobs ==\n";
+
+$dogDb = migratedDb($basePath);
+[$dogUser, $dogWs] = seedUser($dogDb, 'dog@example.com', $argonHash, 'Dog WS');
+$_SESSION = [];
+$dogCtx = new WorkspaceContext($dogDb);
+$dogCtx->set($dogWs);
+$dogNow = '2026-06-12T15:00:00Z';
+[$dogEngine, $dogWorker, $dogEvents, $dogWatchdog] = makeRig($dogDb, new MockExecutor($dogDb), $dogNow);
+(new WorkflowRepository($dogDb, $validator4))->ensureDefaults($dogCtx);
+$dogWf = (new WorkflowRepository($dogDb, $validator4))->listFor($dogCtx)[1];
+$dogAsset = seedReadyVideo($dogDb, $dogWs);
+$dogRunId = $dogEngine->startRun($dogCtx, $dogWf['id'], $dogAsset, $dogUser);
+$dogJobId = (int) $dogDb->one('SELECT id FROM jobs WHERE run_id = ?', [$dogRunId])['id'];
+
+// simulate a crashed worker: claimed long ago, never finalized (asset_fetch timeout = 300s)
+$dogDb->run(
+    "UPDATE jobs SET status = 'processing', worker_id = 'dead:1:ffff', started_at = '2026-06-12T14:00:00Z' WHERE id = ?",
+    [$dogJobId],
+);
+$dogActions = $dogWatchdog->sweep($dogNow);
+
+check('watchdog: stale job requeued with warn event', (static function () use ($dogDb, $dogEvents, $dogCtx, $dogJobId, $dogRunId, $dogActions): bool {
+    $job = $dogDb->one('SELECT * FROM jobs WHERE id = ?', [$dogJobId]);
+    $keys = array_column($dogEvents->timelineForRun($dogCtx, $dogRunId), 'key');
+
+    return $dogActions === 1 && $job['status'] === 'queued' && (int) $job['retry_count'] === 1
+        && $job['started_at'] === null && $job['worker_id'] === null
+        && in_array('watchdog.requeued', $keys, true);
+})());
+check('watchdog: fresh processing job left alone', (static function () use ($dogDb, $dogWatchdog, $dogJobId, $dogNow): bool {
+    $dogDb->run(
+        "UPDATE jobs SET status = 'processing', started_at = ? WHERE id = ?",
+        [$dogNow, $dogJobId],
+    );
+
+    return $dogWatchdog->sweep($dogNow) === 0
+        && $dogDb->one('SELECT status FROM jobs WHERE id = ?', [$dogJobId])['status'] === 'processing';
+})());
+check('watchdog: exhausted stale job dead-letters + fails run', (static function () use ($dogDb, $dogWatchdog, $dogEvents, $dogCtx, $dogJobId, $dogRunId, $dogNow): bool {
+    $dogDb->run(
+        "UPDATE jobs SET retry_count = 2, started_at = '2026-06-12T14:00:00Z' WHERE id = ?",
+        [$dogJobId],
+    );
+    $acted = $dogWatchdog->sweep($dogNow);
+    $job = $dogDb->one('SELECT * FROM jobs WHERE id = ?', [$dogJobId]);
+    $run = $dogDb->one('SELECT status FROM runs WHERE id = ?', [$dogRunId]);
+    $keys = array_column($dogEvents->timelineForRun($dogCtx, $dogRunId), 'key');
+
+    return $acted === 1 && $job['status'] === 'failed'
+        && str_contains((string) $job['error_message'], 'watchdog')
+        && $run['status'] === 'failed' && in_array('watchdog.failed', $keys, true);
+})());
+check('watchdog: empty tick runs the sweep', (static function () use ($dogDb, $dogWorker, $dogJobId): bool {
+    // re-stale the job; an EMPTY worker tick (no queued jobs) must rescue it
+    $dogDb->run(
+        "UPDATE jobs SET status = 'processing', retry_count = 0, started_at = '2026-06-12T14:00:00Z' WHERE id = ?",
+        [$dogJobId],
+    );
+    $didWork = $dogWorker->tick();
+    $job = $dogDb->one('SELECT status FROM jobs WHERE id = ?', [$dogJobId]);
+
+    return $didWork === false && $job['status'] === 'queued';
+})());
+// architect review: a finalize arriving AFTER the watchdog reset (or after a
+// re-claim by another worker) must lose on worker identity, not just status
+check('finalize: stale worker write after requeue/re-claim is a no-op', (static function () use ($dogDb, $dogEngine, $dogJobId, $dogRunId): bool {
+    $stale = $dogDb->run(
+        "UPDATE jobs SET status = 'processing', worker_id = 'w-old', started_at = '2026-06-12T15:00:00Z'
+         WHERE id = ? RETURNING *",
+        [$dogJobId],
+    )->fetch();
+    // watchdog takes the row back while w-old is still executing
+    $dogDb->run("UPDATE jobs SET status = 'queued', worker_id = NULL, started_at = NULL WHERE id = ?", [$dogJobId]);
+    $jobsBefore = count($dogDb->all('SELECT id FROM jobs WHERE run_id = ?', [$dogRunId]));
+    $dogEngine->finalize($stale, JobResult::ready(['late' => true], 'mock'));
+    $afterRequeue = $dogDb->one('SELECT status, result_json FROM jobs WHERE id = ?', [$dogJobId]);
+
+    // …and the same stale write against a re-claim by a SECOND worker
+    $dogDb->run(
+        "UPDATE jobs SET status = 'processing', worker_id = 'w-new', started_at = '2026-06-12T15:01:00Z' WHERE id = ?",
+        [$dogJobId],
+    );
+    $dogEngine->finalize($stale, JobResult::ready(['late' => true], 'mock'));
+    $afterReclaim = $dogDb->one('SELECT status, worker_id, result_json FROM jobs WHERE id = ?', [$dogJobId]);
+    $jobsAfter = count($dogDb->all('SELECT id FROM jobs WHERE run_id = ?', [$dogRunId]));
+
+    return $afterRequeue['status'] === 'queued' && $afterRequeue['result_json'] === null
+        && $afterReclaim['status'] === 'processing' && $afterReclaim['worker_id'] === 'w-new'
+        && $afterReclaim['result_json'] === null && $jobsBefore === $jobsAfter;
+})());
+
+echo "== Events feed: order, filters, immutability in flow ==\n";
+
+check('events: feed is newest-first with monotonic ids', (static function () use ($p4events, $p4ctx): bool {
+    $feed = $p4events->listFor($p4ctx);
+    $ids = array_column($feed, 'id');
+    $sorted = $ids;
+    rsort($sorted);
+
+    return $feed !== [] && $ids === $sorted;
+})());
+check('events: level filter returns only that level', (static function () use ($p4events, $p4ctx): bool {
+    $warns = $p4events->listFor($p4ctx, level: 'warn');
+
+    return $warns !== [] && array_unique(array_column($warns, 'level')) === ['warn'];
+})());
+check('events: kind filter returns compliance rows', (static function () use ($p4events, $p4ctx): bool {
+    $rows = $p4events->listFor($p4ctx, kinds: ['compliance', 'guardrail']);
+
+    return $rows !== [] && array_unique(array_column($rows, 'kind')) === ['compliance'];
+})());
+check('events: limit respected', count($p4events->listFor($p4ctx, limit: 5)) === 5);
+
+echo "== Maintenance: prune + orphan sweep ==\n";
+
+$maintDb = migratedDb($basePath);
+[, $maintWs] = seedUser($maintDb, 'maint@example.com', $argonHash, 'Maint WS');
+$maintRoot = tempDir('sweep');
+$maintenance = new Maintenance($maintDb, $maintRoot);
+$maintNow = gmdate(NOW_ISO);
+
+$maintDb->run('INSERT INTO login_attempts (email, ip, succeeded, attempted_at) VALUES (?, ?, 0, ?)', ['old@example.com', '10.9.0.1', '2026-06-01T00:00:00Z']);
+$maintDb->run('INSERT INTO login_attempts (email, ip, succeeded, attempted_at) VALUES (?, ?, 0, ?)', ['new@example.com', '10.9.0.1', $maintNow]);
+
+check('maintenance: prune removes only stale login rows', $maintenance->pruneLoginAttempts($maintNow) === 1
+    && count($maintDb->all('SELECT * FROM login_attempts')) === 1
+    && $maintDb->one('SELECT email FROM login_attempts')['email'] === 'new@example.com');
+
+mkdir($maintRoot . '/' . $maintWs, 0750, true);
+$knownName = bin2hex(random_bytes(16)) . '.mp4';
+$maintDb->run(
+    "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime,
+        size_bytes, sha256, tags, status, created_at, updated_at)
+     VALUES (?, 'video', 'own', 'Known', 'k.mp4', ?, 'video/mp4', 1, 'h', '[]', 'ready', ?, ?)",
+    [$maintWs, $knownName, $maintNow, $maintNow],
+);
+$knownFile = $maintRoot . '/' . $maintWs . '/' . $knownName;
+$orphanOld = $maintRoot . '/' . $maintWs . '/' . bin2hex(random_bytes(16)) . '.mp4';
+$orphanFresh = $maintRoot . '/' . $maintWs . '/' . bin2hex(random_bytes(16)) . '.mp4';
+file_put_contents($knownFile, 'known');
+file_put_contents($orphanOld, 'orphan-old');
+file_put_contents($orphanFresh, 'orphan-fresh');
+touch($knownFile, time() - 7200);
+touch($orphanOld, time() - 7200);
+
+$swept = $maintenance->sweepOrphanAssets($maintNow);
+
+check('maintenance: sweep removes only the old orphan', $swept === [$orphanOld]
+    && !is_file($orphanOld) && is_file($knownFile) && is_file($orphanFresh));
+check('maintenance: second sweep is a no-op', $maintenance->sweepOrphanAssets($maintNow) === []);
+
+echo "== ErrorHandler: CLI mode ==\n";
+
+$cliHandler = new ErrorHandler(new Config($prodConfigDir), null, tempDir('cli-logs') . '/logs', cliMode: true);
+$cliStream = fopen('php://memory', 'r+');
+$cliLine = $cliHandler->reportCli(new RuntimeException('CLI-FAILURE-77'), $cliStream);
+rewind($cliStream);
+$cliStreamOut = (string) stream_get_contents($cliStream);
+fclose($cliStream);
+
+check('cli handler: plain-text line, no HTML', str_contains($cliLine, 'RuntimeException')
+    && str_contains($cliLine, 'CLI-FAILURE-77') && !str_contains($cliLine, '<'));
+check('cli handler: line written to the given stream', str_contains($cliStreamOut, 'CLI-FAILURE-77'));
+check('cli handler: web fallback works without a view', (static function () use ($prodConfigDir): bool {
+    $noView = new ErrorHandler(new Config($prodConfigDir), null, tempDir('cli-logs-2') . '/logs');
+    $response = $noView->renderException(new RuntimeException('x'));
+
+    return $response->status() === 500 && str_contains($response->body(), 'Server Error');
+})());
+
+echo "== Messages dictionary ==\n";
+
+check('messages: event template substitution', Messages::event('job.requeued', ['type' => 'tts', 'retry' => 2, 'max' => 3, 'run' => 7])
+    === 'tts requeued, retry 2/3 (run #7)');
+check('messages: unknown key falls back to the key', Messages::text('no.such.key') === 'no.such.key'
+    && Messages::event('no.such.event', []) === 'no.such.event');
+check('messages: missing param left as placeholder', Messages::event('job.created', ['run' => 1])
+    === '{type} queued (run #1)');
+check('messages: status labels humanize enums', Messages::status('awaiting_approval') === 'awaiting approval'
+    && Messages::status('published') === 'published' && Messages::status('weird') === 'weird');
+
+echo "== Controllers: queue + workflows + logs (unit) ==\n";
+
+$_SESSION = [];
+$_SESSION['auth_user_id'] = $p4UserA;
+$p4ctx->set($p4WsA);
+
+// park one run at render review so the approval card has real content
+$ctlRunId = $p4engine->startRun($p4ctx, $distWfA, $distAssetId, $p4UserA);
+while ($p4worker->tick()) {
+}
+$p4auth = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
+$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash());
+$wfCtl = new WorkflowController(
+    $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
+    new AssetRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
+);
+$logsCtl = new LogsController($view, $p4events, $p4ctx, new Csrf(), new Flash());
+
+check('workflows ctl: index lists both defaults', (static function () use ($wfCtl): bool {
+    $body = $wfCtl->index()->body();
+
+    return str_contains($body, 'Full pipeline') && str_contains($body, 'Distribution');
+})());
+check('workflows ctl: show renders locked COMPLIANCE track', (static function () use ($wfCtl, $fullWfA): bool {
+    $body = $wfCtl->show(['id' => (string) $fullWfA])->body();
+
+    return str_contains($body, 'COMPLIANCE') && str_contains($body, 'node--locked')
+        && str_contains($body, 'MUSIC NOTE / STYLE');
+})());
+check('workflows ctl: distribution show offers the asset select', (static function () use ($wfCtl, $distWfA): bool {
+    $body = $wfCtl->show(['id' => (string) $distWfA])->body();
+
+    return str_contains($body, 'asset_id') && str_contains($body, 'My real clip');
+})());
+check('workflows ctl: run trigger starts a run (303 → /queue)', (static function () use ($wfCtl, $distWfA, $distAssetId, $p4runs, $p4ctx): bool {
+    $before = count($p4runs->listFor($p4ctx, 100));
+    $_POST = ['asset_id' => (string) $distAssetId];
+    $response = $wfCtl->run(['id' => (string) $distWfA]);
+    $_POST = [];
+
+    return $response->status() === 303 && ($response->headers()['Location'] ?? '') === '/queue'
+        && count($p4runs->listFor($p4ctx, 100)) === $before + 1;
+})());
+check('workflows ctl: distribution run without asset flashes the key', (static function () use ($wfCtl, $distWfA): bool {
+    $_POST = [];
+    $response = $wfCtl->run(['id' => (string) $distWfA]);
+
+    return $response->status() === 303
+        && str_contains(($response->headers()['Location'] ?? ''), '/workflows/');
+})());
+check('queue ctl: renders awaiting approvals + jobs + runs', (static function () use ($queueCtl): bool {
+    $body = $queueCtl->index()->body();
+
+    return str_contains($body, 'Approvals') && str_contains($body, 'render_review')
+        && str_contains($body, 'never faked');
+})());
+check('queue ctl: non-numeric job id → 404', $queueCtl->approve(['id' => 'abc'])->status() === 404
+    && $queueCtl->retry(['id' => '../1'])->status() === 404);
+check('runs ctl: run detail shows truthful approval + timeline', (static function () use ($wfCtl, $fullRunId): bool {
+    $body = $wfCtl->showRun(['id' => (string) $fullRunId])->body();
+
+    return str_contains($body, 'Approved by you') && str_contains($body, 'wf-a@example.com')
+        && str_contains($body, 'append-only') && str_contains($body, 'compliance pass');
+})());
+check('logs ctl: feed renders with filter chips', (static function () use ($logsCtl): bool {
+    $_GET = ['f' => 'warn'];
+    $body = $logsCtl->index()->body();
+    $_GET = [];
+
+    return str_contains($body, 'event feed') && str_contains($body, 'is-active');
+})());
+
+// cross-tenant decisions through the CONTROLLER: 404, nothing leaked
+$_SESSION = [];
+$_SESSION['auth_user_id'] = $p4UserB;
+$p4ctx->set($p4WsB);
+$authB = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
+$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash());
+$wfCtlB = new WorkflowController(
+    $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
+    new AssetRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
+);
+
+check('isolation ctl: B approving A\'s job → 404', $queueCtlB->approve(['id' => (string) $scriptJob['id']])->status() === 404);
+check('isolation ctl: B retrying A\'s job → 404', $queueCtlB->retry(['id' => (string) $scriptJob['id']])->status() === 404);
+check('isolation ctl: B viewing A\'s run → 404', $wfCtlB->showRun(['id' => (string) $fullRunId])->status() === 404);
+check('isolation ctl: B viewing A\'s workflow → 404', $wfCtlB->show(['id' => (string) $fullWfA])->status() === 404);
+$_SESSION = [];
 
 echo "\n" . $pass . ' PASS, ' . count($failures) . " FAIL\n";
 

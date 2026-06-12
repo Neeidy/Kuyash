@@ -1,6 +1,16 @@
-/* Kuyash app shell — mobile sidebar toggle only. Vanilla JS, no frameworks. */
+/* Kuyash app shell — mobile sidebar toggle + destructive-action confirm.
+   Vanilla JS, no frameworks. */
 (function () {
   'use strict';
+
+  /* forms marked data-confirm ask before submitting (e.g. reject = cancel
+     the whole run); without JS the form still posts — CSRF + server guards hold */
+  document.addEventListener('submit', function (e) {
+    var form = e.target.closest('form[data-confirm]');
+    if (form && !window.confirm(form.getAttribute('data-confirm'))) {
+      e.preventDefault();
+    }
+  });
 
   var toggle = document.querySelector('[data-sidebar-toggle]');
   var scrim = document.querySelector('[data-sidebar-scrim]');

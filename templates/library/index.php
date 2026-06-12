@@ -33,14 +33,6 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
   </div>
 </div>
 
-<?php foreach ($flashes as $flash): ?>
-<div class="callout callout--banner callout--<?= $flash['type'] === 'success' ? 'ok' : 'err' ?>"
-     role="<?= $flash['type'] === 'success' ? 'status' : 'alert' ?>">
-  <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><?= $flash['type'] === 'success' ? '<path d="M5.2 8.4l1.9 1.9 3.7-4.4"/>' : '<path d="M8 5v3.5M8 11h.01"/>' ?></svg></span>
-  <div><?= View::e($flash['text']) ?></div>
-</div>
-<?php endforeach; ?>
-
 <div class="card">
   <div class="card__head"><h2>Upload</h2></div>
   <div class="card__body">

@@ -7,6 +7,7 @@ namespace Kuyash\Controllers;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Flash;
 use Kuyash\Core\Format;
+use Kuyash\Core\Messages;
 use Kuyash\Core\Response;
 use Kuyash\Core\View;
 use Kuyash\Library\AssetIngest;
@@ -18,26 +19,6 @@ use Kuyash\Workspace\WorkspaceContext;
 
 final class LibraryController
 {
-    /**
-     * Message KEYS resolved here (i18n-ready: the future TR pass swaps this
-     * map for a dictionary lookup — templates never see raw keys).
-     */
-    private const MESSAGES = [
-        'upload.success' => 'Upload complete — the asset is ready.',
-        'upload.too_large' => 'The file exceeds the server upload limit.',
-        'upload.video_too_large' => 'The video exceeds the size limit.',
-        'upload.photo_too_large' => 'The photo exceeds the size limit.',
-        'upload.no_file' => 'Choose a file to upload.',
-        'upload.failed' => 'The upload failed — please try again.',
-        'upload.empty' => 'The uploaded file is empty.',
-        'upload.extension_not_allowed' => 'That file format is not supported.',
-        'upload.content_mismatch' => 'The file content does not match its extension.',
-        'upload.broken_image' => 'The image file is broken or unreadable.',
-        'upload.bad_type' => 'Pick a valid asset type.',
-        'asset.deleted' => 'Asset deleted.',
-        'asset.delete_failed' => 'The asset could not be deleted.',
-    ];
-
     /** Types creatable from the UI in Phase 3 (stock/ai arrive in later phases). */
     private const UPLOADABLE_TYPES = ['own', 'face'];
 
@@ -197,13 +178,9 @@ final class LibraryController
     /** @return list<array{type: string, text: string}> */
     private function resolveFlashes(): array
     {
-        return array_map(
-            static fn (array $f): array => [
-                'type' => $f['type'],
-                'text' => self::MESSAGES[$f['key']] ?? $f['key'],
-            ],
-            $this->flash->pull(),
-        );
+        // keys now live in the shared Core\Messages dictionary (Phase 4
+        // follow-up: third flash consumer triggered the extraction)
+        return Messages::resolveFlashes($this->flash);
     }
 
     private function backToLibrary(string $type, string $messageKey): Response
