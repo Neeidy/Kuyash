@@ -7,13 +7,13 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-12
-- Güncelleyen: Claude (FAZ 7 İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor)
+- Güncelleyen: Claude (FAZ 7 KABUL EDİLDİ, commit `b90cb8e` + push edildi — /next-phase → START PHASE 8 bekleniyor)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 7 (Media Production) İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor**
-  (2026-06-12). Working tree'de COMMIT EDİLMEMİŞ (Step A doc pivotu + Faz 7 birlikte gidecek).
-  Commit'ler: ... Faz 5 `d293145`, plan-doc `b673b1c`, **Faz 6 `393d666` = HEAD**, origin/main=HEAD.
+- Aşama: **FAZ 7 (Media Production) KABUL EDİLDİ, commit'lendi + push edildi** (2026-06-12).
+  Commit'ler: ... Faz 5 `d293145`, Faz 6 `393d666`, **Faz 7 `b90cb8e` = HEAD** (Step A doc pivotu +
+  Faz 7 kodu + awaiting_recording etiket temizliği tek commit'te). origin/main = HEAD. Working tree temiz.
 - Faz 7 içeriği: executor seam'e **gerçek ffmpeg + TTS + stock** (mock-first sağlayıcılar GERÇEK
   ffmpeg'i besler). `src/Media/*` (~24 sınıf): Ffmpeg (proc_open arg-array, timeout, temp cleanup) +
   MediaPaths (tagged ref'ler, traversal-proof) + WavWriter (saf-PHP WAV) + AssetCache (içerik-adresli
@@ -70,14 +70,13 @@
 
 ## Sıradaki adım
 
-1. **Faz 7 kullanıcı kabulü + commit onayı bekleniyor.** Onay gelince TEK commit'e şunlar girer:
-   (a) Step A reference-asset doc pivotu (product-brief, content-pipeline, phase-plan, CLAUDE.md,
-   phase-6-followups SUPERSEDED, ADR-012) + phase-7-plan.md, (b) tüm Faz 7 kodu/UI/test. Sonra
-   güvenlik kapısı (secret tara) → `git push origin main` OTOMATİK (force YASAK).
-2. Sonra `/next-phase` (Plan Mode) → **Faz 8 (Cloudflare R2)**: private storage + signed URL +
-   StorageProvider soyutlaması + lokal→R2 migrasyonu. Faz 7 tetikleyicileri (`phase-7-followups.md`):
-   **Pexels download stream+cap HARD GATE** (gerçek stock PROD öncesi), render/cache eviction (R2
-   offload ile örtüşür), trend web-fetch worker'a (Faz 6 HARD GATE). İnşa yalnızca `START PHASE 8` ile.
+1. **Faz 7 KABUL + commit `b90cb8e` + push tamamlandı.** Kullanıcı isteğiyle `awaiting_recording`
+   durum-etiketleri Messages.php/Format.php'den çıkarıldı (şema CHECK stub'ı kaldı). Sıra:
+   `/next-phase` (Plan Mode) → **Faz 8 (Cloudflare R2)**: private storage + signed URL +
+   StorageProvider soyutlaması + lokal→R2 migrasyonu. İnşa yalnızca `START PHASE 8` ile.
+2. Faz 8'e taşınacak tetikleyiciler (`phase-7-followups.md`): **Pexels download stream+cap HARD GATE**
+   (gerçek stock PROD öncesi), render/cache eviction (R2 offload ile örtüşür); ayrıca trend web-fetch
+   worker'a (Faz 6 HARD GATE).
 
 ## Açık konular / bekleyenler
 
@@ -90,7 +89,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
-- 2026-06-12 — START PHASE 7: Media Production inşa edildi (src/Media ~24 sınıf: Ffmpeg arg-array wrapper + MediaPaths + WavWriter + AssetCache içerik-adresli + AssemblyEngine draft/final + TTS seam [Mock gerçek WAV/OpenAi kapalı] + Stock seam [lavfi/Pexels kapalı] + AssetFetchExecutor reference→avatar→stock; Nodes final_render; RenderController /render authed; cockpit; reference-asset modeli; migration 0005). GERÇEK ffmpeg varsayılan. ffmpeg build subtitles/drawtext YOK → SRT sidecar+mov_text. 432 test PASS (46 yeni, suite-içi gerçek render), canlı smoke draft+final OK. 3 reviewer 0 blocker, ucuz should-fix uygulandı. Kabul + commit bekliyor.
+- 2026-06-12 — FAZ 7 KABUL: kullanıcı kabul + commit + push onayı + `awaiting_recording` etiket temizliği istedi (Messages/Format'tan çıkarıldı; şema stub kaldı). 432 test PASS. Faz 7 `b90cb8e` commit'lendi (Step A doc pivotu dahil), origin/main'e push edildi (auto-push). Sıra: /next-phase → START PHASE 8.
+- 2026-06-12 — START PHASE 7: Media Production inşa edildi (src/Media ~24 sınıf: Ffmpeg arg-array wrapper + MediaPaths + WavWriter + AssetCache içerik-adresli + AssemblyEngine draft/final + TTS/Stock seam'leri [mock varsayılan, gerçek flag-kapalı] + AssetFetchExecutor reference→avatar→stock; Nodes final_render; RenderController; cockpit; migration 0005). GERÇEK ffmpeg varsayılan; build'de subtitles/drawtext YOK → SRT sidecar+mov_text. 3 reviewer 0 blocker.
 - 2026-06-12 — /next-phase + PİVOT: Faz 7 planı ONAYLANDI. Kullanıcı reference-asset modelini tanımladı → shooting-brief/awaiting_recording KALDIRILDI (ADR-012). Step A doc güncellemeleri yapıldı. ffmpeg GERÇEK varsayılan kararı.
 - 2026-06-12 — FAZ 6 KABUL: kullanıcı kabul + commit + push onayı verdi; key'li-URL redaction kanıt testi istedi (gerçek CurlHttpClient loopback:1 → exception'da key/query redact + uçtan uca). 386 test PASS. Faz 6 `393d666` commit'lendi, origin/main'e push edildi (auto-push).
 - 2026-06-12 — START PHASE 6: Trend Radar Backend inşa edildi (TrendProvider seam: Mock varsayılan + gerçek-ama-kapalı YouTube/Google; HttpClient get(); TrendService read-through cache+TTL+serve-stale; QuotaCounter; create-from-trend Engine pin; /trends UI; migration 0004). 3 reviewer 0 blocker, ucuz should-fix uygulandı.
@@ -99,4 +99,3 @@
 - 2026-06-12 — START PHASE 5: Script & Caption Engine inşa edildi (TextProvider seam: Mock + gerçek-ama-kapalı OpenAI; HttpClient seam + sahte transport; PromptLibrary versiyonlu; VariationEngine tohumlu slop kontrolü; CostCalculator; ContentExecutor; cost-on-awaiting). 3 reviewer 0 blocker, tüm should-fix+NTH uygulandı.
 - 2026-06-12 — /next-phase: Faz 5 (Script & Caption Engine) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-5-plan.md`'e kaydedildi. Kararlar: engine-only UI, gerçek OpenAI yolu flag-kapalı, Claude ertelendi, migration yok.
 - 2026-06-12 — FAZ 4 KABUL: kullanıcı kabul + commit onayı verdi; Faz 4 `f56d4ab` olarak commit'lendi. Kullanıcının üç plan-doc düzenlemesi (Creator Watch, countdown, V2) ayrı `730456c` docs commit'iyle alındı.
-- 2026-06-12 — START PHASE 4: Workflow Engine inşa edildi (0003 şema+append-only events, Nodes/Validator/Engine/MockExecutor/Worker/Watchdog/Maintenance, bin/worker.php, 4 sayfa UI). 285 test PASS; 3 reviewer 0 blocker.
