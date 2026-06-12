@@ -6,6 +6,7 @@ use Kuyash\Core\Format;
 use Kuyash\Core\View;
 
 /** @var array<string, mixed> $asset */
+/** @var bool $isAvatar this asset is the workspace default avatar */
 /** @var string $csrfField trusted generated HTML */
 /** @var list<array{type: string, text: string}> $flashes */
 
@@ -54,7 +55,19 @@ $mediaUrl = '/media/' . (int) $asset['id'];
 
   <div class="card">
     <div class="card__head"><h2>Details</h2>
-      <div class="card__action">
+      <div class="card__action card__action--group">
+        <?php if ($isAvatar): ?>
+        <span class="chip chip--info">workspace avatar</span>
+        <form method="post" action="/library/avatar/clear">
+          <?= $csrfField ?>
+          <button type="submit" class="btn btn--ghost btn--sm">Clear avatar</button>
+        </form>
+        <?php else: ?>
+        <form method="post" action="/library/asset/<?= (int) $asset['id'] ?>/avatar">
+          <?= $csrfField ?>
+          <button type="submit" class="btn btn--ghost btn--sm" title="Use as the default reference subject for face-format runs">Set as avatar</button>
+        </form>
+        <?php endif; ?>
         <form method="post" action="/library/asset/<?= (int) $asset['id'] ?>/delete"
               data-confirm="Delete this asset permanently? The file is removed from disk.">
           <?= $csrfField ?>

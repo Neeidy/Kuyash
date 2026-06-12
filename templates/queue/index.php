@@ -57,6 +57,16 @@ use Kuyash\Core\View;
           </div>
           <?php if ($job['type'] === 'script_draft' && isset($job['result']['script'])): ?>
           <blockquote class="approve-card__quote"><?= nl2br(View::e(mb_substr((string) $job['result']['script'], 0, 400))) ?></blockquote>
+          <?php elseif ($job['type'] === 'render_review'): ?>
+            <?php $draftId = $job['result']['draft_render_id'] ?? null; $libId = $job['result']['library_asset_id'] ?? null; ?>
+            <?php if ($draftId !== null): ?>
+            <video class="approve-card__video" src="/render/<?= (int) $draftId ?>" poster="/render/<?= (int) $draftId ?>/poster" controls preload="metadata" playsinline></video>
+            <?php elseif ($libId !== null): ?>
+            <video class="approve-card__video" src="/media/<?= (int) $libId ?>" controls preload="metadata" playsinline></video>
+            <?php endif; ?>
+            <?php if (isset($job['result']['summary'])): ?>
+            <p class="approve-card__note"><?= View::e((string) $job['result']['summary']) ?><?= ($job['result']['ai_label_required'] ?? false) ? ' · AI label required' : '' ?></p>
+            <?php endif; ?>
           <?php elseif (isset($job['result']['summary'])): ?>
           <p class="approve-card__note"><?= View::e((string) $job['result']['summary']) ?></p>
           <?php endif; ?>

@@ -258,9 +258,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 4);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 5);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -712,7 +712,8 @@ $cstorageRoot = tempDir('cassets');
 $cstorage = new AssetStorage($cstorageRoot, static fn (string $f, string $t): bool => rename($f, $t));
 $cingest = new AssetIngest($validator, $probe, $cstorage, $crepo, 10, 32);
 $libCtl = new LibraryController(
-    $view, $crepo, $cingest, $cstorage, $cctx, new Csrf(), new Flash(), $libConfig,
+    $view, $crepo, $cingest, $cstorage, $cctx, new Csrf(), new Flash(),
+    new Kuyash\Workspace\WorkspaceSettings($cdb), $libConfig,
 );
 $mediaCtl = new MediaController($crepo, $cstorage, $cctx);
 
@@ -849,6 +850,23 @@ use Kuyash\Http\CurlHttpClient;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpResponse;
 use Kuyash\Http\HttpTransportException;
+use Kuyash\Media\AssemblyEngine;
+use Kuyash\Media\AssemblyExecutor;
+use Kuyash\Media\AssetCache;
+use Kuyash\Media\AssetFetchExecutor;
+use Kuyash\Media\Ffmpeg;
+use Kuyash\Media\FinalRenderExecutor;
+use Kuyash\Media\MediaPaths;
+use Kuyash\Media\MockStockProvider;
+use Kuyash\Media\MockTtsProvider;
+use Kuyash\Media\OpenAiTtsProvider;
+use Kuyash\Media\PexelsStockProvider;
+use Kuyash\Media\RenderRepository;
+use Kuyash\Media\StockProvider;
+use Kuyash\Media\SubtitleBuilder;
+use Kuyash\Media\TtsExecutor;
+use Kuyash\Media\TtsProvider;
+use Kuyash\Media\WavWriter;
 use Kuyash\Trend\FormatRecommender;
 use Kuyash\Trend\GoogleTrendsProvider;
 use Kuyash\Trend\MockTrendProvider;
@@ -903,18 +921,100 @@ final class RecordingExecutor implements JobExecutor
     }
 }
 
+/* ---------------- Phase 7 media test infrastructure ---------------- */
+
+// Real ffmpeg when present; a stub otherwise so the engine e2e stays portable.
+// Produced files go under a per-run temp media root, cleaned at suite end.
+$ffmpegBin = (string) (getenv('FFMPEG_BIN') ?: '/opt/homebrew/bin/ffmpeg');
+$ffprobeBin = (string) (getenv('FFPROBE_BIN') ?: '/opt/homebrew/bin/ffprobe');
+$TEST_MEDIA_ROOT = $basePath . '/storage/_test_media/' . bin2hex(random_bytes(4));
+$mediaReady = (new Ffmpeg($ffmpegBin, $ffprobeBin, 60))->available();
+
+/** Lightweight media stand-ins so the chain completes without ffmpeg (CI safety net). */
+final class StubMediaExecutor implements JobExecutor
+{
+    public function __construct(private readonly Database $db)
+    {
+    }
+
+    public function execute(array $job, array $prior): JobResult
+    {
+        return match ((string) $job['type']) {
+            'tts' => JobResult::ready(['provider' => 'mock', 'voice' => 'alloy', 'audio_ref' => 'cache:' . $job['workspace_id'] . ':stub', 'duration_s' => 20.0, 'cached' => false], 'mock'),
+            'asset_fetch' => $this->assetFetch($job),
+            'assembly' => JobResult::ready(['draft' => true, 'render_id' => null, 'ai_label_required' => (bool) ($prior['asset_fetch']['ai_label_required'] ?? false)], 'mock'),
+            'final_render' => JobResult::ready(['final' => true, 'render_id' => null], 'mock'),
+            default => JobResult::failed('stub media: ' . $job['type'], 'mock'),
+        };
+    }
+
+    private function assetFetch(array $job): JobResult
+    {
+        if (($job['entity_type'] ?? null) === 'library' && $job['entity_id'] !== null) {
+            $a = $this->db->one("SELECT id, title, duration_s, type FROM assets WHERE id = ? AND workspace_id = ? AND status = 'ready'", [$job['entity_id'], $job['workspace_id']]);
+            if ($a === null) {
+                return JobResult::failed('library asset is no longer available', 'library');
+            }
+
+            return JobResult::ready(['source' => 'library', 'visual_kind' => 'video', 'asset_id' => (int) $a['id'], 'title' => (string) $a['title'], 'duration_s' => $a['duration_s'] === null ? null : (float) $a['duration_s'], 'ai_label_required' => $a['type'] === 'ai'], 'library');
+        }
+
+        return JobResult::ready(['source' => 'stock', 'visual_kind' => 'clip', 'visual_ref' => 'cache:' . $job['workspace_id'] . ':stub', 'ai_label_required' => false], 'mock');
+    }
+}
+
+/** Build the real Media executors over the temp media root (used when ffmpeg is present). */
+function makeMediaExecutors(Database $db): array
+{
+    global $ffmpegBin, $ffprobeBin, $TEST_MEDIA_ROOT;
+    $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/assets", 'cache' => "$TEST_MEDIA_ROOT/cache", 'render' => "$TEST_MEDIA_ROOT/renders", 'work' => "$TEST_MEDIA_ROOT/work"]);
+    $ff = new Ffmpeg($ffmpegBin, $ffprobeBin, 120);
+    $cache = new AssetCache($db, $paths);
+    $renders = new RenderRepository($db);
+    $engine = new AssemblyEngine($ff, $paths, $renders, 24, ['burn_subtitles' => false]);
+    $draftGeo = ['width' => 540, 'height' => 960, 'preset' => 'ultrafast'];
+    $finalGeo = ['width' => 1080, 'height' => 1920, 'preset' => 'ultrafast'];
+
+    return [
+        'tts' => new TtsExecutor(new MockTtsProvider(2.5), $cache, 'alloy'),
+        'asset_fetch' => new AssetFetchExecutor($db, new MockStockProvider($ff, 1080, 1920, 24), $ff, $paths, $cache, new QuotaCounter($db), $finalGeo, 1, 24),
+        'assembly' => new AssemblyExecutor($engine, $draftGeo),
+        'final_render' => new FinalRenderExecutor($engine, $finalGeo),
+        'paths' => $paths, 'renders' => $renders, 'cache' => $cache, 'ffmpeg' => $ff, 'engine' => $engine,
+    ];
+}
+
 function seedReadyVideo(Database $db, int $wsId, string $title = 'Distribute me'): int
 {
+    global $mediaReady, $ffmpegBin, $TEST_MEDIA_ROOT;
     $now = gmdate(NOW_ISO);
+    $stored = bin2hex(random_bytes(16)) . '.mp4';
     $db->run(
         "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name,
             mime, size_bytes, sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at)
          VALUES (?, 'video', 'own', ?, 'clip.mp4', ?, 'video/mp4', 100, 'h', 21.5, 1080, 1920,
             '9:16', '[]', 'ready', ?, ?)",
-        [$wsId, $title, bin2hex(random_bytes(16)) . '.mp4', $now, $now],
+        [$wsId, $title, $stored, $now, $now],
     );
+    $id = $db->lastInsertId();
 
-    return $db->lastInsertId();
+    // write a REAL 1s 9:16 mp4 so the real asset_fetch/final_render can read it
+    if ($mediaReady) {
+        $dir = "$TEST_MEDIA_ROOT/assets/$wsId";
+        if (!is_dir($dir)) {
+            mkdir($dir, 0750, true);
+        }
+        $p = proc_open([$ffmpegBin, '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=green:s=1080x1920:d=1:r=24', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', "$dir/$stored"], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (is_resource($p)) {
+            stream_get_contents($pipes[1]);
+            stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_close($p);
+        }
+    }
+
+    return $id;
 }
 
 /** Engine + Worker wired to a shared, controllable clock string. */
@@ -955,6 +1055,21 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
             $clock,
         );
         $registry->register('trend_fetch', new TrendExecutor($trendSvc, $trendRepo, $trendCfg));
+
+        // Phase 7: real Media executors (mock providers → REAL ffmpeg) when the
+        // binary is present; stubs otherwise so the engine e2e stays portable.
+        global $mediaReady;
+        if ($mediaReady) {
+            $media = makeMediaExecutors($db);
+            foreach (['tts', 'asset_fetch', 'assembly', 'final_render'] as $t) {
+                $registry->register($t, $media[$t]);
+            }
+        } else {
+            $stub = new StubMediaExecutor($db);
+            foreach (['tts', 'asset_fetch', 'assembly', 'final_render'] as $t) {
+                $registry->register($t, $stub);
+            }
+        }
     }
 
     $watchdog = new Watchdog($db, $events);
@@ -965,9 +1080,9 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
 
 const FULL_TYPES = ['trend_fetch', 'idea_generation', 'script_draft', 'tts', 'asset_fetch',
     'assembly', 'caption_generation', 'hashtag_generation', 'music_note', 'preview',
-    'compliance_check', 'render_review', 'publish'];
+    'compliance_check', 'render_review', 'final_render', 'publish'];
 const DIST_TYPES = ['asset_fetch', 'caption_generation', 'hashtag_generation', 'music_note',
-    'preview', 'compliance_check', 'render_review', 'publish'];
+    'preview', 'compliance_check', 'render_review', 'final_render', 'publish'];
 
 echo "== 0003 schema: tables + CHECKs ==\n";
 
@@ -1044,10 +1159,10 @@ check('events: INSERT OR REPLACE cannot rewrite audit rows', throws(static fn ()
 
 echo "== Nodes registry + chain expansion ==\n";
 
-check('nodes: full chain is 13 jobs in canonical order', array_column(Nodes::expand(Nodes::FULL), 'type') === FULL_TYPES);
-check('nodes: distribution chain is 8 jobs', array_column(Nodes::expand(Nodes::DISTRIBUTION), 'type') === DIST_TYPES);
-check('nodes: PUBLISH expands to render_review + publish', Nodes::NODE_JOBS['PUBLISH'] === ['render_review', 'publish']);
-check('nodes: steps are 1-based and contiguous', array_column(Nodes::expand(Nodes::FULL), 'step') === range(1, 13));
+check('nodes: full chain is 14 jobs in canonical order', array_column(Nodes::expand(Nodes::FULL), 'type') === FULL_TYPES);
+check('nodes: distribution chain is 9 jobs', array_column(Nodes::expand(Nodes::DISTRIBUTION), 'type') === DIST_TYPES);
+check('nodes: PUBLISH expands to render_review + final_render + publish', Nodes::NODE_JOBS['PUBLISH'] === ['render_review', 'final_render', 'publish']);
+check('nodes: steps are 1-based and contiguous', array_column(Nodes::expand(Nodes::FULL), 'step') === range(1, 14));
 check('nodes: every job type has defaults', array_keys(Nodes::JOB_DEFAULTS) === Nodes::jobTypes()
     && Nodes::timeoutFor('assembly') === 900 && Nodes::maxRetriesFor('publish') === 3);
 
@@ -1151,7 +1266,7 @@ $p4ctx->set($p4WsA);
 echo "== Engine: startRun guards ==\n";
 
 $now4 = '2026-06-12T10:00:00Z';
-[$p4engine, $p4worker] = makeRig($p4db, new MockExecutor($p4db), $now4);
+[$p4engine, $p4worker] = makeRig($p4db, new MockExecutor(), $now4);
 
 check('startRun: unknown workflow → not_found key', (static function () use ($p4engine, $p4ctx, $p4UserA): bool {
     try {
@@ -1253,10 +1368,11 @@ check('full run: completes with published tail', (static function () use ($p4run
     $statuses = array_column($jobs, 'status', 'type');
 
     return $run['status'] === 'completed'
-        && count($jobs) === 13
+        && count($jobs) === 14
         && $statuses['publish'] === 'published'
         && $statuses['script_draft'] === 'ready'
-        && $statuses['render_review'] === 'ready';
+        && $statuses['render_review'] === 'ready'
+        && $statuses['final_render'] === 'ready';
 })());
 check('full run: execution order matches the template exactly', array_column(
     $p4jobs->jobsForRun($p4ctx, $fullRunId),
@@ -1504,7 +1620,7 @@ check('manual retry: resets counters and requeues', (static function () use ($fa
 check('manual retry: only failed jobs qualify', $failEngine->retryJob($failCtx, $deadJob['id'], $failUser, 'fail@example.com') === Decision::AlreadyDecided);
 
 // swap to a WORKING executor on the same db: the retried job now succeeds
-[, $healWorker] = makeRig($failDb, new MockExecutor($failDb), $failNow);
+[, $healWorker] = makeRig($failDb, new MockExecutor(), $failNow);
 while ($healWorker->tick()) {
 }
 check('manual retry: healed run reaches render review', (static function () use ($failJobs, $failRuns, $failCtx, $failRunId): bool {
@@ -1523,7 +1639,7 @@ $_SESSION = [];
 $dogCtx = new WorkspaceContext($dogDb);
 $dogCtx->set($dogWs);
 $dogNow = '2026-06-12T15:00:00Z';
-[$dogEngine, $dogWorker, $dogEvents, $dogWatchdog] = makeRig($dogDb, new MockExecutor($dogDb), $dogNow);
+[$dogEngine, $dogWorker, $dogEvents, $dogWatchdog] = makeRig($dogDb, new MockExecutor(), $dogNow);
 (new WorkflowRepository($dogDb, $validator4))->ensureDefaults($dogCtx);
 $dogWf = (new WorkflowRepository($dogDb, $validator4))->listFor($dogCtx)[1];
 $dogAsset = seedReadyVideo($dogDb, $dogWs);
@@ -2174,7 +2290,7 @@ $_SESSION = [];
 $ceCtx = new WorkspaceContext($ceDb);
 $ceCtx->set($ceWs);
 $ceNow = '2026-06-12T16:00:00Z';
-[$ceEngine, $ceWorker] = makeRig($ceDb, new MockExecutor($ceDb), $ceNow);
+[$ceEngine, $ceWorker] = makeRig($ceDb, new MockExecutor(), $ceNow);
 (new WorkflowRepository($ceDb, $validator4))->ensureDefaults($ceCtx);
 $ceFullWf = (new WorkflowRepository($ceDb, $validator4))->listFor($ceCtx)[0]; // full
 $ceJobs = new JobRepository($ceDb);
@@ -2214,7 +2330,7 @@ $_SESSION = [];
 $costCtx = new WorkspaceContext($costDb);
 $costCtx->set($costWs);
 $costNow = '2026-06-12T17:00:00Z';
-[$costEngine, $costWorker] = makeRig($costDb, new MockExecutor($costDb), $costNow, new StubCostTextProvider());
+[$costEngine, $costWorker] = makeRig($costDb, new MockExecutor(), $costNow, new StubCostTextProvider());
 (new WorkflowRepository($costDb, $validator4))->ensureDefaults($costCtx);
 $costWf = (new WorkflowRepository($costDb, $validator4))->listFor($costCtx)[0];
 $costJobs = new JobRepository($costDb);
@@ -2598,7 +2714,7 @@ $_SESSION = [];
 $cfCtx = new WorkspaceContext($cfDb);
 $cfCtx->set($cfWs);
 $cfNow = '2026-06-12T10:00:00Z';
-[$cfEngine, $cfWorker] = makeRig($cfDb, new MockExecutor($cfDb), $cfNow);
+[$cfEngine, $cfWorker] = makeRig($cfDb, new MockExecutor(), $cfNow);
 (new WorkflowRepository($cfDb, $validator4))->ensureDefaults($cfCtx);
 $cfFullWf = null;
 foreach ((new WorkflowRepository($cfDb, $validator4))->listFor($cfCtx) as $wf) {
@@ -2646,6 +2762,301 @@ check('engine cf: worker emits the pinned topic into trend_fetch', (static funct
 
     return $trend === 'Engine pinned topic' && str_contains($idea, 'Engine pinned topic');
 })());
+
+/* ================== Phase 7: Media Production ================== */
+
+echo "== Media: WavWriter ==\n";
+
+$wavDir = tempDir('wav');
+$wavPath = $wavDir . '/a.wav';
+$wavBytes = WavWriter::writeSilence($wavPath, 2.0);
+check('wav: writes a non-trivial file', is_file($wavPath) && $wavBytes > 1000 && filesize($wavPath) === $wavBytes);
+check('wav: RIFF/WAVE header', (static function () use ($wavPath): bool {
+    $head = (string) file_get_contents($wavPath, false, null, 0, 12);
+
+    return str_starts_with($head, 'RIFF') && substr($head, 8, 4) === 'WAVE';
+})());
+check('wav: durationOf reads back the duration', abs((WavWriter::durationOf($wavPath) ?? 0) - 2.0) < 0.05);
+check('wav: duration clamped to a sane floor', (static function () use ($wavDir): bool {
+    WavWriter::writeSilence($wavDir . '/tiny.wav', 0.0);
+
+    return (WavWriter::durationOf($wavDir . '/tiny.wav') ?? 0) >= 0.1;
+})());
+
+echo "== Media: SubtitleBuilder ==\n";
+
+$srt = SubtitleBuilder::build('one two three four five six seven eight nine ten eleven twelve', 6.0);
+check('srt: produces cues with valid timecodes', str_contains($srt, '00:00:00,000 --> ')
+    && preg_match_all('/\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}/', $srt) >= 2);
+check('srt: cues are index-numbered from 1', str_starts_with($srt, "1\n"));
+check('srt: empty script → empty SRT', SubtitleBuilder::build('   ', 6.0) === '');
+check('srt: last cue ends within the duration', (static function () use ($srt): bool {
+    preg_match_all('/--> (\d{2}):(\d{2}):(\d{2}),(\d{3})/', $srt, $m, PREG_SET_ORDER);
+    $last = end($m);
+    $end = (int) $last[1] * 3600 + (int) $last[2] * 60 + (int) $last[3] + (int) $last[4] / 1000;
+
+    return $end <= 6.05;
+})());
+
+echo "== Media: MediaPaths (refs, validation, traversal) ==\n";
+
+$mp = new MediaPaths(['asset' => '/r/a', 'cache' => '/r/c', 'render' => '/r/v', 'work' => '/r/w']);
+$mpName = $mp->newName('mp4');
+check('paths: newName is {32hex}.ext', preg_match('/^[a-f0-9]{32}\.mp4$/', $mpName) === 1);
+check('paths: ref/resolve round-trip', $mp->resolve($mp->ref('cache', 7, $mpName)) === '/r/c/7/' . $mpName);
+check('paths: rejects unknown store', throws(static fn () => $mp->ref('evil', 1, $mpName), RuntimeException::class));
+check('paths: rejects traversal / bad name', throws(static fn () => $mp->ref('cache', 1, '../../etc/passwd'), RuntimeException::class)
+    && throws(static fn () => $mp->resolve('cache:1:..%2f..'), RuntimeException::class));
+check('paths: rejects malformed ref ws', throws(static fn () => $mp->resolve('cache:abc:' . $mpName), RuntimeException::class));
+check('paths: cleanupWorkDir refuses paths outside the work root', (static function () use ($mp): bool {
+    $mp->cleanupWorkDir('/r/a/1'); // not under /r/w — must be a no-op, no throw
+
+    return true;
+})());
+
+echo "== Media: AssetCache (content-addressed, hit/miss/cost) ==\n";
+
+$acDb = migratedDb($basePath);
+[$acUser, $acWs] = seedUser($acDb, 'ac@example.com', $argonHash, 'AC WS');
+$acRoot = tempDir('acache');
+$acPaths = new MediaPaths(['asset' => "$acRoot/a", 'cache' => "$acRoot/c", 'render' => "$acRoot/v", 'work' => "$acRoot/w"]);
+$acCache = new AssetCache($acDb, $acPaths);
+$acCalls = 0;
+$producer = function (string $path) use (&$acCalls): array {
+    $acCalls++;
+    file_put_contents($path, 'DATA');
+
+    return ['duration_s' => 3.0, 'cost_cents' => 12];
+};
+$e1 = $acCache->remember($acWs, 'tts', 'key-abc', 'wav', $producer);
+$e2 = $acCache->remember($acWs, 'tts', 'key-abc', 'wav', $producer);
+check('cache: first call is a miss that produces the file', !$e1->cached && $acCalls === 1 && is_file($acPaths->resolve($e1->ref)));
+check('cache: second call is a hit (no producer run, same ref)', $e2->cached && $acCalls === 1 && $e2->ref === $e1->ref);
+check('cache: meta survives the round-trip', ($e2->meta['cost_cents'] ?? 0) === 12);
+check('cache: hits are counted', $acCache->hitCountFor($acWs) === 1);
+check('cache: a different key is a separate miss', (static function () use ($acCache, $acWs, $producer, &$acCalls): bool {
+    $before = $acCalls;
+    $e = $acCache->remember($acWs, 'tts', 'key-xyz', 'wav', $producer);
+
+    return !$e->cached && $acCalls === $before + 1;
+})());
+
+echo "== Media: TTS provider selection via the real binding ==\n";
+
+$buildTts = static function (string $mock, string $key) use ($basePath): TtsProvider {
+    $_ENV['TTS_MOCK'] = $mock;
+    $_ENV['OPENAI_API_KEY'] = $key;
+
+    return (require $basePath . '/src/bootstrap.php')->get(TtsProvider::class);
+};
+$ttsEnvBak = [$_ENV['TTS_MOCK'] ?? null, $_ENV['OPENAI_API_KEY'] ?? null];
+check('tts selection: mock=true → MockTtsProvider', $buildTts('true', '') instanceof MockTtsProvider);
+check('tts selection: mock=false + key → OpenAiTtsProvider', $buildTts('false', 'sk-live') instanceof OpenAiTtsProvider);
+check('tts selection: mock=false + no key → mock (fail-safe)', $buildTts('false', '') instanceof MockTtsProvider);
+if ($ttsEnvBak[0] === null) { unset($_ENV['TTS_MOCK']); } else { $_ENV['TTS_MOCK'] = $ttsEnvBak[0]; }
+if ($ttsEnvBak[1] === null) { unset($_ENV['OPENAI_API_KEY']); } else { $_ENV['OPENAI_API_KEY'] = $ttsEnvBak[1]; }
+
+echo "== Media: stock provider selection via the real binding ==\n";
+
+$buildStock = static function (string $mock, string $key) use ($basePath): StockProvider {
+    $_ENV['STOCK_MOCK'] = $mock;
+    $_ENV['PEXELS_API_KEY'] = $key;
+
+    return (require $basePath . '/src/bootstrap.php')->get(StockProvider::class);
+};
+$stkEnvBak = [$_ENV['STOCK_MOCK'] ?? null, $_ENV['PEXELS_API_KEY'] ?? null];
+check('stock selection: mock=true → MockStockProvider', $buildStock('true', '') instanceof MockStockProvider);
+check('stock selection: mock=false + key → PexelsStockProvider', $buildStock('false', 'pk-live') instanceof PexelsStockProvider);
+check('stock selection: mock=false + no key → mock (fail-safe)', $buildStock('false', '') instanceof MockStockProvider);
+if ($stkEnvBak[0] === null) { unset($_ENV['STOCK_MOCK']); } else { $_ENV['STOCK_MOCK'] = $stkEnvBak[0]; }
+if ($stkEnvBak[1] === null) { unset($_ENV['PEXELS_API_KEY']); } else { $_ENV['PEXELS_API_KEY'] = $stkEnvBak[1]; }
+
+echo "== Media: OpenAiTtsProvider (fake transport, ZERO network) ==\n";
+
+$ttsCfg = ['api_key' => 'sk-TTS-SECRET', 'model' => 'gpt-4o-mini-tts', 'voice' => 'alloy', 'endpoint' => 'https://api.openai.test/v1/audio/speech', 'timeout' => 5, 'price_cents_per_million_chars' => 1500.0];
+$ttsOutDir = tempDir('ttsout');
+check('openai tts: writes the audio body + reports cost', (static function () use ($ttsCfg, $ttsOutDir): bool {
+    $fake = new FakeHttpClient([new HttpResponse(200, str_repeat('AUDIObytes', 50))]);
+    $r = (new OpenAiTtsProvider($fake, $ttsCfg))->synthesize('hello world from openai', 'alloy', $ttsOutDir . '/o.wav');
+
+    return is_file($ttsOutDir . '/o.wav') && $r->durationSeconds > 0 && $r->costCents !== null && $r->model === 'gpt-4o-mini-tts'
+        && $fake->calls[0]['method'] === 'POST';
+})());
+check('openai tts: 429 → exception, key never leaked', (static function () use ($ttsCfg, $ttsOutDir): bool {
+    $fake = new FakeHttpClient([new HttpResponse(429, 'slow down')]);
+    try {
+        (new OpenAiTtsProvider($fake, $ttsCfg))->synthesize('x', 'alloy', $ttsOutDir . '/n.wav');
+
+        return false;
+    } catch (Kuyash\Media\TtsProviderException $e) {
+        return str_contains($e->getMessage(), '429') && !str_contains($e->getMessage(), 'SECRET');
+    }
+})());
+check('openai tts: empty body → exception', (static function () use ($ttsCfg, $ttsOutDir): bool {
+    $fake = new FakeHttpClient([new HttpResponse(200, '')]);
+
+    return throws(static fn () => (new OpenAiTtsProvider($fake, $ttsCfg))->synthesize('x', 'alloy', $ttsOutDir . '/e.wav'), Kuyash\Media\TtsProviderException::class);
+})());
+
+echo "== Media: PexelsStockProvider (fake transport, ZERO network) ==\n";
+
+$pexCfg = ['api_key' => 'pk-PEXELS-SECRET', 'endpoint' => 'https://api.pexels.test/videos/search', 'timeout' => 5];
+$pexOutDir = tempDir('pexout');
+$pexFfmpeg = new Ffmpeg($ffmpegBin, $ffprobeBin, 30);
+function pexelsSearchBody(): HttpResponse
+{
+    return new HttpResponse(200, json_encode([
+        'videos' => [[
+            'id' => 99, 'video_files' => [
+                ['quality' => 'sd', 'file_type' => 'video/mp4', 'width' => 1080, 'height' => 1920, 'link' => 'https://cdn.pexels.test/clip.mp4'],
+            ],
+        ]],
+    ], JSON_THROW_ON_ERROR));
+}
+check('pexels: search → pick portrait → download → write', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
+    $fake = new FakeHttpClient([pexelsSearchBody(), new HttpResponse(200, 'MP4CLIPBYTES')]);
+    $r = (new PexelsStockProvider($fake, $pexFfmpeg, $pexCfg))->fetchClip('cooking', 5.0, $pexOutDir . '/c.mp4');
+
+    return is_file($pexOutDir . '/c.mp4') && $r->height === 1920 && $r->costCents === null
+        && count($fake->calls) === 2 && $fake->calls[1]['url'] === 'https://cdn.pexels.test/clip.mp4';
+})());
+check('pexels: 429 → exception, key never leaked', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(429, 'rate')]);
+    try {
+        (new PexelsStockProvider($fake, $pexFfmpeg, $pexCfg))->fetchClip('x', 5.0, $pexOutDir . '/n.mp4');
+
+        return false;
+    } catch (Kuyash\Media\StockProviderException $e) {
+        return str_contains($e->getMessage(), '429') && !str_contains($e->getMessage(), 'SECRET');
+    }
+})());
+check('pexels: no portrait clip → exception', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
+    $body = new HttpResponse(200, json_encode(['videos' => [['video_files' => [['file_type' => 'video/mp4', 'width' => 1920, 'height' => 1080, 'link' => 'https://x.test/l.mp4']]]]], JSON_THROW_ON_ERROR));
+    $fake = new FakeHttpClient([$body]);
+
+    return throws(static fn () => (new PexelsStockProvider($fake, $pexFfmpeg, $pexCfg))->fetchClip('x', 5.0, $pexOutDir . '/p.mp4'), Kuyash\Media\StockProviderException::class);
+})());
+
+echo "== Media: WorkspaceSettings avatar (tenant-scoped) ==\n";
+
+$avDb = migratedDb($basePath);
+[$avUser, $avWs] = seedUser($avDb, 'av@example.com', $argonHash, 'Av WS');
+[, $avWs2] = seedUser($avDb, 'av2@example.com', $argonHash, 'Av WS2');
+$avSettings = new Kuyash\Workspace\WorkspaceSettings($avDb);
+$avAsset = seedReadyVideo($avDb, $avWs, 'avatar clip');
+check('avatar: starts unset', $avSettings->avatarAssetId($avWs) === null);
+check('avatar: set to a ready asset works', $avSettings->setAvatar($avWs, $avAsset) && $avSettings->avatarAssetId($avWs) === $avAsset);
+check('avatar: cannot set another tenant\'s asset', !$avSettings->setAvatar($avWs2, $avAsset));
+check('avatar: clear resets it', (static function () use ($avSettings, $avWs): bool {
+    $avSettings->clearAvatar($avWs);
+
+    return $avSettings->avatarAssetId($avWs) === null;
+})());
+
+if (!$mediaReady) {
+    echo "== Media: ffmpeg NOT available — skipping real-render tests ==\n";
+}
+
+if ($mediaReady) {
+    echo "== Media: ffmpeg arg-safety (no shell) ==\n";
+    $safeDir = tempDir('ffsafe');
+    check('ffmpeg: shell metachars in a path are a literal filename, not a command', (static function () use ($ffmpegBin, $ffprobeBin, $safeDir): bool {
+        $ff = new Ffmpeg($ffmpegBin, $ffprobeBin, 30);
+        $evil = $safeDir . '/x.mp4; touch ' . $safeDir . '/INJECTED.txt';
+        try {
+            $ff->run(['-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=1', '-frames:v', '1', $evil]);
+        } catch (Kuyash\Media\FfmpegException) {
+            // failing is fine; the point is no shell ran
+        }
+
+        return !is_file($safeDir . '/INJECTED.txt');
+    })());
+
+    echo "== Media: real render chain (TTS → asset_fetch → assembly → final) ==\n";
+    $rrDb = migratedDb($basePath);
+    [$rrUser, $rrWs] = seedUser($rrDb, 'rr@example.com', $argonHash, 'RR WS');
+    [, $rrWs2] = seedUser($rrDb, 'rr2@example.com', $argonHash, 'RR WS2');
+    $m = makeMediaExecutors($rrDb);
+    $rrDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,?,?,?,?,?)", [$rrWs, 'Full', 'full', '[]', gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+    $rrWf = $rrDb->lastInsertId();
+    $rrDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)", [$rrWs, $rrWf, 'trend', '[]', 'running', $rrUser, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+    $rrRun = $rrDb->lastInsertId();
+    $rrDb->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,run_after,created_at) VALUES (?,?,?,?,?,?,?)", [$rrWs, $rrRun, 'ASSEMBLE', 6, 'assembly', gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+    $rrJob = $rrDb->lastInsertId();
+    $job = ['workspace_id' => $rrWs, 'run_id' => $rrRun, 'id' => $rrJob, 'entity_type' => 'trend', 'entity_id' => null];
+    $prior = ['script_draft' => ['script' => 'Hook here. Body explains the idea in a few words. Call to action now.'], 'trend_fetch' => ['niche' => 'cooking', 'trend' => 'one pan dinner', 'format' => 'faceless']];
+    $rt = $m['tts']->execute($job + ['step' => 4], $prior);
+    $prior['tts'] = $rt->result;
+    $ra = $m['asset_fetch']->execute($job + ['step' => 5], $prior);
+    $prior['asset_fetch'] = $ra->result;
+    $rasm = $m['assembly']->execute($job + ['step' => 6], $prior);
+    check('render: tts produced a cached audio ref + duration', $rt->status === 'ready' && ($rt->result['duration_s'] ?? 0) > 0 && str_starts_with((string) $rt->result['audio_ref'], 'cache:'));
+    check('render: asset_fetch produced a stock clip', $ra->status === 'ready' && ($ra->result['source'] ?? '') === 'stock' && ($ra->result['visual_kind'] ?? '') === 'clip');
+    check('render: assembly produced a playable 540x960 draft + poster', (static function () use ($rasm, $m, $rrWs): bool {
+        if ($rasm->status !== 'ready') {
+            return false;
+        }
+        $row = $m['renders']->find($rrWs, (int) $rasm->result['render_id']);
+        $path = $m['paths']->resolve($m['paths']->ref('render', $rrWs, (string) $row['stored_name']));
+
+        return $row['kind'] === 'draft' && $row['width'] === 540 && $row['height'] === 960
+            && is_file($path) && $m['ffmpeg']->probeDuration($path) !== null && $row['poster_name'] !== null;
+    })());
+    $rfin = $m['final_render']->execute($job + ['step' => 13, 'id' => $rrJob], $prior);
+    check('render: final_render produced a 1080x1920 artifact', $rfin->status === 'ready' && ($rfin->result['width'] ?? 0) === 1080 && ($rfin->result['height'] ?? 0) === 1920);
+    check('render: RenderRepository.find is tenant-scoped', $m['renders']->find($rrWs2, (int) $rasm->result['render_id']) === null);
+    check('render: identical TTS inputs reuse the cache (no respend)', (static function () use ($m, $job, $prior): bool {
+        $again = $m['tts']->execute($job + ['step' => 4], $prior);
+
+        return ($again->result['cached'] ?? false) === true;
+    })());
+
+    echo "== Media: reference-asset resolution order ==\n";
+    // seed a real photo + a real video as references
+    $refPhoto = (static function () use ($rrDb, $rrWs, $ffmpegBin, $TEST_MEDIA_ROOT): int {
+        $stored = bin2hex(random_bytes(16)) . '.png';
+        $rrDb->run("INSERT INTO assets (workspace_id,kind,type,title,original_filename,stored_name,mime,size_bytes,sha256,tags,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [$rrWs, 'photo', 'own', 'ref photo', 'p.png', $stored, 'image/png', 100, 'h', '[]', 'ready', gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+        $dir = "$TEST_MEDIA_ROOT/assets/$rrWs";
+        if (!is_dir($dir)) { mkdir($dir, 0750, true); }
+        $p = proc_open([$ffmpegBin, '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=400x400:d=1', '-frames:v', '1', "$dir/$stored"], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pp);
+        if (is_resource($p)) { stream_get_contents($pp[1]); stream_get_contents($pp[2]); fclose($pp[1]); fclose($pp[2]); proc_close($p); }
+
+        return $rrDb->lastInsertId();
+    })();
+    $refVideo = seedReadyVideo($rrDb, $rrWs, 'ref video');
+    // per-run reference photo → still-clip
+    $rrDb->run('UPDATE runs SET reference_asset_id = ? WHERE id = ?', [$refPhoto, $rrRun]);
+    $refRes = $m['asset_fetch']->execute($job + ['step' => 5], $prior);
+    check('reference: per-run photo → generated still-clip', $refRes->status === 'ready' && ($refRes->result['source'] ?? '') === 'reference' && ($refRes->result['visual_kind'] ?? '') === 'clip' && ($refRes->result['asset_id'] ?? 0) === $refPhoto);
+    // per-run reference video → referenced as-is
+    $rrDb->run('UPDATE runs SET reference_asset_id = ? WHERE id = ?', [$refVideo, $rrRun]);
+    $refResV = $m['asset_fetch']->execute($job + ['step' => 5], $prior);
+    check('reference: per-run video → referenced as a video', ($refResV->result['visual_kind'] ?? '') === 'video' && str_starts_with((string) $refResV->result['visual_ref'], 'asset:'));
+    // avatar fallback for face format (no per-run reference)
+    $rrDb->run('UPDATE runs SET reference_asset_id = NULL WHERE id = ?', [$rrRun]);
+    $rrDb->run('UPDATE workspaces SET avatar_asset_id = ? WHERE id = ?', [$refVideo, $rrWs]);
+    $facePrior = $prior;
+    $facePrior['trend_fetch']['format'] = 'face';
+    $avatarRes = $m['asset_fetch']->execute($job + ['step' => 5], $facePrior);
+    check('reference: face format falls back to the workspace avatar', ($avatarRes->result['source'] ?? '') === 'avatar' && ($avatarRes->result['asset_id'] ?? 0) === $refVideo);
+    // faceless with no reference/avatar → stock
+    $rrDb->run('UPDATE workspaces SET avatar_asset_id = NULL WHERE id = ?', [$rrWs]);
+    $stockRes = $m['asset_fetch']->execute($job + ['step' => 5], $prior);
+    check('reference: faceless with nothing set → stock', ($stockRes->result['source'] ?? '') === 'stock');
+}
+
+// clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
+if (is_dir($TEST_MEDIA_ROOT)) {
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($TEST_MEDIA_ROOT, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST,
+    );
+    foreach ($it as $entry) {
+        $entry->isDir() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
+    }
+    @rmdir($TEST_MEDIA_ROOT);
+    @rmdir(dirname($TEST_MEDIA_ROOT)); // drop the empty parent too (no-op if shared)
+}
 
 echo "\n" . $pass . ' PASS, ' . count($failures) . " FAIL\n";
 

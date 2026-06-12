@@ -10,8 +10,11 @@ namespace Kuyash\Trend;
  * explainable — both the mock and the real providers run the SAME rule, so the
  * recommendation never depends on which source produced the trend.
  *
- * This is a research SUGGESTION, not a gate: the awaiting_recording / shooting
- * brief pause flow it feeds is deferred to Phase 6/7 (see phase-6-followups).
+ * This is a research SUGGESTION, not a gate. Under the reference-asset model
+ * (ADR-012) a "face" recommendation means the run should be built around a
+ * reference subject (the workspace avatar, a per-run reference asset, or any
+ * library photo/clip) — resolved at VISUALS by AssetFetchExecutor. There is no
+ * shooting brief and no awaiting_recording pause (that assumption was removed).
  */
 final class FormatRecommender
 {

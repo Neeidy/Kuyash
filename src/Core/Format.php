@@ -40,7 +40,7 @@ final class Format
     {
         return match ($status) {
             'processing', 'running' => 'info',
-            'awaiting_approval', 'awaiting_recording' => 'warn',
+            'awaiting_approval' => 'warn',
             'ready', 'published', 'completed' => 'ok',
             'failed' => 'err',
             default => 'neutral', // queued, cancelled, unknown

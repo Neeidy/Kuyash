@@ -11,6 +11,7 @@ use Kuyash\Controllers\LibraryController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
@@ -53,7 +54,11 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/library/upload', $protected([LibraryController::class, 'upload']));
     $router->get('/library/asset/{id}', $protected([LibraryController::class, 'show']));
     $router->post('/library/asset/{id}/delete', $protected([LibraryController::class, 'delete']));
+    $router->post('/library/asset/{id}/avatar', $protected([LibraryController::class, 'setAvatar']));
+    $router->post('/library/avatar/clear', $protected([LibraryController::class, 'clearAvatar']));
     $router->get('/media/{id}', $protected([MediaController::class, 'serve']));
+    $router->get('/render/{id}', $protected([RenderController::class, 'serve']));
+    $router->get('/render/{id}/poster', $protected([RenderController::class, 'poster']));
 
     $router->get('/workflows', $protected([WorkflowController::class, 'index']));
     $router->get('/workflows/{id}', $protected([WorkflowController::class, 'show']));

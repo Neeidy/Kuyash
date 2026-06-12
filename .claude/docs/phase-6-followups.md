@@ -74,11 +74,16 @@ the rest are tracked here. Suite: **384 PASS / 0 FAIL**, zero network in tests.
   creators by handle via the same third-party TikTok tier → daily cached
   top-clips wall section in Trend Radar. Research signal ONLY — never
   repost/republish (compliance). A later pass; not in Phase 6.
-- **awaiting_recording + shooting-brief PAUSE flow** (face format): Phase 6 emits
-  a `format` recommendation (face/faceless) on each trend and carries it into the
-  `trend_fetch` result (so it rides `$prior` into IDEA). The actual
-  awaiting_recording pause-status + "mark recorded" gate is Phase 7 (media
-  production) when face content needs a real shooting step.
+- ~~**awaiting_recording + shooting-brief PAUSE flow** (face format)~~ —
+  **SUPERSEDED (2026-06-12, user decision): the shooting-brief / awaiting_recording
+  flow is REMOVED entirely (wrong product assumption — no human recording step).**
+  Replaced by the **reference-asset model**: `face` format = build the video around a
+  reference asset (workspace/account avatar default, any library photo/clip, or
+  per-run pick), resolved at VISUALS. Phase 7 = resolution only (no AI generation);
+  Phase 12 = photo/reference + prompt → AI image-to-video; HeyGen-class avatar
+  generation = V2. The Phase 6 `format` recommendation (face/faceless) stays and now
+  means reference/faceless. `awaiting_recording` remains an unused schema stub.
+  See `.claude/docs/architecture-decisions.md`.
 - **Real TikTok / Instagram trend providers**: stay mock/best-effort; no fragile
   hard dependency (trend-sources.md). TikTok third-party tier degrades gracefully.
 - **`api_quota_usage` budget enforcement**: Phase 6 only RECORDS units per

@@ -19,6 +19,21 @@ use Kuyash\Core\Container;
 use Kuyash\Core\Database;
 use Kuyash\Http\CurlHttpClient;
 use Kuyash\Library\AssetRepository;
+use Kuyash\Media\AssemblyEngine;
+use Kuyash\Media\AssemblyExecutor;
+use Kuyash\Media\AssetCache;
+use Kuyash\Media\AssetFetchExecutor;
+use Kuyash\Media\Ffmpeg;
+use Kuyash\Media\FinalRenderExecutor;
+use Kuyash\Media\MediaPaths;
+use Kuyash\Media\MockStockProvider;
+use Kuyash\Media\MockTtsProvider;
+use Kuyash\Media\OpenAiTtsProvider;
+use Kuyash\Media\PexelsStockProvider;
+use Kuyash\Media\RenderRepository;
+use Kuyash\Media\StockProvider;
+use Kuyash\Media\TtsExecutor;
+use Kuyash\Media\TtsProvider;
 use Kuyash\Trend\GoogleTrendsProvider;
 use Kuyash\Trend\MockTrendProvider;
 use Kuyash\Trend\QuotaCounter;
@@ -153,13 +168,124 @@ return static function (Container $container, string $basePath): void {
         $c->get(TrendConfigRepository::class),
     ));
 
-    // MockExecutor serves the remaining mock types; ContentExecutor (behind a
-    // TextProvider) serves the 4 content types and TrendExecutor (behind a
-    // TrendProvider) serves trend_fetch — one register() line each (adapter
-    // rule). Later phases swap more types the same way.
+    /* ---------------- Media (Phase 7): ffmpeg, TTS, stock, assembly ---------- */
+
+    $container->bind(MediaPaths::class, static function (Container $c): MediaPaths {
+        $cfg = (array) $c->get(Config::class)->get('media');
+
+        return new MediaPaths([
+            'asset' => (string) $cfg['asset_root'],
+            'cache' => (string) $cfg['cache_root'],
+            'render' => (string) $cfg['render_root'],
+            'work' => (string) $cfg['work_root'],
+        ]);
+    });
+
+    $container->bind(Ffmpeg::class, static function (Container $c): Ffmpeg {
+        $cfg = (array) $c->get(Config::class)->get('media');
+
+        return new Ffmpeg(
+            (string) $cfg['ffmpeg'],
+            (string) $cfg['ffprobe'],
+            (int) $cfg['ffmpeg_timeout'],
+        );
+    });
+
+    $container->bind(AssetCache::class, static fn (Container $c): AssetCache => new AssetCache(
+        $c->get(Database::class),
+        $c->get(MediaPaths::class),
+    ));
+
+    $container->bind(RenderRepository::class, static fn (Container $c): RenderRepository => new RenderRepository(
+        $c->get(Database::class),
+    ));
+
+    // TtsProvider: real OpenAI ONLY when TTS_MOCK=false AND a key is present;
+    // otherwise the offline WAV mock. Swap = config only.
+    $container->bind(TtsProvider::class, static function (Container $c): TtsProvider {
+        $cfg = (array) ($c->get(Config::class)->get('media')['tts'] ?? []);
+        $useReal = ($cfg['mock'] ?? true) === false && ((string) ($cfg['api_key'] ?? '')) !== '';
+
+        if ($useReal) {
+            return new OpenAiTtsProvider(new CurlHttpClient(), $cfg);
+        }
+
+        return new MockTtsProvider((float) ($cfg['words_per_second'] ?? 2.5));
+    });
+
+    // StockProvider: real Pexels ONLY when STOCK_MOCK=false AND a key is present;
+    // otherwise the offline ffmpeg-lavfi mock. Both produce real clip files.
+    $container->bind(StockProvider::class, static function (Container $c): StockProvider {
+        $media = (array) $c->get(Config::class)->get('media');
+        $cfg = (array) ($media['stock'] ?? []);
+        $useReal = ($cfg['mock'] ?? true) === false && ((string) ($cfg['api_key'] ?? '')) !== '';
+        $final = (array) $media['final'];
+
+        if ($useReal) {
+            return new PexelsStockProvider(new CurlHttpClient(), $c->get(Ffmpeg::class), $cfg);
+        }
+
+        return new MockStockProvider(
+            $c->get(Ffmpeg::class),
+            (int) $final['width'],
+            (int) $final['height'],
+            (int) $media['fps'],
+        );
+    });
+
+    $container->bind(AssemblyEngine::class, static function (Container $c): AssemblyEngine {
+        $cfg = (array) $c->get(Config::class)->get('media');
+
+        return new AssemblyEngine(
+            $c->get(Ffmpeg::class),
+            $c->get(MediaPaths::class),
+            $c->get(RenderRepository::class),
+            (int) $cfg['fps'],
+            ['burn_subtitles' => (bool) ($cfg['burn_subtitles'] ?? false)],
+        );
+    });
+
+    $container->bind(TtsExecutor::class, static function (Container $c): TtsExecutor {
+        $cfg = (array) ($c->get(Config::class)->get('media')['tts'] ?? []);
+
+        return new TtsExecutor(
+            $c->get(TtsProvider::class),
+            $c->get(AssetCache::class),
+            (string) ($cfg['voice'] ?? 'alloy'),
+        );
+    });
+
+    $container->bind(AssetFetchExecutor::class, static function (Container $c): AssetFetchExecutor {
+        $media = (array) $c->get(Config::class)->get('media');
+
+        return new AssetFetchExecutor(
+            $c->get(Database::class),
+            $c->get(StockProvider::class),
+            $c->get(Ffmpeg::class),
+            $c->get(MediaPaths::class),
+            $c->get(AssetCache::class),
+            $c->get(QuotaCounter::class),
+            (array) $media['final'],
+            (int) (($media['stock']['quota_units'] ?? 1)),
+            (int) $media['fps'],
+        );
+    });
+
+    $container->bind(AssemblyExecutor::class, static fn (Container $c): AssemblyExecutor => new AssemblyExecutor(
+        $c->get(AssemblyEngine::class),
+        (array) $c->get(Config::class)->get('media')['draft'],
+    ));
+
+    $container->bind(FinalRenderExecutor::class, static fn (Container $c): FinalRenderExecutor => new FinalRenderExecutor(
+        $c->get(AssemblyEngine::class),
+        (array) $c->get(Config::class)->get('media')['final'],
+    ));
+
+    // MockExecutor serves the remaining mock types; the real executors serve the
+    // rest behind their seams — one register() line each (adapter rule).
     $container->bind(ExecutorRegistry::class, static function (Container $c): ExecutorRegistry {
         $registry = new ExecutorRegistry();
-        $registry->registerForAll(new MockExecutor($c->get(Database::class)));
+        $registry->registerForAll(new MockExecutor());
 
         $content = $c->get(ContentExecutor::class);
         foreach (ContentExecutor::contentTypes() as $type) {
@@ -167,6 +293,10 @@ return static function (Container $container, string $basePath): void {
         }
 
         $registry->register('trend_fetch', $c->get(TrendExecutor::class));
+        $registry->register('tts', $c->get(TtsExecutor::class));
+        $registry->register('asset_fetch', $c->get(AssetFetchExecutor::class));
+        $registry->register('assembly', $c->get(AssemblyExecutor::class));
+        $registry->register('final_render', $c->get(FinalRenderExecutor::class));
 
         return $registry;
     });

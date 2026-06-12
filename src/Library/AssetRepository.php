@@ -102,6 +102,22 @@ final class AssetRepository
         ));
     }
 
+    /**
+     * Ready assets (video OR photo) usable as a reference subject for a full
+     * run / workspace avatar (reference-asset model). Newest first.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function readyReferencesFor(WorkspaceContext $ctx): array
+    {
+        return array_map(self::shape(...), $this->db->all(
+            "SELECT * FROM assets
+             WHERE workspace_id = ? AND status = 'ready'
+             ORDER BY created_at DESC, id DESC",
+            [$ctx->id()],
+        ));
+    }
+
     /** @return array<string, mixed>|null null = not found OR other tenant's asset */
     public function find(WorkspaceContext $ctx, int $id): ?array
     {

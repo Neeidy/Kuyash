@@ -40,8 +40,10 @@ final class Nodes
 
     /**
      * Node → job types. 1:1 except PUBLISH, which expands to the
-     * content-pipeline tail: compliance_check → render_review → publish
-     * (render_review is the approval gate, PREVIEW is not).
+     * content-pipeline tail: render_review → final_render → publish.
+     * render_review is the approval gate (PREVIEW is not); final_render is the
+     * full-res render produced ONLY after approval (draft-first rendering — the
+     * low-res draft is made earlier at ASSEMBLE).
      */
     public const NODE_JOBS = [
         'TREND' => ['trend_fetch'],
@@ -56,7 +58,7 @@ final class Nodes
         'MUSIC NOTE / STYLE' => ['music_note'],
         'PREVIEW' => ['preview'],
         'COMPLIANCE' => ['compliance_check'],
-        'PUBLISH' => ['render_review', 'publish'],
+        'PUBLISH' => ['render_review', 'final_render', 'publish'],
     ];
 
     /**
@@ -80,6 +82,7 @@ final class Nodes
         'preview' => ['timeout' => 300, 'max_retries' => 3],
         'compliance_check' => ['timeout' => 120, 'max_retries' => 3],
         'render_review' => ['timeout' => 120, 'max_retries' => 3],
+        'final_render' => ['timeout' => 900, 'max_retries' => 3],
         'publish' => ['timeout' => 300, 'max_retries' => 3],
     ];
 

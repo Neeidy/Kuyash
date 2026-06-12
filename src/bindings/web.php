@@ -18,6 +18,7 @@ use Kuyash\Controllers\LibraryController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
@@ -34,10 +35,15 @@ use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
 use Kuyash\Library\AssetValidator;
 use Kuyash\Library\MediaProbe;
+use Kuyash\Media\AssetCache;
+use Kuyash\Media\MediaPaths;
+use Kuyash\Media\RenderRepository;
+use Kuyash\Workflow\Cockpit;
 use Kuyash\Trend\QuotaCounter;
 use Kuyash\Trend\TrendConfigRepository;
 use Kuyash\Trend\TrendService;
 use Kuyash\Workflow\Engine;
+use Kuyash\Workspace\WorkspaceSettings;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\JobRepository;
 use Kuyash\Workflow\RunRepository;
@@ -77,6 +83,10 @@ return static function (Container $container, string $basePath): void {
         $c->get(Database::class),
     ));
 
+    $container->bind(WorkspaceSettings::class, static fn (Container $c): WorkspaceSettings => new WorkspaceSettings(
+        $c->get(Database::class),
+    ));
+
     $container->bind(Auth::class, static fn (Container $c): Auth => new Auth(
         $c->get(Database::class),
         $c->get(LoginThrottle::class),
@@ -95,12 +105,18 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
     ));
 
+    $container->bind(Cockpit::class, static fn (Container $c): Cockpit => new Cockpit(
+        $c->get(Database::class),
+        $c->get(AssetCache::class),
+    ));
+
     $container->bind(DashboardController::class, static fn (Container $c): DashboardController => new DashboardController(
         $c->get(View::class),
         $c->get(Auth::class),
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(WorkerHeartbeat::class),
+        $c->get(Cockpit::class),
     ));
 
     $container->bind(AssetValidator::class, static function (Container $c): AssetValidator {
@@ -140,12 +156,19 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+        $c->get(WorkspaceSettings::class),
         (array) $c->get(Config::class)->get('library'),
     ));
 
     $container->bind(MediaController::class, static fn (Container $c): MediaController => new MediaController(
         $c->get(AssetRepository::class),
         $c->get(AssetStorage::class),
+        $c->get(WorkspaceContext::class),
+    ));
+
+    $container->bind(RenderController::class, static fn (Container $c): RenderController => new RenderController(
+        $c->get(RenderRepository::class),
+        $c->get(MediaPaths::class),
         $c->get(WorkspaceContext::class),
     ));
 

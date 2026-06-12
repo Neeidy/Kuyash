@@ -9,11 +9,11 @@ An AI-assisted short-form content studio covering the full loop: **research → 
 
 ## Core Workflow (canonical node names — never rename)
 `TREND → IDEA → SCRIPT → VOICE → VISUALS → ASSEMBLE → CAPTION → HASHTAGS → MUSIC NOTE / STYLE → PREVIEW → COMPLIANCE → PUBLISH`
-- VISUALS sources: LIBRARY (own/face clips) | STOCK (Pexels) | AI (image-to-video, credit-gated)
+- VISUALS sources: LIBRARY (own/reference clips & photos) | STOCK (Pexels) | AI (image-to-video, credit-gated)
 - Distribution-only subset: `LIBRARY → CAPTION → HASHTAGS → MUSIC NOTE / STYLE → PREVIEW → COMPLIANCE → PUBLISH`
 
-## Face / Faceless Hybrid
-The system recommends a format per trend. Faceless = TTS + stock/AI visuals, fully automated. Face = the system generates a shooting brief (what to record, duration, framing); the user records and uploads; the pipeline assembles around it. AI avatars are V2.
+## Reference / Faceless Hybrid (reference-asset model)
+The system recommends a format per trend. **Faceless** = TTS + stock/AI visuals, fully automated. **Reference** (formerly "face") = the video is built around a **reference asset**: the workspace/account avatar (a pre-selected default identity), ANY library photo/clip the user uploaded (own face, a cat, a product — anything), or a per-run pick ("make this one with my cat"). All reference assets live in the Content Library; resolution happens at VISUALS. There is NO human recording step and NO shooting brief (removed product assumption). Photo references become ffmpeg still-clips (Phase 7); photo/reference + prompt → AI image-to-video is Quick Create (Phase 12, credit-gated, mandatory AI label). HeyGen-class avatar generation stays V2.
 
 ## Quick Create
 Second pipeline entry: user uploads a photo + writes a prompt → AI image-to-video → same pipeline from assembly onward. Credit-gated; mandatory platform AI label.

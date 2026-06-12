@@ -75,6 +75,8 @@ final class WorkflowController
             'flashes' => Messages::resolveFlashes($this->flash),
             'workflow' => $workflow,
             'readyVideos' => $isDistribution ? $this->assets->readyVideosFor($this->workspace) : [],
+            // full runs may pin an optional reference subject (any ready asset)
+            'references' => $isDistribution ? [] : $this->assets->readyReferencesFor($this->workspace),
         ], 'layout/app'));
     }
 
@@ -88,10 +90,12 @@ final class WorkflowController
 
         $assetRaw = (string) ($_POST['asset_id'] ?? '');
         $assetId = ctype_digit($assetRaw) && $assetRaw !== '' ? (int) $assetRaw : null;
+        $refRaw = (string) ($_POST['reference_asset_id'] ?? '');
+        $referenceId = ctype_digit($refRaw) && $refRaw !== '' ? (int) $refRaw : null;
         $userId = (int) ($this->auth->user()['id'] ?? 0);
 
         try {
-            $this->engine->startRun($this->workspace, $workflow['id'], $assetId, $userId);
+            $this->engine->startRun($this->workspace, $workflow['id'], $assetId, $userId, null, $referenceId);
         } catch (WorkflowException $e) {
             $this->flash->add('error', $e->messageKey);
 

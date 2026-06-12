@@ -56,6 +56,7 @@ final class Engine
         ?int $assetId,
         int $userId,
         ?int $trendId = null,
+        ?int $referenceAssetId = null,
     ): int {
         $wsId = $ctx->id();
 
@@ -86,6 +87,7 @@ final class Engine
             }
             $entityType = 'library';
             $entityId = $assetId;
+            $referenceAssetId = null; // distribution uses the library entity itself
         } else {
             $entityType = 'trend';
             $entityId = null;
@@ -101,6 +103,17 @@ final class Engine
                 }
                 $entityId = $trendId;
             }
+            // reference-asset model (Phase 7): an optional per-run reference
+            // subject — tenant-scoped, must be a ready asset.
+            if ($referenceAssetId !== null) {
+                $reference = $this->db->one(
+                    "SELECT id FROM assets WHERE id = ? AND workspace_id = ? AND status = 'ready'",
+                    [$referenceAssetId, $wsId],
+                );
+                if ($reference === null) {
+                    throw new WorkflowException('run.reference_not_ready');
+                }
+            }
         }
 
         $chain = Nodes::expand(array_column($nodes, 'node'));
@@ -108,17 +121,18 @@ final class Engine
         $now = ($this->clock)();
 
         return $this->db->transaction(function () use (
-            $workflow, $wsId, $entityType, $entityId, $first, $now, $userId
+            $workflow, $wsId, $entityType, $entityId, $referenceAssetId, $first, $now, $userId
         ): int {
             $this->db->run(
-                'INSERT INTO runs (workspace_id, workflow_id, entity_type, entity_id, nodes_json,
-                    status, current_node, created_by, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, \'running\', ?, ?, ?, ?)',
+                'INSERT INTO runs (workspace_id, workflow_id, entity_type, entity_id, reference_asset_id,
+                    nodes_json, status, current_node, created_by, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, \'running\', ?, ?, ?, ?)',
                 [
                     $wsId,
                     $workflow['id'],
                     $entityType,
                     $entityId,
+                    $referenceAssetId,
                     $workflow['nodes_json'],
                     $first['node'],
                     $userId,

@@ -6,7 +6,7 @@ Kuyash is an AI-assisted short-form content studio covering the full loop **rese
 
 Target format: **15–45 second vertical (9:16) videos** — one render distributed to all three platforms with per-platform caption/hashtag variations.
 
-Core capabilities: Trend Radar (niche trend discovery), Content Studio (AI ideas/scripts/hooks/captions/hashtags + shooting briefs for face content + Quick Create photo-to-video), Content Library, visual workflow builder, stock-mode production (TTS + Pexels + ffmpeg), Compliance Agent (AI labels, slop/variation control, truthful approval records), autonomy guardrails, multi-workspace operations, publishing via Zernio.
+Core capabilities: Trend Radar (niche trend discovery), Content Studio (AI ideas/scripts/hooks/captions/hashtags + reference-subject visuals — videos built around a reference asset: the workspace/account avatar or ANY uploaded photo/clip + Quick Create photo-to-video), Content Library, visual workflow builder, stock-mode production (TTS + Pexels + ffmpeg), Compliance Agent (AI labels, slop/variation control, truthful approval records), autonomy guardrails, multi-workspace operations, publishing via Zernio.
 
 Business model: **personal-first, SaaS-ready** — multi-tenant data model (workspace_id on all tenant data) from day one, single-user UI in V1; Stripe, onboarding, and multi-tenant UI are deferred to SaaS-ification (V2).
 

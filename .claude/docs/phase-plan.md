@@ -23,7 +23,7 @@ Goals: workflow JSON model (canonical nodes), validation, deterministic executio
 Non-goals: autonomous agent loops, real external calls.
 
 ## Phase 5 — Script & Caption Engine · token: START PHASE 5
-Goals: OpenAI adapter (mock-first): ideas, scripts, hooks, CTAs, captions, hashtags, shooting briefs; versioned prompt templates; draft/approved states; per-platform caption variations; cost recording; **seeded variation engine (hook pools, pacing, asset shuffle — measurably lowers slop similarity)**; **prompt-assist behind TextProvider adapter (OpenAI + optional Anthropic Claude, user-approved second provider) powering the Create composer's assisted modes**.
+Goals: OpenAI adapter (mock-first): ideas, scripts, hooks, CTAs, captions, hashtags; versioned prompt templates; draft/approved states; per-platform caption variations; cost recording; **seeded variation engine (hook pools, pacing, asset shuffle — measurably lowers slop similarity)**; **prompt-assist behind TextProvider adapter (OpenAI + optional Anthropic Claude, user-approved second provider) powering the Create composer's assisted modes**.
 Non-goals: TTS, video, trends.
 
 ## Phase 6 — Trend Radar Backend · token: START PHASE 6
@@ -31,8 +31,8 @@ Goals: TrendProvider adapters — Google Trends API + YouTube Data API (official
 Non-goals: scraping fragile sources as hard dependencies; Instagram trend promises; reposting/republishing watched creators' content (Creator Watch is research signal ONLY — compliance rule).
 
 ## Phase 7 — Media Production (Stock Mode) · token: START PHASE 7
-Goals: TTS adapter (OpenAI base), Whisper subtitles, Pexels StockProvider, ffmpeg assembly (voice + visuals + subtitles + music note), safe execution, temp cleanup, render artifacts; **draft-first rendering (low-res preview render for approval, full render only after approve)**; **content-addressed asset cache (hash TTS text+voice / stock clips → reuse, cut cost & time)**; **dashboard cockpit first pass (ui-style-guide cockpit spec): KPI strip + active runs panel + awaiting-approval strip with render thumbnails — built from REAL data now available (runs, jobs, renders); countdown/deltas slots stay placeholder until Phase 10**.
-Non-goals: AI video generation, ElevenLabs (V2 premium).
+Goals: TTS adapter (OpenAI base), subtitles (script-timed SRT; Whisper alignment = follow-up), Pexels StockProvider, ffmpeg assembly (voice + visuals + subtitles + music note), safe execution, temp cleanup, render artifacts; **draft-first rendering (low-res preview render for approval, full render only after approve)**; **content-addressed asset cache (hash TTS text+voice / stock clips → reuse, cut cost & time)**; **reference-asset slice (reference-asset model, 2026-06-12): workspace default avatar pointer (`workspaces.avatar_asset_id`; per-ACCOUNT defaults arrive with accounts in Phase 10) + per-run reference pick (`runs.reference_asset_id`) + `face`-format runs resolve VISUALS=LIBRARY to the selected reference asset (ready library clip/photo; photo → ffmpeg still-clip). NO AI generation here**; **dashboard cockpit first pass (ui-style-guide cockpit spec): KPI strip + active runs panel + awaiting-approval strip with render thumbnails — built from REAL data now available (runs, jobs, renders); countdown/deltas slots stay placeholder until Phase 10**.
+Non-goals: AI video generation (Phase 12), ElevenLabs (V2 premium), avatar generation (V2), accounts table (Phase 10), shooting-brief/awaiting_recording (REMOVED — superseded by the reference-asset model, not deferred).
 
 ## Phase 8 — Cloudflare R2 · token: START PHASE 8
 Goals: private storage, signed URLs, StorageProvider abstraction, upload/delete lifecycle, migration from local.
@@ -51,7 +51,7 @@ Goals: per-call cost recording (model, tokens/seconds, price), per-workspace cre
 Non-goals: Stripe, real payments. Security-auditor mandatory before close.
 
 ## Phase 12 — Quick Create AI Video · token: START PHASE 12
-Goals: VideoGenProvider adapter (single provider via aggregator, image-to-video), credit-gating, mandatory AI label, Quick Create UI wiring.
+Goals: VideoGenProvider adapter (single provider via aggregator, image-to-video), credit-gating, mandatory AI label, Quick Create UI wiring; input = an uploaded photo OR a library reference asset + prompt (reference-asset model: "make my cat cook in the kitchen" lives HERE, not in Phase 7).
 Non-goals: multiple providers, AI avatars, text-to-video epics. Compliance-reviewer mandatory before close.
 
 ## Phase 13 — Hardening · token: START PHASE 13

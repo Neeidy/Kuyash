@@ -16,6 +16,7 @@ use Kuyash\Library\AssetStorage;
 use Kuyash\Library\InvalidUploadException;
 use Kuyash\Library\UploadedFile;
 use Kuyash\Workspace\WorkspaceContext;
+use Kuyash\Workspace\WorkspaceSettings;
 
 final class LibraryController
 {
@@ -30,6 +31,7 @@ final class LibraryController
         private readonly WorkspaceContext $workspace,
         private readonly Csrf $csrf,
         private readonly Flash $flash,
+        private readonly WorkspaceSettings $settings,
         /** @var array<string, mixed> */
         private readonly array $libraryConfig,
     ) {
@@ -103,9 +105,31 @@ final class LibraryController
             'active' => 'library',
             'workspaceName' => $this->workspace->currentName(),
             'asset' => $asset,
+            'isAvatar' => $this->settings->avatarAssetId($this->workspace->id()) === $asset['id'],
             'csrfField' => $this->csrf->field(),
             'flashes' => $this->resolveFlashes(),
         ], 'layout/app'));
+    }
+
+    /** Set this asset as the workspace default avatar (reference-asset model). */
+    public function setAvatar(array $params = []): Response
+    {
+        $asset = $this->findFromParams($params);
+        if ($asset === null) {
+            return $this->notFound();
+        }
+
+        $ok = $this->settings->setAvatar($this->workspace->id(), $asset['id']);
+
+        return $this->backToLibrary($ok ? 'success' : 'error', $ok ? 'avatar.updated' : 'avatar.invalid');
+    }
+
+    /** Clear the workspace default avatar. */
+    public function clearAvatar(array $params = []): Response
+    {
+        $this->settings->clearAvatar($this->workspace->id());
+
+        return $this->backToLibrary('success', 'avatar.cleared');
     }
 
     /** @param array<string, string> $params */

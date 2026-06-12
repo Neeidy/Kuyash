@@ -32,3 +32,20 @@ AI labels, slop control, truthful approval records, guardrails — platform pena
 
 ## ADR-011: Truthful approval records
 Manual = real human record; Auto = "auto-approved by compliance agent". Never misrepresented — legal/trust requirement, enforced as a rule.
+
+## ADR-012: Reference-asset model replaces the shooting-brief flow (2026-06-12)
+The "face = human records a clip from a shooting brief, pipeline pauses at
+awaiting_recording" assumption is REMOVED (user decision — it was wrong; no human
+recording step exists in the product). Replacement: VISUALS can take a **reference
+subject** — a library **reference asset** (any photo/clip: own face, a cat, a
+product). The workspace/account avatar is just a pre-selected default reference
+asset; a per-run pick overrides it ("make this one with my cat").
+Phase boundaries (binding): **Phase 7** = avatar pointer (`workspaces.avatar_asset_id`
+— per-ACCOUNT defaults arrive with the accounts table in Phase 10) + per-run pick
+(`runs.reference_asset_id`) + `face`-format runs resolve VISUALS=LIBRARY to the
+selected reference asset (photo → ffmpeg still-clip), NO AI generation; **Phase 12**
+(Quick Create) = photo/reference + prompt → image-to-video AI, mandatory AI label;
+**V2** = HeyGen-class avatar generation. The `awaiting_recording` status stays in the
+runs/jobs CHECK enums as an unused stub (SQLite CHECK removal = table rebuild;
+harmless). The Phase 6 `format` recommendation (face/faceless) keeps its stored
+values; `face` now MEANS "reference".

@@ -60,7 +60,7 @@ use Kuyash\Core\View;
       </a>
     </nav>
     <div class="sidebar__foot">
-      <p>Phase 6 · Trend Radar<br>Trend discovery is mock-first (real YouTube / Google optional).</p>
+      <p>Phase 7 · Media Production<br>Real ffmpeg renders; TTS &amp; stock are mock-first (real optional).</p>
     </div>
   </aside>
 

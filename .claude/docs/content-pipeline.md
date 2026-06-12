@@ -8,8 +8,9 @@
 2. **Quick Create**: photo + prompt → ai_video_generation job → joins at assembly. Credit-gated; AI label mandatory.
 3. **Distribution-only**: existing LIBRARY asset → joins at caption/hashtag generation → compliance_check → publish.
 
-## Face content flow
-If a trend's recommended format is "face": script_draft also produces a **shooting brief** (what to record, duration, framing, hook timing). Pipeline pauses at `awaiting_recording` until the user uploads the clip to LIBRARY and marks it recorded; then continues at assembly.
+## Reference subject flow (replaces the removed "face content flow")
+There is NO human recording step, NO shooting brief, NO `awaiting_recording` pause (removed product assumption, 2026-06-12). When a trend's recommended format is `face` (= **reference**), `asset_fetch` resolves a **reference asset** in this order: per-run pick (`runs.reference_asset_id`) → workspace default avatar (`workspaces.avatar_asset_id`, Phase 7; per-account defaults arrive with accounts in Phase 10) → fall back to the stock path. Reference photos become ffmpeg still-clips; reference videos are trimmed segments. Photo/reference + prompt → AI image-to-video is the Quick Create entry (Phase 12).
+Schema note: the `awaiting_recording` status remains in the runs/jobs CHECK enums as an **unused stub** — removing a CHECK value in SQLite means a full table rebuild, and the stub is harmless. No code path may produce it.
 
 ## Job state fields
 job_id, workspace_id, user_id (nullable), entity_type, entity_id, status (queued|processing|awaiting_approval|awaiting_recording|ready|failed|published|cancelled), retry_count, max_retries, error_message, idempotency_key (nullable), created_at, started_at, finished_at, cost_cents (nullable), provider (nullable).

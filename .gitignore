@@ -40,3 +40,10 @@ storage/assets/
 
 # Phase 5 runtime state
 storage/worker.heartbeat
+
+# Phase 7 runtime media (renders, content-addressed cache, ffmpeg scratch, test fixtures)
+storage/renders/
+storage/cache/
+storage/work/
+storage/_test_media/
+storage/logs/

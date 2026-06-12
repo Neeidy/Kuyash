@@ -8,6 +8,7 @@ use Kuyash\Workflow\Nodes;
 
 /** @var array<string, mixed> $workflow */
 /** @var list<array<string, mixed>> $readyVideos ready library videos (distribution only) */
+/** @var list<array<string, mixed>> $references ready reference assets (full only) */
 /** @var string $csrfField trusted generated HTML */
 
 $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
@@ -16,7 +17,9 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
   <div>
     <h1><?= View::e($workflow['name']) ?></h1>
     <p class="screen-sub">Read-only node track — canonical order, fixed by design.
-      <?= $isDistribution ? 'Distributes one ready library video.' : 'Starts from a mock trend in Phase 4.' ?></p>
+      <?= $isDistribution
+          ? 'Distributes one ready library video.'
+          : 'Full pipeline: TTS + visuals + real ffmpeg render. Optionally build it around a reference subject.' ?></p>
   </div>
   <div class="screen-head__actions">
     <span class="chip chip--neutral mono"><?= View::e($workflow['template']) ?></span>
@@ -47,11 +50,24 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
             <?php endforeach; ?>
           </select>
         </label>
+        <?php elseif ($references !== []): ?>
+        <label class="field"><span>Reference subject (optional)</span>
+          <select name="reference_asset_id">
+            <option value="">— auto (workspace avatar / stock) —</option>
+            <?php foreach ($references as $ref): ?>
+            <option value="<?= (int) $ref['id'] ?>">
+              <?= View::e($ref['title']) ?> · <?= View::e($ref['kind']) ?><?= $ref['type'] === 'ai' ? ' · AI' : '' ?>
+            </option>
+            <?php endforeach; ?>
+          </select>
+        </label>
         <?php endif; ?>
         <button type="submit" class="btn btn--primary">Start run</button>
       </div>
-      <p class="note">All executors are mocks in Phase 4 — the run produces queue activity,
-        approvals and an event timeline, but no files and no real publishing.</p>
+      <p class="note"><?= $isDistribution
+          ? 'The library video is normalized to 9:16 at the final render.'
+          : 'A reference asset (avatar, a photo, anything) is composited as the visual; otherwise stock footage is used. TTS &amp; stock are mock-first; ffmpeg renders are real.' ?>
+        Real publishing is still Phase 10 (mock).</p>
     </form>
     <?php endif; ?>
   </div>

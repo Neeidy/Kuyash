@@ -7,39 +7,40 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-12
-- Güncelleyen: Claude (FAZ 6 İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor)
+- Güncelleyen: Claude (FAZ 7 İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 6 (Trend Radar Backend) İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor**
-  (2026-06-12). Working tree'de COMMIT EDİLMEMİŞ. Commit'ler: Faz 1 `ee042fa`, Faz 2 `b9728ed`,
-  Faz 3 `f7121e0`, Faz 4 `f56d4ab`, Faz 5 `d293145`, plan-doc `b673b1c` = HEAD.
-- Faz 6 içeriği: executor seam'e **ikinci gerçek sağlayıcı adapter'ı** — `trend_fetch` artık
-  `TrendProvider` soyutlamasının arkasında (Faz 5 deseni). `src/Trend/*`: TrendProvider (interface)
-  + TrendResult/TrendFeed VO + TrendProviderException + FormatRecommender (face/faceless, det.) +
-  MockTrendProvider (VARSAYILAN, niş-bazlı, offline, deterministik) + YouTubeTrendsProvider (GERÇEK,
-  Data API v3 search.list, flag-KAPALI, key gerekir) + GoogleTrendsProvider (GERÇEK, public
-  dailytrends `)]}',` prefix, flag-KAPALI, key'siz) + TrendRepository (cache batch'leri, raw int
-  workspace_id scope) + TrendConfigRepository (niş/region, allowlist) + QuotaCounter
-  (`api_quota_usage` günlük, sadece gerçek sağlayıcı) + TrendService (read-through cache + TTL +
-  serve-stale degradation) + TrendExecutor (niche path + create-from-trend selected path).
-  `src/Http/*`: HttpClient'a `get()` eklendi (CurlHttpClient shared send(); FakeHttpClient get+post).
-  Engine::startRun'a opsiyonel `$trendId` (full run'ı seçili cached trend'e pinler; tenant-scoped).
-  MockExecutor `trend_fetch`'i bıraktı. TrendController + 4 route (/trends, /niche, /refresh,
-  /create) + trends/index.php (niş seçici, freshness banner, kota chip'leri, trend wall) + nav
-  "Trends" + footer "Phase 6 · Trend Radar" + CSS. migration 0004_trends.sql (trends + trend_config
-  + api_quota_usage). config/trends.php + .env.example (TREND_MOCK=true varsayılan).
-- Doğrulama: lint temiz; **384 PASS, 0 FAIL** (47 yeni); sıfır ağ (testler FakeHttpClient); secret
-  yok; canlı iki-terminal smoke: /trends mock wall (fresh) → create-from-trend (trend_id=1 "cheap
-  meal prep") → run #8 entity=trend:1 → [Terminal-2] worker → trend_fetch origin=selected, idea
-  trend'i refere ediyor → script approval → approve → render approve → completed; niş değişimi
-  (fitness), geçersiz niş reddi, refresh çalışıyor; kota 0 (mock kaydedilmez).
-- Review (3 paralel): security-auditor **GO**, integration-reviewer **0 blocker**, php-architect
-  **GO** → **0 blocker**. Ucuz should-fix uygulandı: idx_trends_lookup'a `rank` (kapsayıcı index);
-  CurlHttpClient $url credential-guard yorumu; GoogleTrends `$titleQuery` shadow düzeltmesi.
-  Ertelenenler: `.claude/docs/phase-6-followups.md`. **KABUL EDİLMİŞ TRADEOFF:** web read-path
-  canlı fetch yapıyor (mock'ta dormant) — gerçek sağlayıcı PROD'da açılmadan önce fetch worker'a
-  taşınmalı (HARD GATE). GoogleTrends resmi-olmayan endpoint → prod'da mock kalır.
+- Aşama: **FAZ 7 (Media Production) İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor**
+  (2026-06-12). Working tree'de COMMIT EDİLMEMİŞ (Step A doc pivotu + Faz 7 birlikte gidecek).
+  Commit'ler: ... Faz 5 `d293145`, plan-doc `b673b1c`, **Faz 6 `393d666` = HEAD**, origin/main=HEAD.
+- Faz 7 içeriği: executor seam'e **gerçek ffmpeg + TTS + stock** (mock-first sağlayıcılar GERÇEK
+  ffmpeg'i besler). `src/Media/*` (~24 sınıf): Ffmpeg (proc_open arg-array, timeout, temp cleanup) +
+  MediaPaths (tagged ref'ler, traversal-proof) + WavWriter (saf-PHP WAV) + AssetCache (içerik-adresli
+  sha256, hit'te respend yok) + RenderRepository + AssemblyEngine (narrated + distribution; draft
+  540x960 + final 1080x1920) + TtsProvider seam (Mock gerçek WAV / OpenAi flag-KAPALI) + TtsExecutor +
+  SubtitleBuilder (script-timed SRT; **bu ffmpeg build'inde subtitles/drawtext YOK → SRT sidecar +
+  mov_text soft-mux; burn-in flag arkasında, libass-build followup**) + StockProvider seam (Mock
+  lavfi / Pexels flag-KAPALI) + AssetFetchExecutor (reference→avatar→stock çözümleme; foto→still-clip,
+  video→ref) + AssemblyExecutor (draft) + FinalRenderExecutor (onay-sonrası final). Nodes: PUBLISH →
+  render_review→**final_render**→publish (her iki template). RenderController + /render(authed,range) +
+  /render/{id}/poster. WorkspaceSettings avatar pointer + Library avatar butonu. Dashboard cockpit ilk
+  geçiş (KPI şerit + aktif run'lar + onay-bekleyen thumbnail'lar). migration 0005 (avatar_asset_id,
+  reference_asset_id, renders, asset_cache). config/media.php + .env.example (TTS_MOCK/STOCK_MOCK=true).
+- Doğrulama: lint temiz; **432 PASS, 0 FAIL** (46 yeni; ~8s, suite içinde GERÇEK ffmpeg render);
+  sıfır ağ (OpenAiTts/Pexels FakeHttpClient, ffmpeg lokal); secret yok; ffmpeg arg-injection testi
+  (shell metachar → literal dosya adı, komut DEĞİL); canlı iki-terminal smoke: full run → script
+  approve → [Terminal-2] worker GERÇEK draft render (540x960 21.6s poster) → /render authed (200/206/
+  poster) + queue <video> önizleme → render approve → final render (1080x1920) → completed; cockpit
+  KPI/aktif/thumbnail; reference picker + avatar butonu render ediyor.
+- Review (3 paralel): security **GO**, integration **0 blocker**, php-architect **GO** → **0 blocker**.
+  Ucuz should-fix uygulandı: RenderController resolve() (read side-effect yok); AssetCache UNIQUE-only
+  race-catch + json_encode dışarı; CurlHttpClient MAXFILESIZE 128MiB; OpenAiTts cost yorumu
+  (per-token approx); Ffmpeg/MediaPaths/FinalRender yorum netliği. **HARD GATE'ler**
+  (`.claude/docs/phase-7-followups.md`): Pexels download stream+cap (gerçek stock PROD öncesi);
+  trend web-fetch worker'a (Faz 6); burn-in libass-build gerektirir.
+- (Faz 6 referans: `trend_fetch` TrendProvider arkasında [Mock varsayılan / YouTube+Google flag-KAPALI];
+  HttpClient.get(); create-from-trend [Engine $trendId]; `api_quota_usage`; commit `393d666`.)
 - KURAL (kullanıcı, 2026-06-11): tüm run/test komutları `cd ~/Desktop/Kuyash &&` önekiyle.
 - Test: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
   Smoke (iki terminal): **[Terminal-1]** sunucu (8080 dolu → 8082)
@@ -56,6 +57,9 @@
   güvenlik kapısını çalıştır → `git push origin main`'i OTOMATİK yap (kullanıcıya sorma;
   memory: auto-push-after-phase).** Force push YASAK — `.claude/settings.json` allow `git push`,
   deny `--force/-f/--force-with-lease`.
+- **Reference-asset modeli (ADR-012, 2026-06-12):** shooting-brief/awaiting_recording KALDIRILDI.
+  `face` format = reference-subject (avatar varsayılan / herhangi foto-klip / per-run pick).
+  F7 çözümleme-only, F12 AI üretim, V2 avatar üretimi. `awaiting_recording` şemada ölü stub.
 - Stack sabit: Pure PHP 8.3 (framework yasak), SQLite WAL, Caddy + Cloudflare Tunnel, R2,
   OpenAI text/TTS, Pexels, Zernio (doc-gated), ffmpeg, Vanilla JS + custom CSS.
 - Faz disiplini: implementasyon yalnızca `START PHASE N` token'ı ile başlar.
@@ -66,13 +70,14 @@
 
 ## Sıradaki adım
 
-1. **Faz 6 kullanıcı kabulü + commit onayı bekleniyor.** Onay gelince: commit (atomic, açıklayıcı
-   mesaj) → güvenlik kapısı (secret tara) → `git push origin main` OTOMATİK (memory:
-   auto-push-after-phase; force YASAK).
-2. Sonra `/next-phase` (Plan Mode) → **Faz 7 (Media Production: TTS+Pexels+ffmpeg)**. Faz 6
-   tetikleyicileri dahil: web read-path canlı fetch'i worker'a taşı (gerçek sağlayıcı PROD gate'i);
-   awaiting_recording/shooting-brief pause (face format); draft-first render; asset cache; dashboard
-   cockpit first pass. Detay: `.claude/docs/phase-6-followups.md`.
+1. **Faz 7 kullanıcı kabulü + commit onayı bekleniyor.** Onay gelince TEK commit'e şunlar girer:
+   (a) Step A reference-asset doc pivotu (product-brief, content-pipeline, phase-plan, CLAUDE.md,
+   phase-6-followups SUPERSEDED, ADR-012) + phase-7-plan.md, (b) tüm Faz 7 kodu/UI/test. Sonra
+   güvenlik kapısı (secret tara) → `git push origin main` OTOMATİK (force YASAK).
+2. Sonra `/next-phase` (Plan Mode) → **Faz 8 (Cloudflare R2)**: private storage + signed URL +
+   StorageProvider soyutlaması + lokal→R2 migrasyonu. Faz 7 tetikleyicileri (`phase-7-followups.md`):
+   **Pexels download stream+cap HARD GATE** (gerçek stock PROD öncesi), render/cache eviction (R2
+   offload ile örtüşür), trend web-fetch worker'a (Faz 6 HARD GATE). İnşa yalnızca `START PHASE 8` ile.
 
 ## Açık konular / bekleyenler
 
@@ -85,13 +90,13 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
-- 2026-06-12 — START PHASE 6: Trend Radar Backend inşa edildi (TrendProvider seam: Mock varsayılan + gerçek-ama-kapalı YouTube/Google; HttpClient get(); TrendService read-through cache+TTL+serve-stale; QuotaCounter; create-from-trend Engine pin; /trends UI; migration 0004). 384 test PASS (47 yeni), canlı smoke OK. 3 reviewer 0 blocker, ucuz should-fix uygulandı. Kabul + commit onayı bekleniyor.
+- 2026-06-12 — START PHASE 7: Media Production inşa edildi (src/Media ~24 sınıf: Ffmpeg arg-array wrapper + MediaPaths + WavWriter + AssetCache içerik-adresli + AssemblyEngine draft/final + TTS seam [Mock gerçek WAV/OpenAi kapalı] + Stock seam [lavfi/Pexels kapalı] + AssetFetchExecutor reference→avatar→stock; Nodes final_render; RenderController /render authed; cockpit; reference-asset modeli; migration 0005). GERÇEK ffmpeg varsayılan. ffmpeg build subtitles/drawtext YOK → SRT sidecar+mov_text. 432 test PASS (46 yeni, suite-içi gerçek render), canlı smoke draft+final OK. 3 reviewer 0 blocker, ucuz should-fix uygulandı. Kabul + commit bekliyor.
+- 2026-06-12 — /next-phase + PİVOT: Faz 7 planı ONAYLANDI. Kullanıcı reference-asset modelini tanımladı → shooting-brief/awaiting_recording KALDIRILDI (ADR-012). Step A doc güncellemeleri yapıldı. ffmpeg GERÇEK varsayılan kararı.
+- 2026-06-12 — FAZ 6 KABUL: kullanıcı kabul + commit + push onayı verdi; key'li-URL redaction kanıt testi istedi (gerçek CurlHttpClient loopback:1 → exception'da key/query redact + uçtan uca). 386 test PASS. Faz 6 `393d666` commit'lendi, origin/main'e push edildi (auto-push).
+- 2026-06-12 — START PHASE 6: Trend Radar Backend inşa edildi (TrendProvider seam: Mock varsayılan + gerçek-ama-kapalı YouTube/Google; HttpClient get(); TrendService read-through cache+TTL+serve-stale; QuotaCounter; create-from-trend Engine pin; /trends UI; migration 0004). 3 reviewer 0 blocker, ucuz should-fix uygulandı.
 - 2026-06-12 — /next-phase: Faz 6 (Trend Radar Backend) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-6-plan.md`'e kaydedildi. Kullanıcı kararları: gerçek GoogleTrends+YouTube adapter'ları flag-KAPALI inşa (Faz 5 deseni); Creator Watch ERTELENDİ.
 - 2026-06-12 — FAZ 5 KABUL: kullanıcı kabul + commit onayı + 3 ek istedi (footer Phase 5; worker heartbeat → Dashboard/Queue "worker çalışmıyor" bandı; faz-kapanış smoke'larında [Terminal-2] etiketi → memory). 3 ek uygulandı, 337 test PASS, canlı doğrulandı. Faz 5 `d293145` commit'lendi; kullanıcının Faz 7 cockpit plan-düzenlemesi ayrı `b673b1c` docs commit'i. Sıra: /next-phase → START PHASE 6.
 - 2026-06-12 — START PHASE 5: Script & Caption Engine inşa edildi (TextProvider seam: Mock + gerçek-ama-kapalı OpenAI; HttpClient seam + sahte transport; PromptLibrary versiyonlu; VariationEngine tohumlu slop kontrolü; CostCalculator; ContentExecutor; cost-on-awaiting). 3 reviewer 0 blocker, tüm should-fix+NTH uygulandı.
 - 2026-06-12 — /next-phase: Faz 5 (Script & Caption Engine) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-5-plan.md`'e kaydedildi. Kararlar: engine-only UI, gerçek OpenAI yolu flag-kapalı, Claude ertelendi, migration yok.
 - 2026-06-12 — FAZ 4 KABUL: kullanıcı kabul + commit onayı verdi; Faz 4 `f56d4ab` olarak commit'lendi. Kullanıcının üç plan-doc düzenlemesi (Creator Watch, countdown, V2) ayrı `730456c` docs commit'iyle alındı.
-- 2026-06-12 — START PHASE 4: Workflow Engine inşa edildi (0003 şema+append-only events, Nodes/Validator/Engine/MockExecutor/Worker/Watchdog/Maintenance, bootstrap split, ErrorHandler CLI, bin/worker.php, 4 sayfa UI). 285 test PASS; 3 reviewer 0 blocker.
-- 2026-06-12 — /next-phase: Faz 4 planı Plan Mode'da ONAYLANDI. Karar: builder read-only + run trigger.
-- 2026-06-12 — FAZ 3 KABUL: kullanıcı kabul + commit onayı verdi; Faz 3 commit'lendi.
-- 2026-06-12 — START PHASE 3: Content Library inşa edildi. 180 test PASS; 3 reviewer 0 blocker, 14 should-fix uygulandı.
+- 2026-06-12 — START PHASE 4: Workflow Engine inşa edildi (0003 şema+append-only events, Nodes/Validator/Engine/MockExecutor/Worker/Watchdog/Maintenance, bin/worker.php, 4 sayfa UI). 285 test PASS; 3 reviewer 0 blocker.
