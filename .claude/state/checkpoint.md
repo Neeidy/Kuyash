@@ -54,6 +54,10 @@
 
 ## Verilmiş kararlar (özet)
 
+- **GitHub remote kuruldu** (2026-06-12): `origin` = https://github.com/neeidy/kuyash.git
+  (SSH host-key doğrulaması başarısızdı → HTTPS). **KURAL: her faz kapanış commit'inden
+  sonra `git push origin main`'i ÖNER/hatırlat** (force push YASAK; push öncesi secret/.env/
+  storage güvenlik kapısını çalıştır). Not: push tool-permission katmanında onay isteyebilir.
 - Stack sabit: Pure PHP 8.3 (framework yasak), SQLite WAL, Caddy + Cloudflare Tunnel, R2,
   OpenAI text/TTS, Pexels, Zernio (doc-gated), ffmpeg, Vanilla JS + custom CSS.
 - Faz disiplini: implementasyon yalnızca `START PHASE N` token'ı ile başlar.
