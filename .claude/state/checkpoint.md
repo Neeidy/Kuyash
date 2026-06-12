@@ -7,13 +7,13 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-12
-- Güncelleyen: Claude (FAZ 5 İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor)
+- Güncelleyen: Claude (FAZ 5 KABUL EDİLDİ ve commit'lendi — /next-phase → START PHASE 6 bekleniyor)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 5 (Script & Caption Engine) inşa edildi, reviewer'lardan geçti, kabul bekliyor**
-  (2026-06-12). Commit'ler: Faz 1 `ee042fa`, Faz 2 `b9728ed`, Faz 3 `f7121e0`, Faz 4 `f56d4ab`,
-  plan-doc `730456c` = HEAD; Faz 5 HENÜZ COMMIT'LENMEDİ (kullanıcı onayı şart).
+- Aşama: **FAZ 5 (Script & Caption Engine) KABUL EDİLDİ ve commit'lendi** (2026-06-12).
+  Commit'ler: Faz 1 `ee042fa`, Faz 2 `b9728ed`, Faz 3 `f7121e0`, Faz 4 `f56d4ab`,
+  Faz 5 `d293145`, plan-doc (Faz 7 cockpit) `b673b1c` = HEAD. Working tree temiz.
 - Faz 5 içeriği: executor seam'e **ilk gerçek sağlayıcı adapter'ı** — 4 içerik job tipi
   (idea/script/caption/hashtag) artık `TextProvider` soyutlamasının arkasında.
   `src/Content/*`: TextProvider (interface) + TextResult VO + Sanitizer + PromptLibrary
@@ -64,10 +64,12 @@
 
 ## Sıradaki adım
 
-1. **Kullanıcıdan Faz 5 KABUL + commit onayı bekleniyor** (verdict: KOŞULLU GO — tek koşul
-   kullanıcının kendi canlı turu). Manuel tur adımları yukarıdaki "Test" satırında.
-2. Kabul gelirse: Faz 5 commit'i (git-safety: açık onay şart) → `/next-phase` (Plan Mode)
-   → Faz 6 (Trend Radar Backend) planı → `START PHASE 6` token'ı.
+1. `/next-phase` (Plan Mode) → **Faz 6 (Trend Radar Backend)** planı. phase-5-followups.md'deki
+   Faz 6 tetikleyicileri dahil edilmeli: gerçek-trend semantik prompt-injection savunması
+   (Sanitizer yeterli değil), TrendProvider adapter'ı (mock-first, Google Trends + YouTube Data
+   official / TikTok best-effort), OpenAI/Pexels quota counter (`api_quota_usage`), Creator Watch
+   (opsiyonel alt-hedef), awaiting_recording/shooting-brief tetikleyicisi (face format).
+2. İnşa yalnızca `START PHASE 6` token'ı ile başlar — plan onayı kodu AÇMAZ.
 
 ## Açık konular / bekleyenler
 
@@ -80,7 +82,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
-- 2026-06-12 — START PHASE 5: Script & Caption Engine inşa edildi (TextProvider seam: Mock + gerçek-ama-kapalı OpenAI; HttpClient seam + sahte transport; PromptLibrary versiyonlu; VariationEngine tohumlu slop kontrolü; CostCalculator; ContentExecutor; cost-on-awaiting). 3 reviewer 0 blocker, tüm should-fix+NTH uygulandı. Kabul + 3 ek (footer, worker heartbeat bandı, [Terminal-2]) sonrası 337 test PASS; canlı smoke PASS. Commit bekleniyor.
+- 2026-06-12 — FAZ 5 KABUL: kullanıcı kabul + commit onayı + 3 ek istedi (footer Phase 5; worker heartbeat → Dashboard/Queue "worker çalışmıyor" bandı; faz-kapanış smoke'larında [Terminal-2] etiketi → memory). 3 ek uygulandı, 337 test PASS, canlı doğrulandı. Faz 5 `d293145` commit'lendi; kullanıcının Faz 7 cockpit plan-düzenlemesi ayrı `b673b1c` docs commit'i. Sıra: /next-phase → START PHASE 6.
+- 2026-06-12 — START PHASE 5: Script & Caption Engine inşa edildi (TextProvider seam: Mock + gerçek-ama-kapalı OpenAI; HttpClient seam + sahte transport; PromptLibrary versiyonlu; VariationEngine tohumlu slop kontrolü; CostCalculator; ContentExecutor; cost-on-awaiting). 3 reviewer 0 blocker, tüm should-fix+NTH uygulandı.
 - 2026-06-12 — /next-phase: Faz 5 (Script & Caption Engine) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-5-plan.md`'e kaydedildi. Kararlar: engine-only UI, gerçek OpenAI yolu flag-kapalı, Claude ertelendi, migration yok.
 - 2026-06-12 — FAZ 4 KABUL: kullanıcı kabul + commit onayı verdi; Faz 4 `f56d4ab` olarak commit'lendi. Kullanıcının üç plan-doc düzenlemesi (Creator Watch, countdown, V2) ayrı `730456c` docs commit'iyle alındı.
 - 2026-06-12 — START PHASE 4: Workflow Engine inşa edildi (0003 şema+append-only events, Nodes/Validator/Engine/MockExecutor/Worker/Watchdog/Maintenance, bootstrap split, ErrorHandler CLI, bin/worker.php, 4 sayfa UI). 285 test PASS; 3 reviewer 0 blocker.
