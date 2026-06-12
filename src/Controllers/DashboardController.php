@@ -8,6 +8,7 @@ use Kuyash\Auth\Auth;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Response;
 use Kuyash\Core\View;
+use Kuyash\Workflow\WorkerHeartbeat;
 use Kuyash\Workspace\WorkspaceContext;
 use RuntimeException;
 
@@ -18,6 +19,7 @@ final class DashboardController
         private readonly Auth $auth,
         private readonly WorkspaceContext $workspace,
         private readonly Csrf $csrf,
+        private readonly WorkerHeartbeat $heartbeat,
     ) {
     }
 
@@ -44,6 +46,7 @@ final class DashboardController
             'workspaceName' => $workspace['name'],
             'role' => $workspace['role'],
             'csrfField' => $this->csrf->field(),
+            'workerAlive' => $this->heartbeat->isAlive(gmdate('Y-m-d\TH:i:s\Z')),
         ], 'layout/app'));
     }
 }

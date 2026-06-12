@@ -37,3 +37,6 @@ build/
 storage/sessions/
 storage/database/
 storage/assets/
+
+# Phase 5 runtime state
+storage/worker.heartbeat

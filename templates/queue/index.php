@@ -10,7 +10,15 @@ use Kuyash\Core\View;
 /** @var list<array<string, mixed>> $jobs newest first */
 /** @var list<array<string, mixed>> $runs newest first */
 /** @var string $csrfField trusted generated HTML */
+/** @var bool $workerAlive */
 ?>
+<?php if (($workerAlive ?? true) === false): ?>
+<div class="callout callout--warn callout--banner" role="alert">
+  <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13.5h13z"/><path d="M8 6.5V10M8 12h.01"/></svg></span>
+  <div><strong>The background worker is not running.</strong> Queued jobs below will sit idle
+    until it starts — run <span class="mono">php bin/worker.php</span>.</div>
+</div>
+<?php endif; ?>
 <div class="screen-head">
   <div>
     <h1>Queue</h1>
@@ -36,6 +44,15 @@ use Kuyash\Core\View;
           <div class="approve-card__meta">
             <span class="chip chip--neutral mono"><?= View::e($job['type']) ?></span>
             <span class="chip chip--warn"><span class="dot"></span>awaiting approval</span>
+            <?php if ($job['provider'] !== null): ?>
+            <span class="chip chip--faint mono"><?= View::e((string) $job['provider']) ?></span>
+            <?php endif; ?>
+            <?php if (isset($job['result']['prompt_version'])): ?>
+            <span class="chip chip--faint mono"><?= View::e((string) $job['result']['prompt_version']) ?></span>
+            <?php endif; ?>
+            <?php if (isset($job['result']['word_count'], $job['result']['estimated_duration_s'])): ?>
+            <span class="chip chip--neutral num"><?= (int) $job['result']['word_count'] ?> words · ~<?= View::e((string) $job['result']['estimated_duration_s']) ?>s</span>
+            <?php endif; ?>
             <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $job['run_id'] ?>">View run</a>
           </div>
           <?php if ($job['type'] === 'script_draft' && isset($job['result']['script'])): ?>
@@ -81,7 +98,7 @@ use Kuyash\Core\View;
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type mono"><?= View::e($job['type']) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity">run #<?= (int) $job['run_id'] ?> · <?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::e((string) $job['provider']) : '' ?></span>
+          <span class="job-row__entity">run #<?= (int) $job['run_id'] ?> · <?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
           <?php if ($job['status'] === 'failed' && $job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?> (retry <?= $job['retry_count'] ?>/<?= $job['max_retries'] ?>)</span>
           <?php endif; ?>

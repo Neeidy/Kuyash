@@ -7,10 +7,11 @@ namespace Kuyash\Workflow;
 use Kuyash\Core\Database;
 
 /**
- * The one mock executor for all 13 job types (mock-first rule). Outputs are
- * deterministic — seeded by run_id/job_id, no randomness — and exist ONLY in
- * result_json: no files are produced, no asset rows are created, no network
- * is touched.
+ * The mock executor for the NON-content job types (trend_fetch, tts,
+ * asset_fetch, assembly, music_note, preview, compliance_check, render_review,
+ * publish). The four content types (idea/script/caption/hashtag) are served by
+ * ContentExecutor + a TextProvider (Phase 5) — this class no longer generates
+ * content. Outputs are deterministic, result_json-only, and touch no network.
  *
  * Honesty rules baked in:
  * - provider is always 'mock'; costCents stays null (mock work is never
@@ -26,12 +27,6 @@ final class MockExecutor implements JobExecutor
     private const MOCK_TRENDS = [
         '5-minute desk stretches', 'one-pan dinner ideas', 'budget travel hacks',
         'phone photography tricks', 'morning routine reset',
-    ];
-
-    private const MOCK_HOOKS = [
-        'Stop scrolling — this takes 15 seconds.',
-        'Nobody tells you this until it is too late.',
-        'I tested it so you do not have to.',
     ];
 
     public function __construct(private readonly Database $db)
@@ -50,18 +45,6 @@ final class MockExecutor implements JobExecutor
                 'source' => 'mock',
             ], 'mock'),
 
-            'idea_generation' => JobResult::ready([
-                'idea' => 'Angle on "' . ($prior['trend_fetch']['trend'] ?? 'an evergreen topic') . '"',
-                'hook' => self::pick(self::MOCK_HOOKS, $seed),
-                'format' => '15-45s vertical',
-            ], 'mock'),
-
-            'script_draft' => JobResult::awaitingApproval([
-                'script' => self::mockScript($prior, $seed),
-                'word_count' => 58,
-                'estimated_duration_s' => 28,
-            ], 'mock'),
-
             'tts' => JobResult::ready([
                 'voice' => 'mock-voice-1',
                 'duration_s' => 28.4,
@@ -74,15 +57,6 @@ final class MockExecutor implements JobExecutor
                 'duration_s' => 29.0,
                 'aspect' => '9:16',
                 'note' => 'no render produced (mock)',
-            ], 'mock'),
-
-            'caption_generation' => JobResult::ready([
-                'caption' => 'Mock caption ' . ($seed % 100) . ' — per-platform variants arrive with the real engine.',
-                'platforms' => ['instagram', 'tiktok', 'youtube'],
-            ], 'mock'),
-
-            'hashtag_generation' => JobResult::ready([
-                'hashtags' => ['#mock' . ($seed % 10), '#shorts', '#reels'],
             ], 'mock'),
 
             'music_note' => JobResult::ready([
@@ -149,18 +123,6 @@ final class MockExecutor implements JobExecutor
             'duration_s' => $asset['duration_s'] === null ? null : (float) $asset['duration_s'],
             'ai_label_required' => $asset['type'] === 'ai',
         ], 'mock');
-    }
-
-    /** @param array<string, array<string, mixed>> $prior */
-    private static function mockScript(array $prior, int $seed): string
-    {
-        $hook = $prior['idea_generation']['hook'] ?? self::pick(self::MOCK_HOOKS, $seed);
-        $topic = $prior['trend_fetch']['trend'] ?? 'today\'s topic';
-
-        return $hook . "\n\n"
-            . 'Here is the mock draft about ' . $topic . '. '
-            . 'Three quick beats, one practical takeaway, and a call to action. '
-            . "\n\n(Mock script — the real script engine arrives in Phase 5.)";
     }
 
     /** @param list<string> $options */

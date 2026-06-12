@@ -32,10 +32,16 @@ final class JobResult
         return new self(self::STATUS_READY, $result, null, $costCents, $provider);
     }
 
-    /** @param array<string, mixed> $result */
-    public static function awaitingApproval(array $result, ?string $provider = null): self
+    /**
+     * @param array<string, mixed> $result
+     *
+     * costCents is accepted here too: a real generation (e.g. an OpenAI script)
+     * spends money BEFORE the human approval gate, so the spend is recorded on
+     * the paused job rather than lost. Mock keeps it null.
+     */
+    public static function awaitingApproval(array $result, ?string $provider = null, ?int $costCents = null): self
     {
-        return new self(self::STATUS_AWAITING_APPROVAL, $result, null, null, $provider);
+        return new self(self::STATUS_AWAITING_APPROVAL, $result, null, $costCents, $provider);
     }
 
     /** @param array<string, mixed> $result */

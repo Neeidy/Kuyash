@@ -55,7 +55,7 @@ use Kuyash\Core\View;
       </a>
     </nav>
     <div class="sidebar__foot">
-      <p>Phase 4 · Workflow Engine<br>All executors are mocks — no external calls.</p>
+      <p>Phase 5 · Script &amp; Caption Engine<br>Text generation is mock-first (real OpenAI optional).</p>
     </div>
   </aside>
 

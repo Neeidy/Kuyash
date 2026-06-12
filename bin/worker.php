@@ -60,8 +60,11 @@ if (extension_loaded('pcntl')) {
 $worker = $container->get(Worker::class);
 /** @var Maintenance $maintenance */
 $maintenance = $container->get(Maintenance::class);
+/** @var Kuyash\Workflow\WorkerHeartbeat $heartbeat */
+$heartbeat = $container->get(Kuyash\Workflow\WorkerHeartbeat::class);
 
 $chores = $maintenance->run(gmdate('Y-m-d\TH:i:s\Z'));
+$heartbeat->beat(gmdate('Y-m-d\TH:i:s\Z')); // mark alive immediately on start
 fwrite(STDOUT, sprintf(
     "worker: started (maintenance: %d login rows pruned, %d orphan files swept)\n",
     $chores['pruned_login_attempts'],
@@ -70,8 +73,15 @@ fwrite(STDOUT, sprintf(
 
 $processed = 0;
 $lastChores = time();
+$lastBeat = time();
 
 while (!$stop) {
+    // heartbeat at most every 5s (the web UI warns when it goes >30s stale)
+    if (time() - $lastBeat >= 5) {
+        $heartbeat->beat(gmdate('Y-m-d\TH:i:s\Z'));
+        $lastBeat = time();
+    }
+
     // chores run on the ~5min cadence regardless of load — checking only on
     // idle ticks would starve maintenance under a continuously full queue
     if (time() - $lastChores >= 300) {

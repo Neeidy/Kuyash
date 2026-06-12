@@ -37,6 +37,7 @@ use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\JobRepository;
 use Kuyash\Workflow\RunRepository;
+use Kuyash\Workflow\WorkerHeartbeat;
 use Kuyash\Workflow\WorkflowRepository;
 use Kuyash\Workspace\WorkspaceContext;
 
@@ -95,6 +96,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(Auth::class),
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
+        $c->get(WorkerHeartbeat::class),
     ));
 
     $container->bind(AssetValidator::class, static function (Container $c): AssetValidator {
@@ -166,6 +168,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(Auth::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+        $c->get(WorkerHeartbeat::class),
     ));
 
     $container->bind(LogsController::class, static fn (Container $c): LogsController => new LogsController(

@@ -8,9 +8,16 @@ declare(strict_types=1);
  * scope comes from the workspace_id on each claimed job row).
  */
 
+use Kuyash\Content\ContentExecutor;
+use Kuyash\Content\MockTextProvider;
+use Kuyash\Content\OpenAiTextProvider;
+use Kuyash\Content\PromptLibrary;
+use Kuyash\Content\TextProvider;
+use Kuyash\Content\VariationEngine;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Database;
+use Kuyash\Http\CurlHttpClient;
 use Kuyash\Library\AssetRepository;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
@@ -18,6 +25,7 @@ use Kuyash\Workflow\ExecutorRegistry;
 use Kuyash\Workflow\JobRepository;
 use Kuyash\Workflow\MockExecutor;
 use Kuyash\Workflow\RunRepository;
+use Kuyash\Workflow\WorkerHeartbeat;
 use Kuyash\Workflow\WorkflowRepository;
 use Kuyash\Workflow\WorkflowValidator;
 
@@ -57,11 +65,45 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkflowValidator::class),
     ));
 
-    // Phase 4: the single MockExecutor serves all 13 job types. Later phases
-    // swap individual types to real adapters with one register() line each.
+    // Worker liveness signal — written by the worker, read by the web UI
+    // (shared so both containers resolve the same file path).
+    $container->bind(WorkerHeartbeat::class, static fn (): WorkerHeartbeat => new WorkerHeartbeat(
+        $basePath . '/storage/worker.heartbeat',
+    ));
+
+    // TextProvider (Phase 5): real OpenAI ONLY when OPENAI_MOCK=false AND a key
+    // is present; otherwise the deterministic offline mock. Swap = config only.
+    $container->bind(TextProvider::class, static function (Container $c): TextProvider {
+        $cfg = (array) $c->get(Config::class)->get('openai');
+        $useReal = ($cfg['mock'] ?? true) === false && ($cfg['api_key'] ?? '') !== '';
+
+        if ($useReal) {
+            return new OpenAiTextProvider(
+                new CurlHttpClient(),       // constructed only on the real path
+                new PromptLibrary(),
+                new VariationEngine(),
+                $cfg,
+            );
+        }
+
+        return new MockTextProvider(new VariationEngine(), new PromptLibrary());
+    });
+
+    $container->bind(ContentExecutor::class, static fn (Container $c): ContentExecutor => new ContentExecutor(
+        $c->get(TextProvider::class),
+    ));
+
+    // MockExecutor serves the 9 non-content types; ContentExecutor (behind a
+    // TextProvider) serves the 4 content types — one register() line each
+    // (adapter rule). Later phases swap more types the same way.
     $container->bind(ExecutorRegistry::class, static function (Container $c): ExecutorRegistry {
         $registry = new ExecutorRegistry();
         $registry->registerForAll(new MockExecutor($c->get(Database::class)));
+
+        $content = $c->get(ContentExecutor::class);
+        foreach (ContentExecutor::contentTypes() as $type) {
+            $registry->register($type, $content);
+        }
 
         return $registry;
     });

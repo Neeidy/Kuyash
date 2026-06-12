@@ -13,8 +13,12 @@ use Kuyash\Workflow\Nodes;
 /** @var list<array<string, mixed>> $approvals with decided_by_email */
 
 $jobsByNode = [];
+$contentByType = [];
 foreach ($jobs as $job) {
     $jobsByNode[(string) $job['node']][] = $job;
+    if (in_array($job['type'], ['idea_generation', 'script_draft', 'caption_generation', 'hashtag_generation'], true)) {
+        $contentByType[(string) $job['type']] = $job;
+    }
 }
 
 // node display state from its jobs: failed > awaiting > running > done > pending
@@ -75,6 +79,61 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
   </div>
 </div>
 
+<?php if ($contentByType !== []): ?>
+<div class="card">
+  <div class="card__head"><h2>Generated content</h2></div>
+  <div class="card__body">
+    <?php
+    $idea = $contentByType['idea_generation']['result'] ?? [];
+    $script = $contentByType['script_draft']['result'] ?? [];
+    $captions = $contentByType['caption_generation']['result']['captions'] ?? [];
+    $hashtags = $contentByType['hashtag_generation']['result']['hashtags'] ?? [];
+    ?>
+    <?php if (isset($idea['hook']) || isset($idea['idea'])): ?>
+    <div class="content-block">
+      <h3 class="content-block__label">Idea</h3>
+      <?php if (isset($idea['hook'])): ?><p class="content-block__hook">“<?= View::e((string) $idea['hook']) ?>”</p><?php endif; ?>
+      <?php if (isset($idea['idea'])): ?><p class="content-block__body"><?= View::e((string) $idea['idea']) ?></p><?php endif; ?>
+    </div>
+    <?php endif; ?>
+
+    <?php if (isset($script['script'])): ?>
+    <div class="content-block">
+      <h3 class="content-block__label">Script
+        <?php if (isset($script['word_count'])): ?><span class="chip chip--faint num"><?= (int) $script['word_count'] ?> words · ~<?= View::e((string) ($script['estimated_duration_s'] ?? '?')) ?>s</span><?php endif; ?>
+        <?php if (isset($script['prompt_version'])): ?><span class="chip chip--faint mono"><?= View::e((string) $script['prompt_version']) ?></span><?php endif; ?>
+      </h3>
+      <blockquote class="content-block__script"><?= nl2br(View::e((string) $script['script'])) ?></blockquote>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($captions !== []): ?>
+    <div class="content-block">
+      <h3 class="content-block__label">Captions (per platform)</h3>
+      <dl class="caption-grid">
+        <?php foreach ($captions as $platform => $caption): ?>
+        <div class="caption-grid__row">
+          <dt class="mono"><?= View::e((string) $platform) ?></dt>
+          <dd><?= View::e((string) $caption) ?></dd>
+        </div>
+        <?php endforeach; ?>
+      </dl>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($hashtags !== []): ?>
+    <div class="content-block">
+      <h3 class="content-block__label">Hashtags</h3>
+      <div class="tag-row">
+        <?php foreach ($hashtags as $tag): ?><span class="tag"><?= View::e((string) $tag) ?></span><?php endforeach; ?>
+      </div>
+    </div>
+    <?php endif; ?>
+    <p class="note">All content is generated mock-first; provider and any real cost are shown per job below.</p>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="card">
   <div class="card__head"><h2>Jobs</h2></div>
   <div class="card__body">
@@ -83,7 +142,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type mono"><?= (int) $job['step'] ?>. <?= View::e($job['type']) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity"><?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · provider: ' . View::e((string) $job['provider']) : '' ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
+          <span class="job-row__entity"><?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · provider: ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
           <?php if ($job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?></span>
           <?php endif; ?>

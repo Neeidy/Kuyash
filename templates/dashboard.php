@@ -8,7 +8,15 @@ use Kuyash\Core\View;
 /** @var string $name */
 /** @var string $workspaceName */
 /** @var string $role */
+/** @var bool $workerAlive */
 ?>
+<?php if (($workerAlive ?? true) === false): ?>
+<div class="callout callout--warn callout--banner" role="alert">
+  <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13.5h13z"/><path d="M8 6.5V10M8 12h.01"/></svg></span>
+  <div><strong>The background worker is not running.</strong> Queued pipeline jobs won’t
+    progress until it starts. Start it with <span class="mono">php bin/worker.php</span>.</div>
+</div>
+<?php endif; ?>
 <div class="screen-head">
   <div>
     <h1>Dashboard</h1>

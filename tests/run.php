@@ -831,10 +831,23 @@ check('bootstrap-worker: ErrorHandler resolvable (CLI mode)', $workerApp->get(Er
 
 /* ================== Phase 4: Workflow Engine ================== */
 
+use Kuyash\Content\ContentExecutor;
+use Kuyash\Content\CostCalculator;
+use Kuyash\Content\MockTextProvider;
+use Kuyash\Content\OpenAiTextProvider;
+use Kuyash\Content\PromptLibrary;
+use Kuyash\Content\Sanitizer;
+use Kuyash\Content\TextProvider;
+use Kuyash\Content\TextProviderException;
+use Kuyash\Content\TextResult;
+use Kuyash\Content\VariationEngine;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Messages;
+use Kuyash\Http\HttpClient;
+use Kuyash\Http\HttpResponse;
+use Kuyash\Http\HttpTransportException;
 use Kuyash\Workflow\Decision;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
@@ -848,6 +861,7 @@ use Kuyash\Workflow\Nodes;
 use Kuyash\Workflow\RunRepository;
 use Kuyash\Workflow\Watchdog;
 use Kuyash\Workflow\Worker;
+use Kuyash\Workflow\WorkerHeartbeat;
 use Kuyash\Workflow\WorkflowException;
 use Kuyash\Workflow\WorkflowRepository;
 use Kuyash\Workflow\WorkflowValidator;
@@ -890,7 +904,14 @@ function seedReadyVideo(Database $db, int $wsId, string $title = 'Distribute me'
 }
 
 /** Engine + Worker wired to a shared, controllable clock string. */
-function makeRig(Database $db, JobExecutor $executor, string &$now): array
+/**
+ * Mirrors the production binding: the base executor serves every type, and
+ * when it is a MockExecutor the 4 content types are overlaid with a real
+ * ContentExecutor(MockTextProvider) — so MockExecutor-based e2e tests exercise
+ * the actual Phase 5 content seam. Mechanic tests (Recording/AlwaysThrows) pass
+ * non-MockExecutor bases and keep their single executor for all types.
+ */
+function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvider $contentProvider = null): array
 {
     $clock = static function () use (&$now): string {
         return $now;
@@ -899,6 +920,15 @@ function makeRig(Database $db, JobExecutor $executor, string &$now): array
     $engine = new Engine($db, $events, new WorkflowValidator(), $clock);
     $registry = new ExecutorRegistry();
     $registry->registerForAll($executor);
+
+    if ($executor instanceof MockExecutor) {
+        $provider = $contentProvider ?? new MockTextProvider(new VariationEngine(), new PromptLibrary());
+        $content = new ContentExecutor($provider);
+        foreach (['idea_generation', 'script_draft', 'caption_generation', 'hashtag_generation'] as $t) {
+            $registry->register($t, $content);
+        }
+    }
+
     $watchdog = new Watchdog($db, $events);
     $worker = new Worker($db, $engine, $registry, $events, $watchdog, 'test-worker:1:abcd', $clock);
 
@@ -1148,13 +1178,20 @@ check('full run: stops at script approval', (static function () use ($p4runs, $p
     return $run['status'] === 'awaiting_approval' && $run['current_node'] === 'SCRIPT'
         && count($jobs) === 3 && $last['type'] === 'script_draft' && $last['status'] === 'awaiting_approval';
 })());
-check('full run: prior results flow between mocks', (static function () use ($p4jobs, $p4ctx, $fullRunId): bool {
+check('full run: prior results flow through the content engine', (static function () use ($p4jobs, $p4ctx, $fullRunId): bool {
     $jobs = $p4jobs->jobsForRun($p4ctx, $fullRunId);
     $trend = $jobs[0]['result']['trend'] ?? '';
     $idea = $jobs[1]['result']['idea'] ?? '';
+    $hook = $jobs[1]['result']['hook'] ?? '';
     $script = $jobs[2]['result']['script'] ?? '';
 
-    return $trend !== '' && str_contains($idea, $trend) && str_contains($script, 'Mock script');
+    // idea references the trend; script embeds the idea's hook + the topic;
+    // content jobs carry a prompt_version stamp + provider 'mock'
+    return $trend !== '' && str_contains($idea, $trend)
+        && $hook !== '' && str_contains($script, $hook) && str_contains($script, $trend)
+        && ($jobs[1]['result']['prompt_version'] ?? '') === 'idea.v1'
+        && ($jobs[2]['result']['prompt_version'] ?? '') === 'script.v1'
+        && $jobs[1]['provider'] === 'mock' && $jobs[2]['provider'] === 'mock';
 })());
 
 $scriptJob = $p4jobs->awaitingApproval($p4ctx)[0];
@@ -1643,7 +1680,8 @@ $ctlRunId = $p4engine->startRun($p4ctx, $distWfA, $distAssetId, $p4UserA);
 while ($p4worker->tick()) {
 }
 $p4auth = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
-$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash());
+$deadHeartbeat = new WorkerHeartbeat(tempDir('hb') . '/none.heartbeat'); // never beaten → "not running"
+$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat);
 $wfCtl = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
     new AssetRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
@@ -1688,6 +1726,10 @@ check('queue ctl: renders awaiting approvals + jobs + runs', (static function ()
     return str_contains($body, 'Approvals') && str_contains($body, 'render_review')
         && str_contains($body, 'never faked');
 })());
+check('queue ctl: warns when the worker is not running', (static function () use ($queueCtl): bool {
+    // $deadHeartbeat was never beaten → isAlive false → band shown
+    return str_contains($queueCtl->index()->body(), 'background worker is not running');
+})());
 check('queue ctl: non-numeric job id → 404', $queueCtl->approve(['id' => 'abc'])->status() === 404
     && $queueCtl->retry(['id' => '../1'])->status() === 404);
 check('runs ctl: run detail shows truthful approval + timeline', (static function () use ($wfCtl, $fullRunId): bool {
@@ -1709,7 +1751,7 @@ $_SESSION = [];
 $_SESSION['auth_user_id'] = $p4UserB;
 $p4ctx->set($p4WsB);
 $authB = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
-$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash());
+$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat);
 $wfCtlB = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
     new AssetRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
@@ -1720,6 +1762,461 @@ check('isolation ctl: B retrying A\'s job → 404', $queueCtlB->retry(['id' => (
 check('isolation ctl: B viewing A\'s run → 404', $wfCtlB->showRun(['id' => (string) $fullRunId])->status() === 404);
 check('isolation ctl: B viewing A\'s workflow → 404', $wfCtlB->show(['id' => (string) $fullWfA])->status() === 404);
 $_SESSION = [];
+
+/* ================== Phase 5: Script & Caption Engine ================== */
+
+/** Queue-driven fake transport: each post() returns the next queued response or throws. */
+final class FakeHttpClient implements HttpClient
+{
+    /** @var list<array{url: string, headers: array<string, string>, body: string}> */
+    public array $calls = [];
+
+    /** @param list<HttpResponse|HttpTransportException> $queue */
+    public function __construct(private array $queue)
+    {
+    }
+
+    public function post(string $url, array $headers, string $body, int $timeoutSeconds): HttpResponse
+    {
+        $this->calls[] = ['url' => $url, 'headers' => $headers, 'body' => $body];
+        $next = array_shift($this->queue);
+        if ($next instanceof HttpTransportException) {
+            throw $next;
+        }
+        if ($next instanceof HttpResponse) {
+            return $next;
+        }
+
+        throw new RuntimeException('FakeHttpClient queue exhausted');
+    }
+}
+
+/** Provider stub that reports a real cost (proves cost-on-awaiting persistence). */
+final class StubCostTextProvider implements TextProvider
+{
+    public function name(): string
+    {
+        return 'openai';
+    }
+
+    public function generate(string $kind, array $context, int $seed): TextResult
+    {
+        $data = match ($kind) {
+            'idea' => ['idea' => 'stub idea', 'hook' => 'stub hook', 'format' => '15-45s vertical'],
+            'script' => ['script' => 'hook line. body line. cta line.', 'word_count' => 6, 'estimated_duration_s' => 2.4],
+            'caption' => ['captions' => ['instagram' => 'ig', 'tiktok' => 'tt', 'youtube' => 'yt']],
+            'hashtag' => ['hashtags' => ['#a', '#b', '#c']],
+            default => [],
+        };
+
+        return new TextResult($data, 'openai', 'stub.v1', 'gpt-4o-mini', $kind === 'script' ? 7 : 2);
+    }
+}
+
+/** Build a realistic OpenAI 200 body: choices[0].message.content is a JSON string. */
+function openAiBody(array $contentObject, int $inTokens = 100, int $outTokens = 50): HttpResponse
+{
+    $payload = [
+        'choices' => [['message' => ['content' => json_encode($contentObject, JSON_THROW_ON_ERROR)]]],
+        'usage' => ['prompt_tokens' => $inTokens, 'completion_tokens' => $outTokens],
+    ];
+
+    return new HttpResponse(200, json_encode($payload, JSON_THROW_ON_ERROR));
+}
+
+const OPENAI_CFG = [
+    'api_key' => 'sk-test-SECRET-DO-NOT-LEAK',
+    'org_id' => '',
+    'model' => 'gpt-4o-mini',
+    'timeout' => 5,
+    'temperature' => 0.7,
+    'endpoint' => 'https://api.openai.test/v1/chat/completions',
+    'prices' => ['gpt-4o-mini' => ['in' => 15.0, 'out' => 60.0]],
+];
+
+echo "== Content: Sanitizer ==\n";
+
+check('sanitizer: strips control chars', Sanitizer::clean("a\x00b\x07c") === 'abc');
+check('sanitizer: folds whitespace', Sanitizer::clean("a\n\t  b   c") === 'a b c');
+check('sanitizer: clamps length', mb_strlen(Sanitizer::clean(str_repeat('x', 500), 100)) === 100);
+check('sanitizer: trims edges', Sanitizer::clean('  hi  ') === 'hi');
+
+echo "== Content: VariationEngine ==\n";
+
+$ve = new VariationEngine();
+check('variation: deterministic for same seed', $ve->variant(12345) === $ve->variant(12345));
+check('variation: topic substituted into hook', str_contains($ve->hook(3, 'desk stretches'), 'desk stretches'));
+check('variation: independent dimensions present', (static function () use ($ve): bool {
+    $v = $ve->variant(7);
+
+    return isset($v['hook'], $v['pacing'], $v['opener'], $v['cta']) && $v['hook'] !== '';
+})());
+check('variation: seeds produce diverse hooks (slop control)', (static function () use ($ve): bool {
+    $hooks = [];
+    for ($s = 0; $s < VariationEngine::hookPoolSize() * 2; $s++) {
+        $hooks[] = $ve->hook($s);
+    }
+    $distinct = count(array_unique($hooks));
+
+    return $distinct >= VariationEngine::hookPoolSize(); // every hook reachable
+})());
+check('variation: two runs lower similarity vs identical', (static function () use ($ve): bool {
+    $a = $ve->hook(1, 'topic x');
+    $b = $ve->hook(2, 'topic x'); // different hook scaffold, same topic
+    $selfSim = VariationEngine::similarity($a, $a);
+    $crossSim = VariationEngine::similarity($a, $b);
+
+    return $a !== $b && $selfSim === 1.0 && $crossSim < 1.0;
+})());
+check('variation: similarity metric basics', VariationEngine::similarity('a b c', 'a b c') === 1.0
+    && VariationEngine::similarity('a b', 'c d') === 0.0
+    && VariationEngine::similarity('a b c d', 'a b x y') === (2 / 6));
+
+echo "== Content: PromptLibrary ==\n";
+
+$pl = new PromptLibrary();
+check('prompts: versioned keys per kind', $pl->version('idea') === 'idea.v1'
+    && $pl->version('script') === 'script.v1' && $pl->version('caption') === 'caption.v1'
+    && $pl->version('hashtag') === 'hashtag.v1');
+check('prompts: three platforms', PromptLibrary::platforms() === ['instagram', 'tiktok', 'youtube']);
+check('prompts: messages carry system + user with sanitized topic', (static function () use ($pl, $ve): bool {
+    $msgs = $pl->messages('script', ['topic' => "evil\x00topic", 'hook' => 'H', 'idea' => 'I'], $ve->variant(1));
+
+    return count($msgs) === 2 && $msgs[0]['role'] === 'system' && $msgs[1]['role'] === 'user'
+        && str_contains($msgs[1]['content'], 'eviltopic') && !str_contains($msgs[1]['content'], "\x00")
+        && str_contains($msgs[1]['content'], 'STRICT JSON') === false // strictness lives in system msg
+        && str_contains($msgs[0]['content'], 'STRICT JSON');
+})());
+
+echo "== Content: MockTextProvider ==\n";
+
+$mtp = new MockTextProvider($ve, $pl);
+
+check('mock provider: idea references trend + has hook/format/version', (static function () use ($mtp): bool {
+    $r = $mtp->generate('idea', ['topic' => 'desk stretches'], 100);
+
+    return str_contains($r->data['idea'], 'desk stretches') && ($r->data['hook'] ?? '') !== ''
+        && $r->data['format'] === '15-45s vertical' && $r->provider === 'mock'
+        && $r->costCents === null && $r->promptVersion === 'idea.v1';
+})());
+check('mock provider: script carries computed word_count + duration', (static function () use ($mtp): bool {
+    $r = $mtp->generate('script', ['topic' => 'desk stretches', 'hook' => 'My hook', 'idea' => 'My idea'], 100);
+    $words = count(preg_split('/\s+/', trim((string) $r->data['script']), -1, PREG_SPLIT_NO_EMPTY) ?: []);
+
+    return str_contains($r->data['script'], 'My hook') && str_contains($r->data['script'], 'desk stretches')
+        && $r->data['word_count'] === $words && $r->data['word_count'] > 0
+        && $r->data['estimated_duration_s'] > 0;
+})());
+check('mock provider: captions are 3 DISTINCT platform variants', (static function () use ($mtp): bool {
+    $r = $mtp->generate('caption', ['topic' => 'desk stretches'], 100);
+    $caps = $r->data['captions'];
+
+    return array_keys($caps) === ['instagram', 'tiktok', 'youtube']
+        && count(array_unique($caps)) === 3;
+})());
+check('mock provider: hashtags >= 3, deduped, #-prefixed', (static function () use ($mtp): bool {
+    $r = $mtp->generate('hashtag', ['topic' => 'budget travel hacks'], 100);
+    $tags = $r->data['hashtags'];
+
+    return count($tags) >= 3 && $tags === array_values(array_unique($tags))
+        && array_filter($tags, static fn ($t) => !str_starts_with($t, '#')) === [];
+})());
+check('mock provider: deterministic for same seed', $mtp->generate('script', ['topic' => 't'], 42)->data
+    === $mtp->generate('script', ['topic' => 't'], 42)->data);
+
+echo "== Content: CostCalculator ==\n";
+
+check('cost: tokens × price → cents + usd', (static function (): bool {
+    $c = CostCalculator::compute('gpt-4o-mini', 2_000_000, 1_000_000, ['gpt-4o-mini' => ['in' => 15.0, 'out' => 60.0]]);
+
+    return $c['cents'] === 90 && $c['usd'] === 0.9; // 2*15 + 1*60 = 90 cents
+})());
+check('cost: tiny call rounds cents to 0 but keeps usd', (static function (): bool {
+    $c = CostCalculator::compute('gpt-4o-mini', 100, 50, ['gpt-4o-mini' => ['in' => 15.0, 'out' => 60.0]]);
+
+    return $c['cents'] === 0 && $c['usd'] > 0;
+})());
+check('cost: unknown model → zero', CostCalculator::compute('mystery', 100, 100, [])['cents'] === 0);
+
+echo "== Content: OpenAiTextProvider (fake transport, ZERO network) ==\n";
+
+$makeOpenAi = static function (array $queue): array {
+    $fake = new FakeHttpClient($queue);
+    $provider = new OpenAiTextProvider($fake, new PromptLibrary(), new VariationEngine(), OPENAI_CFG);
+
+    return [$provider, $fake];
+};
+
+check('openai: happy idea → shaped result + provider/model/version', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([openAiBody(['idea' => 'X', 'hook' => 'Y', 'format' => 'z'], 1000, 500)]);
+    $r = $p->generate('idea', ['topic' => 'desk stretches'], 5);
+
+    return $r->data['idea'] === 'X' && $r->data['hook'] === 'Y' && $r->data['format'] === '15-45s vertical'
+        && $r->provider === 'openai' && $r->model === 'gpt-4o-mini' && $r->promptVersion === 'idea.v1'
+        && !isset($r->data['prompt_version']); // provider returns content only; executor stamps the version
+})());
+check('openai: sends Bearer key in header, never leaks it on error', (static function () use ($makeOpenAi): bool {
+    [$p, $fake] = $makeOpenAi([new HttpResponse(429, '{"error":{"message":"slow down, key sk-test-SECRET-DO-NOT-LEAK"}}')]);
+    $leaked = false;
+    $threw = false;
+    try {
+        $p->generate('idea', ['topic' => 't'], 1);
+    } catch (TextProviderException $e) {
+        $threw = true;
+        $leaked = str_contains($e->getMessage(), 'sk-test-SECRET-DO-NOT-LEAK');
+    }
+    $sentKey = str_contains($fake->calls[0]['headers']['Authorization'] ?? '', 'sk-test-SECRET-DO-NOT-LEAK');
+
+    return $threw && $sentKey && !$leaked; // we DO send it, we NEVER echo it
+})());
+check('openai: 429 → rate-limit error', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([new HttpResponse(429, '{}')]);
+
+    return throws(static fn () => $p->generate('idea', ['topic' => 't'], 1), TextProviderException::class);
+})());
+check('openai: non-2xx → failed (status only, no body)', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([new HttpResponse(500, '{"secret":"sk-test-SECRET-DO-NOT-LEAK"}')]);
+    try {
+        $p->generate('idea', ['topic' => 't'], 1);
+
+        return false;
+    } catch (TextProviderException $e) {
+        return str_contains($e->getMessage(), '500') && !str_contains($e->getMessage(), 'sk-test-SECRET-DO-NOT-LEAK');
+    }
+})());
+check('openai: transport throw → wrapped, sanitized', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([new HttpTransportException('Operation timed out')]);
+    try {
+        $p->generate('script', ['topic' => 't'], 1);
+
+        return false;
+    } catch (TextProviderException $e) {
+        return str_contains($e->getMessage(), 'timed out');
+    }
+})());
+check('openai: malformed top-level JSON → failed', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([new HttpResponse(200, 'not json at all')]);
+
+    return throws(static fn () => $p->generate('idea', ['topic' => 't'], 1), TextProviderException::class);
+})());
+check('openai: message content not valid JSON → failed', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([new HttpResponse(200, json_encode([
+        'choices' => [['message' => ['content' => 'plain text, not json']]],
+        'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+    ]))]);
+
+    return throws(static fn () => $p->generate('idea', ['topic' => 't'], 1), TextProviderException::class);
+})());
+check('openai: caption missing a platform → failed', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([openAiBody(['instagram' => 'a', 'tiktok' => 'b'])]); // youtube missing
+
+    return throws(static fn () => $p->generate('caption', ['topic' => 't'], 1), TextProviderException::class);
+})());
+check('openai: caption happy → 3 platforms cleaned', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([openAiBody(['instagram' => 'IG', 'tiktok' => 'TT', 'youtube' => 'YT'])]);
+    $r = $p->generate('caption', ['topic' => 't'], 1);
+
+    return array_keys($r->data['captions']) === ['instagram', 'tiktok', 'youtube']
+        && $r->data['captions']['youtube'] === 'YT';
+})());
+check('openai: hashtags happy → #-normalized + capped', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([openAiBody(['hashtags' => ['fitness', '#desk', ' stretch ']])]);
+    $r = $p->generate('hashtag', ['topic' => 't'], 1);
+
+    return $r->data['hashtags'] === ['#fitness', '#desk', '#stretch'];
+})());
+check('openai: empty hashtags → failed', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([openAiBody(['hashtags' => []])]);
+
+    return throws(static fn () => $p->generate('hashtag', ['topic' => 't'], 1), TextProviderException::class);
+})());
+check('openai: script recomputes word_count + carries cost from usage', (static function () use ($makeOpenAi): bool {
+    [$p] = $makeOpenAi([openAiBody(['script' => 'one two three four five', 'word_count' => 999], 2_000_000, 1_000_000)]);
+    $r = $p->generate('script', ['topic' => 't', 'hook' => 'h'], 1);
+
+    return $r->data['word_count'] === 5 // recomputed, model's 999 ignored
+        && $r->costCents === 90 && ($r->data['cost_usd'] ?? 0) === 0.9 && $r->provider === 'openai';
+})());
+
+echo "== Content: ContentExecutor ==\n";
+
+$mockExec = new ContentExecutor(new MockTextProvider($ve, $pl));
+
+check('executor: idea → ready with prompt_version merged', (static function () use ($mockExec): bool {
+    $r = $mockExec->execute(
+        ['type' => 'idea_generation', 'run_id' => 1, 'step' => 2],
+        ['trend_fetch' => ['trend' => 'desk stretches']],
+    );
+
+    return $r->status === JobResult::STATUS_READY && str_contains($r->result['idea'], 'desk stretches')
+        && $r->result['prompt_version'] === 'idea.v1' && $r->provider === 'mock';
+})());
+check('executor: script_draft → awaiting_approval', (static function () use ($mockExec): bool {
+    $r = $mockExec->execute(
+        ['type' => 'script_draft', 'run_id' => 1, 'step' => 3],
+        ['trend_fetch' => ['trend' => 't'], 'idea_generation' => ['hook' => 'H', 'idea' => 'I']],
+    );
+
+    return $r->status === JobResult::STATUS_AWAITING_APPROVAL && isset($r->result['script']);
+})());
+check('executor: distribution falls back to asset title as topic', (static function () use ($mockExec): bool {
+    $r = $mockExec->execute(
+        ['type' => 'caption_generation', 'run_id' => 9, 'step' => 2],
+        ['asset_fetch' => ['title' => 'My library clip']],
+    );
+
+    return $r->status === JobResult::STATUS_READY
+        && str_contains(implode(' ', $r->result['captions']), 'My library clip');
+})());
+check('executor: unsupported type → failed', (static function () use ($mockExec): bool {
+    $r = $mockExec->execute(['type' => 'tts', 'run_id' => 1, 'step' => 1], []);
+
+    return $r->status === JobResult::STATUS_FAILED;
+})());
+check('executor: provider exception → failed(openai), message preserved', (static function () use ($ve, $pl): bool {
+    $throwing = new OpenAiTextProvider(
+        new FakeHttpClient([new HttpResponse(503, '{}')]),
+        $pl,
+        $ve,
+        OPENAI_CFG,
+    );
+    $exec = new ContentExecutor($throwing);
+    $r = $exec->execute(['type' => 'idea_generation', 'run_id' => 1, 'step' => 1], []);
+
+    return $r->status === JobResult::STATUS_FAILED && $r->provider === 'openai'
+        && str_contains((string) $r->errorMessage, '503');
+})());
+check('executor: failure provider tag comes from the provider (vendor-blind)', (static function (): bool {
+    // a hypothetical second provider must NOT be mislabeled 'openai'
+    $vendor = new class implements TextProvider {
+        public function name(): string
+        {
+            return 'claude';
+        }
+
+        public function generate(string $kind, array $context, int $seed): TextResult
+        {
+            throw new TextProviderException('boom');
+        }
+    };
+    $r = (new ContentExecutor($vendor))->execute(['type' => 'idea_generation', 'run_id' => 1, 'step' => 1], []);
+
+    return $r->status === JobResult::STATUS_FAILED && $r->provider === 'claude';
+})());
+check('mock provider: unknown kind throws (no silent empty)', throws(
+    static fn () => (new MockTextProvider($ve, $pl))->generate('mystery', ['topic' => 't'], 1),
+    TextProviderException::class,
+));
+
+echo "== Content: provider selection via the real binding ==\n";
+
+$buildProvider = static function (string $mock, string $key) use ($basePath): TextProvider {
+    $_ENV['OPENAI_MOCK'] = $mock; // explicit $_ENV wins over .env (loadEnvFile only fills gaps)
+    $_ENV['OPENAI_API_KEY'] = $key;
+    $container = require $basePath . '/src/bootstrap.php';
+
+    return $container->get(TextProvider::class);
+};
+$envBackupMock = $_ENV['OPENAI_MOCK'] ?? null;
+$envBackupKey = $_ENV['OPENAI_API_KEY'] ?? null;
+
+check('selection: mock=true → MockTextProvider', $buildProvider('true', '') instanceof MockTextProvider);
+check('selection: mock=false + key → OpenAiTextProvider', $buildProvider('false', 'sk-live-xyz') instanceof OpenAiTextProvider);
+check('selection: mock=false + empty key → MockTextProvider (fail-safe)', $buildProvider('false', '') instanceof MockTextProvider);
+
+if ($envBackupMock === null) { unset($_ENV['OPENAI_MOCK']); } else { $_ENV['OPENAI_MOCK'] = $envBackupMock; }
+if ($envBackupKey === null) { unset($_ENV['OPENAI_API_KEY']); } else { $_ENV['OPENAI_API_KEY'] = $envBackupKey; }
+
+echo "== Content: end-to-end full run produces rich content ==\n";
+
+$ceDb = migratedDb($basePath);
+[$ceUser, $ceWs] = seedUser($ceDb, 'content@example.com', $argonHash, 'Content WS');
+$_SESSION = [];
+$ceCtx = new WorkspaceContext($ceDb);
+$ceCtx->set($ceWs);
+$ceNow = '2026-06-12T16:00:00Z';
+[$ceEngine, $ceWorker] = makeRig($ceDb, new MockExecutor($ceDb), $ceNow);
+(new WorkflowRepository($ceDb, $validator4))->ensureDefaults($ceCtx);
+$ceFullWf = (new WorkflowRepository($ceDb, $validator4))->listFor($ceCtx)[0]; // full
+$ceJobs = new JobRepository($ceDb);
+$ceRunId = $ceEngine->startRun($ceCtx, $ceFullWf['id'], null, $ceUser);
+
+while ($ceWorker->tick()) {
+}
+// stops at script approval → approve → continue to render review → approve → complete
+$ceEngine->approve($ceCtx, $ceJobs->awaitingApproval($ceCtx)[0]['id'], $ceUser, 'content@example.com');
+while ($ceWorker->tick()) {
+}
+$ceEngine->approve($ceCtx, $ceJobs->awaitingApproval($ceCtx)[0]['id'], $ceUser, 'content@example.com');
+while ($ceWorker->tick()) {
+}
+
+check('e2e content: run completes with rich idea/script/caption/hashtag', (static function () use ($ceJobs, $ceCtx, $ceRunId): bool {
+    $jobs = $ceJobs->jobsForRun($ceCtx, $ceRunId);
+    $byType = [];
+    foreach ($jobs as $j) {
+        $byType[$j['type']] = $j['result'];
+    }
+    $captions = $byType['caption_generation']['captions'] ?? [];
+    $hashtags = $byType['hashtag_generation']['hashtags'] ?? [];
+
+    return ($byType['idea_generation']['hook'] ?? '') !== ''
+        && ($byType['script_draft']['word_count'] ?? 0) > 0
+        && count($captions) === 3 && count(array_unique($captions)) === 3
+        && count($hashtags) >= 3
+        && ($byType['idea_generation']['prompt_version'] ?? '') === 'idea.v1';
+})());
+
+echo "== Content: cost recorded on the paused script (honest spend) ==\n";
+
+$costDb = migratedDb($basePath);
+[$costUser, $costWs] = seedUser($costDb, 'cost@example.com', $argonHash, 'Cost WS');
+$_SESSION = [];
+$costCtx = new WorkspaceContext($costDb);
+$costCtx->set($costWs);
+$costNow = '2026-06-12T17:00:00Z';
+[$costEngine, $costWorker] = makeRig($costDb, new MockExecutor($costDb), $costNow, new StubCostTextProvider());
+(new WorkflowRepository($costDb, $validator4))->ensureDefaults($costCtx);
+$costWf = (new WorkflowRepository($costDb, $validator4))->listFor($costCtx)[0];
+$costJobs = new JobRepository($costDb);
+$costRunId = $costEngine->startRun($costCtx, $costWf['id'], null, $costUser);
+while ($costWorker->tick()) {
+}
+
+check('cost: paused script_draft carries real cost_cents + provider', (static function () use ($costJobs, $costCtx, $costRunId): bool {
+    $awaiting = $costJobs->awaitingApproval($costCtx);
+    $script = $awaiting[0] ?? null;
+
+    return $script !== null && $script['type'] === 'script_draft'
+        && $script['status'] === 'awaiting_approval'
+        && $script['cost_cents'] === 7 && $script['provider'] === 'openai';
+})());
+check('cost: ready idea job carries cost too', (static function () use ($costJobs, $costCtx, $costRunId): bool {
+    $jobs = $costJobs->jobsForRun($costCtx, $costRunId);
+    $idea = array_values(array_filter($jobs, static fn ($j) => $j['type'] === 'idea_generation'))[0] ?? null;
+
+    return $idea !== null && $idea['cost_cents'] === 2 && $idea['provider'] === 'openai';
+})());
+
+echo "== WorkerHeartbeat ==\n";
+
+$hbPath = tempDir('hb') . '/worker.heartbeat';
+$hb = new WorkerHeartbeat($hbPath);
+
+check('heartbeat: missing file → not alive, null age', !$hb->isAlive('2026-06-12T18:00:00Z')
+    && $hb->lastBeat() === null && $hb->ageSeconds('2026-06-12T18:00:00Z') === null);
+$hb->beat('2026-06-12T18:00:00Z');
+check('heartbeat: fresh beat → alive', $hb->isAlive('2026-06-12T18:00:10Z')
+    && $hb->lastBeat() === '2026-06-12T18:00:00Z' && $hb->ageSeconds('2026-06-12T18:00:10Z') === 10);
+check('heartbeat: beat older than threshold → not alive', !$hb->isAlive('2026-06-12T18:01:00Z')); // 60s > 30s
+check('heartbeat: exactly at threshold → still alive', $hb->isAlive('2026-06-12T18:00:30Z'));
+check('heartbeat: beat() creates the directory if missing', (static function (): bool {
+    $nested = tempDir('hb-nested') . '/deep/dir/worker.heartbeat';
+    $h = new WorkerHeartbeat($nested);
+    $h->beat('2026-06-12T18:00:00Z');
+
+    return is_file($nested) && $h->lastBeat() === '2026-06-12T18:00:00Z';
+})());
 
 echo "\n" . $pass . ' PASS, ' . count($failures) . " FAIL\n";
 

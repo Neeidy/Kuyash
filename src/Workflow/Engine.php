@@ -304,12 +304,15 @@ final class Engine
     {
         $wsId = (int) $job['workspace_id'];
 
+        // cost_cents written here too: a real script generation already spent
+        // money before this approval pause — recording it is the honest path
         $updated = $this->db->run(
-            "UPDATE jobs SET status = 'awaiting_approval', result_json = ?, provider = ?
+            "UPDATE jobs SET status = 'awaiting_approval', result_json = ?, provider = ?, cost_cents = ?
              WHERE id = ? AND workspace_id = ? AND status = 'processing' AND worker_id = ?",
             [
                 json_encode($result->result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 $result->provider,
+                $result->costCents,
                 $job['id'],
                 $wsId,
                 $job['worker_id'],

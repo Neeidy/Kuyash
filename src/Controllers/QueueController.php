@@ -14,6 +14,7 @@ use Kuyash\Workflow\Decision;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\JobRepository;
 use Kuyash\Workflow\RunRepository;
+use Kuyash\Workflow\WorkerHeartbeat;
 use Kuyash\Workspace\WorkspaceContext;
 
 /**
@@ -32,6 +33,7 @@ final class QueueController
         private readonly Auth $auth,
         private readonly Csrf $csrf,
         private readonly Flash $flash,
+        private readonly WorkerHeartbeat $heartbeat,
     ) {
     }
 
@@ -47,6 +49,7 @@ final class QueueController
             'awaiting' => $this->jobs->awaitingApproval($this->workspace),
             'jobs' => $this->jobs->listFor($this->workspace),
             'runs' => $this->runs->listFor($this->workspace, 20),
+            'workerAlive' => $this->heartbeat->isAlive(gmdate('Y-m-d\TH:i:s\Z')),
         ], 'layout/app'));
     }
 
