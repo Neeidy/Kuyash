@@ -47,7 +47,11 @@ final class Router
     public function dispatch(string $method, string $uri): Response
     {
         $path = $this->normalize(parse_url($uri, PHP_URL_PATH) ?: '/');
-        $candidates = $this->routes[strtoupper($method)] ?? [];
+        $method = strtoupper($method);
+
+        // HEAD reuses GET handlers; the SAPI strips the body (uptime checks use HEAD)
+        $lookupMethod = $method === 'HEAD' ? 'GET' : $method;
+        $candidates = $this->routes[$lookupMethod] ?? [];
 
         foreach ($candidates as $routePath => $handler) {
             $params = $this->match($routePath, $path);
@@ -58,7 +62,51 @@ final class Router
             return $this->invoke($handler, $params);
         }
 
+        $allowed = $this->allowedMethods($path);
+        if ($allowed !== []) {
+            return $this->methodNotAllowed($allowed);
+        }
+
         return $this->notFound();
+    }
+
+    /**
+     * Methods (other routes' verbs + implied HEAD) that DO match this path —
+     * non-empty means the path exists and the verb is wrong: 405, not 404.
+     *
+     * @return list<string>
+     */
+    private function allowedMethods(string $path): array
+    {
+        $allowed = [];
+        foreach ($this->routes as $method => $routes) {
+            foreach (array_keys($routes) as $routePath) {
+                if ($this->match($routePath, $path) !== null) {
+                    $allowed[] = $method;
+                    break;
+                }
+            }
+        }
+
+        if (in_array('GET', $allowed, true)) {
+            $allowed[] = 'HEAD';
+        }
+        sort($allowed);
+
+        return $allowed;
+    }
+
+    /** @param list<string> $allowed */
+    private function methodNotAllowed(array $allowed): Response
+    {
+        return new Response(
+            '<h1>405 — Method Not Allowed</h1>',
+            405,
+            [
+                'Content-Type' => 'text/html; charset=utf-8',
+                'Allow' => implode(', ', $allowed),
+            ],
+        );
     }
 
     public function notFound(): Response

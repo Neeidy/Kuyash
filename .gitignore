@@ -32,3 +32,7 @@ vendor/
 node_modules/
 dist/
 build/
+
+# Phase 2 runtime state
+storage/sessions/
+storage/database/

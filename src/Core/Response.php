@@ -38,6 +38,16 @@ final class Response
         );
     }
 
+    /**
+     * Redirect via a single Location header (302 for GET guards,
+     * pass 303 after successful POSTs). Cookies must NOT go through this
+     * header map — use PHP's native session/cookie APIs.
+     */
+    public static function redirect(string $location, int $status = 302): self
+    {
+        return new self('', $status, ['Location' => $location]);
+    }
+
     public function status(): int
     {
         return $this->status;

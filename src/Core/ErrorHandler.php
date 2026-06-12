@@ -25,6 +25,7 @@ final class ErrorHandler
     /** Install global PHP handlers. Call once during bootstrap. */
     public function register(): void
     {
+        self::hardenTraceLogging();
         error_reporting(E_ALL);
         ini_set('display_errors', $this->isDebug() ? '1' : '0');
         ini_set('log_errors', '1');
@@ -52,6 +53,18 @@ final class ErrorHandler
                 ))->send();
             }
         });
+    }
+
+    /**
+     * Strip function arguments from exception traces (security audit B1):
+     * without this, a Throwable raised inside Auth::attempt() would write the
+     * plaintext password into storage/logs/ via getTraceAsString().
+     * Public + static so tests can verify the defense without installing
+     * the global handlers.
+     */
+    public static function hardenTraceLogging(): void
+    {
+        ini_set('zend.exception_ignore_args', '1');
     }
 
     /** Log the throwable, return a safe 500 response (generic unless debug). */
