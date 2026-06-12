@@ -1,0 +1,11 @@
+# CLAUDE.local.md (example)
+
+Copy this file to `CLAUDE.local.md` for personal, machine-specific preferences.
+The real `CLAUDE.local.md` is gitignored and never committed.
+
+Use it for:
+- personal workflow preferences (e.g., preferred verbosity, language)
+- local environment notes (paths, local server quirks)
+- temporary personal reminders
+
+NEVER put real secrets, API keys, or tokens in this file. Secrets belong in `.env` (gitignored).

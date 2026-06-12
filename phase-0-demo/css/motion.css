@@ -1,0 +1,205 @@
+/* Kuyash Phase 0 — motion system. Every animation maps to a state change or
+   affordance; durations/easings come from base.css tokens only.
+   Compositor properties (transform/opacity) only — layout moves use FLIP in JS. */
+
+/* ---------- 1 · screen morphs (View Transitions API) ---------- */
+/* keep the app clickable while a transition plays — the snapshot layer
+   must never swallow user input */
+::view-transition { pointer-events: none; }
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-view);
+  animation-timing-function: var(--ease-out);
+}
+
+/* the screen content gets its own snapshot so only IT travels (18px slide),
+   while the chrome cross-fades and the page title morphs separately —
+   that header-vs-body split is the visible stagger (iteration-2 §B) */
+#screen-root { view-transition-name: screen; }
+::view-transition-old(screen) {
+  animation: vt-screen-out var(--dur-view) var(--ease-in) both;
+}
+::view-transition-new(screen) {
+  animation: vt-screen-in var(--dur-view) var(--ease-out) both;
+}
+@keyframes vt-screen-out {
+  to { opacity: 0; transform: translateY(-12px); }
+}
+@keyframes vt-screen-in {
+  from { opacity: 0; transform: translateY(18px); }
+}
+
+.vt-page-title { view-transition-name: page-title; }
+.vt-nav-active { view-transition-name: nav-active; }
+.vt-media-hero { view-transition-name: media-hero; }
+::view-transition-group(page-title),
+::view-transition-group(nav-active),
+::view-transition-group(media-hero) {
+  animation-duration: var(--dur-view);
+  animation-timing-function: var(--ease-out);
+}
+
+/* fallback when startViewTransition is unavailable: class-swap fade on the container */
+.vt-fallback { animation: vt-fade var(--dur-view) var(--ease-out); }
+@keyframes vt-fade {
+  from { opacity: 0; transform: translateY(16px); }
+}
+
+/* ---------- 2 · enter transitions (@starting-style, no JS) ---------- */
+.modal-overlay {
+  transition: opacity var(--dur-quick) var(--ease-out);
+}
+.modal {
+  transition:
+    opacity var(--dur-enter) var(--ease-out),
+    transform var(--dur-enter) var(--ease-out);
+}
+/* drawer slides its full width with a spring — direct-manipulation feel */
+.drawer {
+  transition:
+    opacity var(--dur-quick) var(--ease-out),
+    transform var(--dur-enter) var(--spring);
+}
+@starting-style {
+  .modal-overlay { opacity: 0; }
+  .modal { opacity: 0; transform: translateY(16px) scale(0.97); }
+  .drawer { opacity: 1; transform: translateX(100%); }
+}
+/* fallback: components.js adds .enter-init then removes it next frame */
+@supports not (transition-behavior: allow-discrete) {
+  .enter-init.modal-overlay { opacity: 0; }
+  .enter-init .modal { opacity: 0; transform: translateY(16px) scale(0.97); }
+  .enter-init .drawer { opacity: 1; transform: translateX(100%); }
+}
+
+/* ---------- 3 · staggered list reveal ---------- */
+.stagger > * {
+  animation: stagger-rise var(--dur-enter) var(--ease-out) backwards;
+  animation-delay: min(calc(var(--i, 0) * 55ms), 330ms);
+}
+@keyframes stagger-rise {
+  from { opacity: 0; transform: translateY(14px); }
+}
+
+/* ---------- 4 · skeleton → content morph ---------- */
+.skel {
+  position: relative; overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--r-ctl);
+  min-height: 14px;
+}
+.skel::after {
+  content: ""; position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.04), transparent);
+  animation: skel-sweep 1.4s var(--ease-inout) infinite;
+}
+@keyframes skel-sweep { to { transform: translateX(100%); } }
+.skel-resolve {
+  animation: stagger-rise var(--dur-long) var(--ease-out) backwards;
+}
+
+/* ---------- 5 · hover lift (cards/rows only; 2 animated properties max:
+   transform + shadow; border-color snaps instantly) ---------- */
+.lift {
+  transition:
+    transform var(--dur-quick) var(--ease-out),
+    box-shadow var(--dur-quick) var(--ease-out);
+}
+.lift:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-strong);
+  box-shadow: var(--elev-lift);
+}
+
+/* ---------- 6 · pulse-ring dots (processing/publishing ONLY, never idle) ---------- */
+.pulse { position: relative; }
+.pulse::after {
+  content: ""; position: absolute; inset: -1px;
+  border-radius: inherit;
+  border: 1px solid currentColor;
+  animation: pulse-ring 1.6s var(--ease-out) infinite;
+}
+@keyframes pulse-ring {
+  from { transform: scale(1); opacity: 0.7; }
+  to { transform: scale(2.4); opacity: 0; }
+}
+
+/* ---------- 9 · terminal-aesthetic surfaces ---------- */
+.term {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--term-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+.term__head {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.term__body { padding: var(--s2) var(--s3); overflow-y: auto; }
+.term__line { display: flex; gap: var(--s3); align-items: baseline; padding: 1px 0; min-width: 0; }
+.term__time { color: var(--text-3); flex: none; }
+.term__lvl { flex: none; width: 4.5ch; text-transform: uppercase; font-weight: 500; }
+.term__lvl--info { color: var(--info); }
+.term__lvl--ok { color: var(--ok); }
+.term__lvl--warn { color: var(--warn); }
+.term__lvl--error { color: var(--err); }
+.term__lvl--ai { color: var(--ai); }
+.term__msg { color: var(--text-2); overflow-wrap: anywhere; }
+.term__caret {
+  display: inline-block; width: 7px; height: 13px;
+  background: var(--text-3); vertical-align: -2px;
+  animation: caret-blink 1.1s steps(1) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+
+/* ---------- 10 · trend ticker marquee (named exception: live-data affordance) ---------- */
+.marquee { overflow: hidden; position: relative; }
+.marquee__track {
+  display: flex; gap: var(--s5); width: max-content;
+  animation: marquee-scroll 45s linear infinite;
+}
+.marquee__half { display: flex; gap: var(--s5); flex: none; }
+.marquee:hover .marquee__track,
+.marquee:focus-within .marquee__track { animation-play-state: paused; }
+@keyframes marquee-scroll { to { transform: translateX(-50%); } }
+
+/* ---------- toasts ---------- */
+.toast { animation: toast-in var(--dur-quick) var(--ease-out); transition: opacity var(--dur-enter) var(--ease-in); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+.toast.is-out { opacity: 0; }
+
+/* ---------- choreography (iteration 2): one-shot state-change moments ---------- */
+/* approve → check-flash overlay on the row, then PL.motion.flipRemove() */
+.flash { position: relative; }
+.flash::after {
+  content: ""; position: absolute; inset: 0;
+  border-radius: inherit; pointer-events: none;
+  background: var(--ok-dim);
+  border: 1px solid var(--ok);
+  opacity: 0;
+  animation: flash-fade var(--dur-long) var(--ease-out);
+}
+@keyframes flash-fade { 25% { opacity: 1; } 100% { opacity: 0; } }
+
+/* publish mock → brief success pulse on the account chip (2 beats, then JS removes) */
+.pulse-once { position: relative; color: var(--ok); }
+.pulse-once::after {
+  content: ""; position: absolute; inset: -1px;
+  border-radius: inherit;
+  border: 1px solid currentColor;
+  animation: pulse-ring 0.9s var(--ease-out) 2;
+}
+
+/* ---------- reduced motion: stop the looping/decor-adjacent animations too ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .marquee__track, .pulse::after, .skel::after, .term__caret { animation: none; }
+  .stagger > * { animation: none; }
+  .flash::after, .pulse-once::after { animation: none; opacity: 0; }
+}
