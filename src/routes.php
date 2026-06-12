@@ -11,6 +11,7 @@ use Kuyash\Controllers\LibraryController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
@@ -42,6 +43,11 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/logout', $protected([AuthController::class, 'logout']));
 
     $router->get('/dashboard', $protected([DashboardController::class, 'index']));
+
+    $router->get('/trends', $protected([TrendController::class, 'index']));
+    $router->post('/trends/niche', $protected([TrendController::class, 'setNiche']));
+    $router->post('/trends/refresh', $protected([TrendController::class, 'refresh']));
+    $router->post('/trends/create', $protected([TrendController::class, 'create']));
 
     $router->get('/library', $protected([LibraryController::class, 'index']));
     $router->post('/library/upload', $protected([LibraryController::class, 'upload']));

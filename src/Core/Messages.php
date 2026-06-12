@@ -40,6 +40,14 @@ final class Messages
         'approval.already_decided' => 'Already decided — someone (or something) was faster.',
         'job.retried' => 'Job requeued — the worker will retry it.',
         'job.retry_not_failed' => 'Only failed jobs can be retried.',
+
+        // trend radar (Phase 6)
+        'trend.run_started' => 'Run started from the trend — the worker picks it up from the queue.',
+        'trend.not_found' => 'That trend is no longer available — refresh and try again.',
+        'trend.niche_updated' => 'Niche updated — the trend wall now reflects it.',
+        'trend.refreshed' => 'Trends refreshed.',
+        'trend.no_full_workflow' => 'No full pipeline workflow exists to start from.',
+        'trend.invalid_niche' => 'Pick a niche from the list.',
     ];
 
     /**

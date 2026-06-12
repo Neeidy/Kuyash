@@ -7,43 +7,39 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-12
-- Güncelleyen: Claude (FAZ 5 KABUL EDİLDİ ve commit'lendi — /next-phase → START PHASE 6 bekleniyor)
+- Güncelleyen: Claude (FAZ 6 İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 5 (Script & Caption Engine) KABUL EDİLDİ ve commit'lendi** (2026-06-12).
-  Commit'ler: Faz 1 `ee042fa`, Faz 2 `b9728ed`, Faz 3 `f7121e0`, Faz 4 `f56d4ab`,
-  Faz 5 `d293145`, plan-doc (Faz 7 cockpit) `b673b1c` = HEAD. Working tree temiz.
-- Faz 5 içeriği: executor seam'e **ilk gerçek sağlayıcı adapter'ı** — 4 içerik job tipi
-  (idea/script/caption/hashtag) artık `TextProvider` soyutlamasının arkasında.
-  `src/Content/*`: TextProvider (interface) + TextResult VO + Sanitizer + PromptLibrary
-  (versiyonlu prompt'lar idea/script/caption/hashtag .v1) + VariationEngine (tohumlu hook/pacing,
-  ölçülebilir slop düşüşü, similarity Jaccard) + MockTextProvider (varsayılan, zengin,
-  deterministik, provider 'mock', cost null) + OpenAiTextProvider (GERÇEK, flag arkasında,
-  varsayılan KAPALI) + CostCalculator (config-fiyatlı) + ContentExecutor (provider-agnostik glue,
-  name()'den hata etiketi). `src/Http/*`: HttpClient (interface) + CurlHttpClient (TLS-pinned) +
-  HttpResponse + HttpTransportException → sahte transport'la offline test. config/openai.php +
-  .env.example (OPENAI_MOCK=true varsayılan). bindings/core.php: OPENAI_MOCK=false+key → OpenAi,
-  yoksa Mock; ContentExecutor 4 tipte, MockExecutor 9 tipte (içerik case'leri kaldırıldı).
-  JobResult::awaitingApproval + Engine::finalizeAwaiting artık cost_cents yazıyor (gerçek script
-  onaydan önce harcar — dürüst kayıt; worker_id race guard korundu). /queue onay kartı
-  (prompt_version + word/duration + cost notu) + /runs içerik özeti (idea/script/per-platform
-  captions/hashtags) + minik CSS.
-- Doğrulama: lint temiz; **337 PASS, 0 FAIL** (50 yeni); sıfır ağ (curl yalnız CurlHttpClient,
-  testler FakeHttpClient); secret yok; canlı smoke: full run → worker → /queue zengin onay kartı →
-  approve → render review → approve → completed; /runs per-platform caption + hashtag + script
-  görünür; varsayılan provider 'mock'.
-- Kabul sonrası 3 ek (kullanıcı isteği, Faz 5 commit'ine dahil): (1) footer "Phase 5 · Script &
-  Caption Engine"; (2) **worker heartbeat** (`src/Workflow/WorkerHeartbeat.php` — worker
-  `storage/worker.heartbeat`'e ISO yazar [≤5s], web 30s bayatlıkta uyarır) → Dashboard + Queue
-  "background worker is not running" bandı; (3) faz-kapanış smoke'larında worker adımı **[Terminal-2]**
-  etiketli (memory: phase-close-smoke-terminal2).
-- Review (3 paralel): security-auditor **PASS**, integration-reviewer + php-architect **PASS WITH
-  SHOULD-FIX** → **0 blocker**. TÜM should-fix + ucuz NTH uygulandı (vendor-blind hata etiketi =
-  provider->name(); CONTENT_JOB_TYPES const kaldırıldı → ContentExecutor::contentTypes();
-  $lastUsage hidden state kaldırıldı; TLS pin; mock unknown-kind throw) + regression testleri.
-  API şekli (chat/completions, usage.prompt/completion_tokens) doğrulandı, halüsinasyon yok.
-  Ertelenenler: `.claude/docs/phase-5-followups.md`.
+- Aşama: **FAZ 6 (Trend Radar Backend) İNŞA EDİLDİ — kullanıcı kabulü + commit onayı bekleniyor**
+  (2026-06-12). Working tree'de COMMIT EDİLMEMİŞ. Commit'ler: Faz 1 `ee042fa`, Faz 2 `b9728ed`,
+  Faz 3 `f7121e0`, Faz 4 `f56d4ab`, Faz 5 `d293145`, plan-doc `b673b1c` = HEAD.
+- Faz 6 içeriği: executor seam'e **ikinci gerçek sağlayıcı adapter'ı** — `trend_fetch` artık
+  `TrendProvider` soyutlamasının arkasında (Faz 5 deseni). `src/Trend/*`: TrendProvider (interface)
+  + TrendResult/TrendFeed VO + TrendProviderException + FormatRecommender (face/faceless, det.) +
+  MockTrendProvider (VARSAYILAN, niş-bazlı, offline, deterministik) + YouTubeTrendsProvider (GERÇEK,
+  Data API v3 search.list, flag-KAPALI, key gerekir) + GoogleTrendsProvider (GERÇEK, public
+  dailytrends `)]}',` prefix, flag-KAPALI, key'siz) + TrendRepository (cache batch'leri, raw int
+  workspace_id scope) + TrendConfigRepository (niş/region, allowlist) + QuotaCounter
+  (`api_quota_usage` günlük, sadece gerçek sağlayıcı) + TrendService (read-through cache + TTL +
+  serve-stale degradation) + TrendExecutor (niche path + create-from-trend selected path).
+  `src/Http/*`: HttpClient'a `get()` eklendi (CurlHttpClient shared send(); FakeHttpClient get+post).
+  Engine::startRun'a opsiyonel `$trendId` (full run'ı seçili cached trend'e pinler; tenant-scoped).
+  MockExecutor `trend_fetch`'i bıraktı. TrendController + 4 route (/trends, /niche, /refresh,
+  /create) + trends/index.php (niş seçici, freshness banner, kota chip'leri, trend wall) + nav
+  "Trends" + footer "Phase 6 · Trend Radar" + CSS. migration 0004_trends.sql (trends + trend_config
+  + api_quota_usage). config/trends.php + .env.example (TREND_MOCK=true varsayılan).
+- Doğrulama: lint temiz; **384 PASS, 0 FAIL** (47 yeni); sıfır ağ (testler FakeHttpClient); secret
+  yok; canlı iki-terminal smoke: /trends mock wall (fresh) → create-from-trend (trend_id=1 "cheap
+  meal prep") → run #8 entity=trend:1 → [Terminal-2] worker → trend_fetch origin=selected, idea
+  trend'i refere ediyor → script approval → approve → render approve → completed; niş değişimi
+  (fitness), geçersiz niş reddi, refresh çalışıyor; kota 0 (mock kaydedilmez).
+- Review (3 paralel): security-auditor **GO**, integration-reviewer **0 blocker**, php-architect
+  **GO** → **0 blocker**. Ucuz should-fix uygulandı: idx_trends_lookup'a `rank` (kapsayıcı index);
+  CurlHttpClient $url credential-guard yorumu; GoogleTrends `$titleQuery` shadow düzeltmesi.
+  Ertelenenler: `.claude/docs/phase-6-followups.md`. **KABUL EDİLMİŞ TRADEOFF:** web read-path
+  canlı fetch yapıyor (mock'ta dormant) — gerçek sağlayıcı PROD'da açılmadan önce fetch worker'a
+  taşınmalı (HARD GATE). GoogleTrends resmi-olmayan endpoint → prod'da mock kalır.
 - KURAL (kullanıcı, 2026-06-11): tüm run/test komutları `cd ~/Desktop/Kuyash &&` önekiyle.
 - Test: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
   Smoke (iki terminal): **[Terminal-1]** sunucu (8080 dolu → 8082)
@@ -70,12 +66,13 @@
 
 ## Sıradaki adım
 
-1. `/next-phase` (Plan Mode) → **Faz 6 (Trend Radar Backend)** planı. phase-5-followups.md'deki
-   Faz 6 tetikleyicileri dahil edilmeli: gerçek-trend semantik prompt-injection savunması
-   (Sanitizer yeterli değil), TrendProvider adapter'ı (mock-first, Google Trends + YouTube Data
-   official / TikTok best-effort), OpenAI/Pexels quota counter (`api_quota_usage`), Creator Watch
-   (opsiyonel alt-hedef), awaiting_recording/shooting-brief tetikleyicisi (face format).
-2. İnşa yalnızca `START PHASE 6` token'ı ile başlar — plan onayı kodu AÇMAZ.
+1. **Faz 6 kullanıcı kabulü + commit onayı bekleniyor.** Onay gelince: commit (atomic, açıklayıcı
+   mesaj) → güvenlik kapısı (secret tara) → `git push origin main` OTOMATİK (memory:
+   auto-push-after-phase; force YASAK).
+2. Sonra `/next-phase` (Plan Mode) → **Faz 7 (Media Production: TTS+Pexels+ffmpeg)**. Faz 6
+   tetikleyicileri dahil: web read-path canlı fetch'i worker'a taşı (gerçek sağlayıcı PROD gate'i);
+   awaiting_recording/shooting-brief pause (face format); draft-first render; asset cache; dashboard
+   cockpit first pass. Detay: `.claude/docs/phase-6-followups.md`.
 
 ## Açık konular / bekleyenler
 
@@ -88,6 +85,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-06-12 — START PHASE 6: Trend Radar Backend inşa edildi (TrendProvider seam: Mock varsayılan + gerçek-ama-kapalı YouTube/Google; HttpClient get(); TrendService read-through cache+TTL+serve-stale; QuotaCounter; create-from-trend Engine pin; /trends UI; migration 0004). 384 test PASS (47 yeni), canlı smoke OK. 3 reviewer 0 blocker, ucuz should-fix uygulandı. Kabul + commit onayı bekleniyor.
+- 2026-06-12 — /next-phase: Faz 6 (Trend Radar Backend) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-6-plan.md`'e kaydedildi. Kullanıcı kararları: gerçek GoogleTrends+YouTube adapter'ları flag-KAPALI inşa (Faz 5 deseni); Creator Watch ERTELENDİ.
 - 2026-06-12 — FAZ 5 KABUL: kullanıcı kabul + commit onayı + 3 ek istedi (footer Phase 5; worker heartbeat → Dashboard/Queue "worker çalışmıyor" bandı; faz-kapanış smoke'larında [Terminal-2] etiketi → memory). 3 ek uygulandı, 337 test PASS, canlı doğrulandı. Faz 5 `d293145` commit'lendi; kullanıcının Faz 7 cockpit plan-düzenlemesi ayrı `b673b1c` docs commit'i. Sıra: /next-phase → START PHASE 6.
 - 2026-06-12 — START PHASE 5: Script & Caption Engine inşa edildi (TextProvider seam: Mock + gerçek-ama-kapalı OpenAI; HttpClient seam + sahte transport; PromptLibrary versiyonlu; VariationEngine tohumlu slop kontrolü; CostCalculator; ContentExecutor; cost-on-awaiting). 3 reviewer 0 blocker, tüm should-fix+NTH uygulandı.
 - 2026-06-12 — /next-phase: Faz 5 (Script & Caption Engine) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-5-plan.md`'e kaydedildi. Kararlar: engine-only UI, gerçek OpenAI yolu flag-kapalı, Claude ertelendi, migration yok.
@@ -96,6 +95,3 @@
 - 2026-06-12 — /next-phase: Faz 4 planı Plan Mode'da ONAYLANDI. Karar: builder read-only + run trigger.
 - 2026-06-12 — FAZ 3 KABUL: kullanıcı kabul + commit onayı verdi; Faz 3 commit'lendi.
 - 2026-06-12 — START PHASE 3: Content Library inşa edildi. 180 test PASS; 3 reviewer 0 blocker, 14 should-fix uygulandı.
-- 2026-06-12 — /next-phase: Faz 3 planı yazıldı ve ONAYLANDI (tam kimlik portu, i18n key-hazır).
-- 2026-06-12 — FAZ 2 KABUL: kabul + commit onayı; orphan home.php onayla silindi (102 PASS).
-- 2026-06-11 — START PHASE 2: Auth+SQLite temeli inşa edildi; security-auditor 1 blocker düzeltildi.

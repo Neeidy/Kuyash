@@ -19,6 +19,15 @@ use Kuyash\Core\Container;
 use Kuyash\Core\Database;
 use Kuyash\Http\CurlHttpClient;
 use Kuyash\Library\AssetRepository;
+use Kuyash\Trend\GoogleTrendsProvider;
+use Kuyash\Trend\MockTrendProvider;
+use Kuyash\Trend\QuotaCounter;
+use Kuyash\Trend\TrendConfigRepository;
+use Kuyash\Trend\TrendExecutor;
+use Kuyash\Trend\TrendProvider;
+use Kuyash\Trend\TrendRepository;
+use Kuyash\Trend\TrendService;
+use Kuyash\Trend\YouTubeTrendsProvider;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\ExecutorRegistry;
@@ -93,9 +102,61 @@ return static function (Container $container, string $basePath): void {
         $c->get(TextProvider::class),
     ));
 
-    // MockExecutor serves the 9 non-content types; ContentExecutor (behind a
-    // TextProvider) serves the 4 content types — one register() line each
-    // (adapter rule). Later phases swap more types the same way.
+    $container->bind(TrendRepository::class, static fn (Container $c): TrendRepository => new TrendRepository(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(QuotaCounter::class, static fn (Container $c): QuotaCounter => new QuotaCounter(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(TrendConfigRepository::class, static function (Container $c): TrendConfigRepository {
+        $cfg = (array) $c->get(Config::class)->get('trends');
+
+        return new TrendConfigRepository($c->get(Database::class), [
+            'niche' => (string) ($cfg['default_niche'] ?? 'general'),
+            'region' => (string) ($cfg['default_region'] ?? 'US'),
+        ]);
+    });
+
+    // TrendProvider (Phase 6): a real provider ONLY when TREND_MOCK=false AND the
+    // chosen provider is configured (youtube needs a key; google_trends does not).
+    // Anything else → the deterministic offline mock. Swap = config only.
+    $container->bind(TrendProvider::class, static function (Container $c): TrendProvider {
+        $cfg = (array) $c->get(Config::class)->get('trends');
+        $useReal = ($cfg['mock'] ?? true) === false;
+
+        if ($useReal) {
+            $which = (string) ($cfg['provider'] ?? 'youtube');
+            if ($which === 'youtube' && ((string) (($cfg['youtube']['api_key'] ?? '')) !== '')) {
+                return new YouTubeTrendsProvider(new CurlHttpClient(), (array) $cfg['youtube']);
+            }
+            if ($which === 'google_trends') {
+                return new GoogleTrendsProvider(new CurlHttpClient(), (array) $cfg['google_trends']);
+            }
+            // misconfigured real provider → fail safe to mock (never block trends)
+        }
+
+        return new MockTrendProvider();
+    });
+
+    $container->bind(TrendService::class, static fn (Container $c): TrendService => new TrendService(
+        $c->get(TrendProvider::class),
+        $c->get(TrendRepository::class),
+        $c->get(QuotaCounter::class),
+        (array) $c->get(Config::class)->get('trends'),
+    ));
+
+    $container->bind(TrendExecutor::class, static fn (Container $c): TrendExecutor => new TrendExecutor(
+        $c->get(TrendService::class),
+        $c->get(TrendRepository::class),
+        $c->get(TrendConfigRepository::class),
+    ));
+
+    // MockExecutor serves the remaining mock types; ContentExecutor (behind a
+    // TextProvider) serves the 4 content types and TrendExecutor (behind a
+    // TrendProvider) serves trend_fetch — one register() line each (adapter
+    // rule). Later phases swap more types the same way.
     $container->bind(ExecutorRegistry::class, static function (Container $c): ExecutorRegistry {
         $registry = new ExecutorRegistry();
         $registry->registerForAll(new MockExecutor($c->get(Database::class)));
@@ -104,6 +165,8 @@ return static function (Container $container, string $basePath): void {
         foreach (ContentExecutor::contentTypes() as $type) {
             $registry->register($type, $content);
         }
+
+        $registry->register('trend_fetch', $c->get(TrendExecutor::class));
 
         return $registry;
     });

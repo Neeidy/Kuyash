@@ -258,9 +258,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 3);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 4);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -845,9 +845,23 @@ use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Messages;
+use Kuyash\Http\CurlHttpClient;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpResponse;
 use Kuyash\Http\HttpTransportException;
+use Kuyash\Trend\FormatRecommender;
+use Kuyash\Trend\GoogleTrendsProvider;
+use Kuyash\Trend\MockTrendProvider;
+use Kuyash\Trend\QuotaCounter;
+use Kuyash\Trend\TrendConfigRepository;
+use Kuyash\Trend\TrendExecutor;
+use Kuyash\Trend\TrendFeed;
+use Kuyash\Trend\TrendProvider;
+use Kuyash\Trend\TrendProviderException;
+use Kuyash\Trend\TrendRepository;
+use Kuyash\Trend\TrendResult;
+use Kuyash\Trend\TrendService;
+use Kuyash\Trend\YouTubeTrendsProvider;
 use Kuyash\Workflow\Decision;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
@@ -927,6 +941,20 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
         foreach (['idea_generation', 'script_draft', 'caption_generation', 'hashtag_generation'] as $t) {
             $registry->register($t, $content);
         }
+
+        // Phase 6: trend_fetch is served by TrendExecutor(MockTrendProvider) over
+        // the test db + shared clock — mirrors the production binding so e2e
+        // full runs exercise the real trend seam (cache TTL uses test time).
+        $trendRepo = new TrendRepository($db);
+        $trendCfg = new TrendConfigRepository($db, ['niche' => 'general', 'region' => 'US']);
+        $trendSvc = new TrendService(
+            new MockTrendProvider(),
+            $trendRepo,
+            new QuotaCounter($db),
+            ['cache_ttl_seconds' => 21600, 'limit' => 8, 'quota_units' => []],
+            $clock,
+        );
+        $registry->register('trend_fetch', new TrendExecutor($trendSvc, $trendRepo, $trendCfg));
     }
 
     $watchdog = new Watchdog($db, $events);
@@ -1768,7 +1796,7 @@ $_SESSION = [];
 /** Queue-driven fake transport: each post() returns the next queued response or throws. */
 final class FakeHttpClient implements HttpClient
 {
-    /** @var list<array{url: string, headers: array<string, string>, body: string}> */
+    /** @var list<array{method: string, url: string, headers: array<string, string>, body: string}> */
     public array $calls = [];
 
     /** @param list<HttpResponse|HttpTransportException> $queue */
@@ -1778,7 +1806,18 @@ final class FakeHttpClient implements HttpClient
 
     public function post(string $url, array $headers, string $body, int $timeoutSeconds): HttpResponse
     {
-        $this->calls[] = ['url' => $url, 'headers' => $headers, 'body' => $body];
+        return $this->serve('POST', $url, $headers, $body);
+    }
+
+    public function get(string $url, array $headers, int $timeoutSeconds): HttpResponse
+    {
+        return $this->serve('GET', $url, $headers, '');
+    }
+
+    /** @param array<string, string> $headers */
+    private function serve(string $method, string $url, array $headers, string $body): HttpResponse
+    {
+        $this->calls[] = ['method' => $method, 'url' => $url, 'headers' => $headers, 'body' => $body];
         $next = array_shift($this->queue);
         if ($next instanceof HttpTransportException) {
             throw $next;
@@ -2216,6 +2255,396 @@ check('heartbeat: beat() creates the directory if missing', (static function ():
     $h->beat('2026-06-12T18:00:00Z');
 
     return is_file($nested) && $h->lastBeat() === '2026-06-12T18:00:00Z';
+})());
+
+/* ================== Phase 6: Trend Radar ================== */
+
+/** Controllable TrendProvider: counts calls, can return canned results or throw. */
+final class FakeTrendProvider implements TrendProvider
+{
+    public int $calls = 0;
+    public ?TrendProviderException $throw = null;
+
+    /** @param list<TrendResult> $result */
+    public function __construct(public array $result = [], private string $providerName = 'youtube')
+    {
+    }
+
+    public function name(): string
+    {
+        return $this->providerName;
+    }
+
+    public function fetch(string $niche, string $region, int $limit): array
+    {
+        $this->calls++;
+        if ($this->throw !== null) {
+            throw $this->throw;
+        }
+
+        return array_slice($this->result, 0, $limit);
+    }
+}
+
+function trendResult(string $topic, int $score, string $source = 'youtube'): TrendResult
+{
+    return new TrendResult($topic, $score, $source, 'general', 'US', FormatRecommender::recommend('general', $topic), ['k' => 'v']);
+}
+
+/** A realistic YouTube search.list 200 body. */
+function youtubeBody(array $titles): HttpResponse
+{
+    $items = [];
+    foreach ($titles as $i => $title) {
+        $items[] = ['id' => ['videoId' => 'vid' . $i], 'snippet' => ['title' => $title, 'channelTitle' => 'Channel ' . $i]];
+    }
+
+    return new HttpResponse(200, json_encode(['items' => $items], JSON_THROW_ON_ERROR));
+}
+
+/** A realistic Google dailytrends body, including the ")]}'," anti-hijack prefix. */
+function googleTrendsBody(array $queries): HttpResponse
+{
+    $searches = [];
+    foreach ($queries as $q) {
+        $searches[] = ['title' => ['query' => $q], 'formattedTraffic' => '200K+'];
+    }
+    $json = json_encode(['default' => ['trendingSearchesDays' => [['trendingSearches' => $searches]]]], JSON_THROW_ON_ERROR);
+
+    return new HttpResponse(200, ")]}',\n" . $json);
+}
+
+echo "== Trend: FormatRecommender ==\n";
+
+check('format: face niche → face', FormatRecommender::recommend('fitness', 'anything') === 'face');
+check('format: face signal in topic → face', FormatRecommender::recommend('tech', 'how to setup wifi') === 'face'
+    && FormatRecommender::recommend('tech', 'morning routine reset') === 'face');
+check('format: otherwise faceless', FormatRecommender::recommend('tech', 'phone battery myths') === 'faceless');
+
+echo "== Trend: MockTrendProvider ==\n";
+
+$mockTrend = new MockTrendProvider();
+$mockGeneral = $mockTrend->fetch('general', 'US', 5);
+check('mock trend: name + count + best-first', $mockTrend->name() === 'mock'
+    && count($mockGeneral) === 5
+    && $mockGeneral[0]->score >= $mockGeneral[1]->score && $mockGeneral[1]->score >= $mockGeneral[2]->score);
+check('mock trend: deterministic per (niche,region)', (static function () use ($mockTrend): bool {
+    $a = $mockTrend->fetch('cooking', 'US', 4);
+    $b = $mockTrend->fetch('cooking', 'US', 4);
+
+    return $a[0]->topic === $b[0]->topic && $a[0]->score === $b[0]->score && $a[0]->niche === 'cooking';
+})());
+check('mock trend: every result carries a format + score range', (static function () use ($mockGeneral): bool {
+    foreach ($mockGeneral as $t) {
+        if (!in_array($t->format, ['face', 'faceless'], true) || $t->score < 55 || $t->score > 99) {
+            return false;
+        }
+    }
+
+    return true;
+})());
+check('mock trend: unknown niche falls back to general pool', $mockTrend->fetch('nope', 'US', 3) !== []);
+
+echo "== Trend: TrendRepository (cache + tenant isolation) ==\n";
+
+$trDb = migratedDb($basePath);
+[$trUserA, $trWsA] = seedUser($trDb, 'trend-a@example.com', $argonHash, 'Trend WS A');
+[$trUserB, $trWsB] = seedUser($trDb, 'trend-b@example.com', $argonHash, 'Trend WS B');
+$trRepo = new TrendRepository($trDb);
+
+$trRepo->replace($trWsA, 'general', 'US', [trendResult('alpha', 90), trendResult('beta', 80)], '2026-06-12T10:00:00Z');
+check('trend repo: cached returns the batch best-first', (static function () use ($trRepo, $trWsA): bool {
+    $rows = $trRepo->cached($trWsA, 'general', 'US');
+
+    return count($rows) === 2 && $rows[0]['topic'] === 'alpha' && $rows[0]['rank'] === 0
+        && $rows[0]['raw'] === ['k' => 'v'] && $rows[0]['score'] === 90;
+})());
+$firstId = $trRepo->cached($trWsA, 'general', 'US')[0]['id'];
+check('trend repo: find scoped to workspace', $trRepo->find($trWsA, $firstId) !== null
+    && $trRepo->find($trWsB, $firstId) === null);
+check('trend repo: another tenant sees nothing', $trRepo->cached($trWsB, 'general', 'US') === []);
+$trRepo->replace($trWsA, 'general', 'US', [trendResult('gamma', 95)], '2026-06-12T16:00:00Z');
+check('trend repo: replace swaps the batch (latest fetched_at only)', (static function () use ($trRepo, $trWsA): bool {
+    $rows = $trRepo->cached($trWsA, 'general', 'US');
+
+    return count($rows) === 1 && $rows[0]['topic'] === 'gamma';
+})());
+
+echo "== Trend: QuotaCounter ==\n";
+
+$qDb = migratedDb($basePath);
+[$qUser, $qWs] = seedUser($qDb, 'quota@example.com', $argonHash, 'Quota WS');
+[$qUser2, $qWs2] = seedUser($qDb, 'quota2@example.com', $argonHash, 'Quota WS2');
+$quotaC = new QuotaCounter($qDb);
+$quotaC->record($qWs, 'youtube', 100, '2026-06-12T10:00:00Z');
+$quotaC->record($qWs, 'youtube', 100, '2026-06-12T11:00:00Z');
+$quotaC->record($qWs, 'youtube', 100, '2026-06-13T10:00:00Z');
+check('quota: same provider+day accumulates', $quotaC->usageFor($qWs, 'youtube', '2026-06-12') === 200);
+check('quota: different day is separate', $quotaC->usageFor($qWs, 'youtube', '2026-06-13') === 100);
+check('quota: zero/negative units are ignored', (static function () use ($quotaC, $qWs): bool {
+    $quotaC->record($qWs, 'google_trends', 0, '2026-06-12T12:00:00Z');
+
+    return $quotaC->usageFor($qWs, 'google_trends', '2026-06-12') === 0;
+})());
+check('quota: scoped per workspace', $quotaC->usageFor($qWs2, 'youtube', '2026-06-12') === 0);
+check('quota: totalsForDay highest-first', (static function () use ($quotaC, $qWs): bool {
+    $quotaC->record($qWs, 'google_trends', 5, '2026-06-12T13:00:00Z');
+    $totals = $quotaC->totalsForDay($qWs, '2026-06-12');
+
+    return count($totals) === 2 && $totals[0]['provider'] === 'youtube' && $totals[0]['units'] === 200;
+})());
+
+echo "== Trend: TrendService (read-through cache, TTL, degradation, quota) ==\n";
+
+$svcDb = migratedDb($basePath);
+[$svcUser, $svcWs] = seedUser($svcDb, 'svc@example.com', $argonHash, 'Svc WS');
+$svcRepo = new TrendRepository($svcDb);
+$svcQuota = new QuotaCounter($svcDb);
+$svcNow = '2026-06-12T10:00:00Z';
+$svcClock = static function () use (&$svcNow): string { return $svcNow; };
+$svcProvider = new FakeTrendProvider([trendResult('alpha', 90), trendResult('beta', 80)], 'youtube');
+$svcCfg = ['cache_ttl_seconds' => 100, 'limit' => 8, 'quota_units' => ['youtube' => 100]];
+$svc = new TrendService($svcProvider, $svcRepo, $svcQuota, $svcCfg, $svcClock);
+
+$feed1 = $svc->feed($svcWs, 'general', 'US');
+check('service: first feed fetches + caches (fresh)', $feed1->freshness === TrendFeed::FRESH
+    && count($feed1->items) === 2 && $svcProvider->calls === 1 && $feed1->source === 'youtube');
+check('service: real provider call recorded against quota', $svcQuota->usageFor($svcWs, 'youtube', '2026-06-12') === 100);
+
+$svcNow = '2026-06-12T10:01:00Z'; // +60s, within TTL=100
+$feed2 = $svc->feed($svcWs, 'general', 'US');
+check('service: within TTL serves cache (no provider call)', $feed2->freshness === TrendFeed::FRESH
+    && $svcProvider->calls === 1);
+
+$svcNow = '2026-06-12T10:05:00Z'; // +5min, past TTL
+$feed3 = $svc->feed($svcWs, 'general', 'US');
+check('service: past TTL refreshes', $feed3->freshness === TrendFeed::FRESH && $svcProvider->calls === 2);
+
+$feed4 = $svc->feed($svcWs, 'general', 'US', true); // force within TTL
+check('service: force bypasses TTL', $svcProvider->calls === 3);
+
+$svcProvider->throw = new TrendProviderException('YouTube quota exceeded or forbidden (HTTP 403)');
+$svcNow = '2026-06-12T11:00:00Z'; // past TTL → tries provider → fails → stale cache
+$feed5 = $svc->feed($svcWs, 'general', 'US');
+check('service: provider failure with cache → stale + reason', $feed5->freshness === TrendFeed::STALE
+    && count($feed5->items) === 2 && $feed5->error !== null && str_contains($feed5->error, '403'));
+check('service: failed fetch is NOT charged to quota', $svcQuota->usageFor($svcWs, 'youtube', '2026-06-12') === 300); // 3 successes only
+
+$coldDb = migratedDb($basePath);
+[$coldUser, $coldWs] = seedUser($coldDb, 'cold@example.com', $argonHash, 'Cold WS');
+$coldProvider = new FakeTrendProvider([], 'youtube');
+$coldProvider->throw = new TrendProviderException('down');
+$coldSvc = new TrendService($coldProvider, new TrendRepository($coldDb), new QuotaCounter($coldDb), $svcCfg, $svcClock);
+$coldFeed = $coldSvc->feed($coldWs, 'general', 'US');
+check('service: provider failure with cold cache → empty + reason', $coldFeed->isEmpty()
+    && $coldFeed->freshness === TrendFeed::EMPTY && $coldFeed->error === 'down');
+
+$mockSvcProvider = new FakeTrendProvider([trendResult('m', 70, 'mock')], 'mock');
+$mockSvc = new TrendService($mockSvcProvider, $svcRepo, $svcQuota, $svcCfg, $svcClock);
+$mockSvc->feed($svcWs, 'tech', 'US');
+check('service: mock provider is never charged to quota', $svcQuota->usageFor($svcWs, 'mock', '2026-06-12') === 0);
+
+echo "== Trend: YouTubeTrendsProvider (fake transport, ZERO network) ==\n";
+
+$ytCfg = ['api_key' => 'yt-SECRET-KEY-DO-NOT-LEAK', 'endpoint' => 'https://yt.test/search', 'timeout' => 5];
+$ytFake = new FakeHttpClient([youtubeBody(['How to cook eggs', 'Funny cats compilation'])]);
+$yt = new YouTubeTrendsProvider($ytFake, $ytCfg);
+$ytResults = $yt->fetch('cooking', 'US', 8);
+check('youtube: parses items into best-first TrendResults', count($ytResults) === 2
+    && $ytResults[0]->topic === 'How to cook eggs' && $ytResults[0]->source === 'youtube'
+    && $ytResults[0]->score === 100 && $ytResults[1]->score === 93
+    && $ytResults[0]->format === 'face' && $ytResults[0]->raw['channel'] === 'Channel 0');
+check('youtube: request carries region + query, GET method', (static function () use ($ytFake): bool {
+    $call = $ytFake->calls[0];
+
+    return $call['method'] === 'GET' && str_contains($call['url'], 'regionCode=US')
+        && str_contains($call['url'], 'q=cooking');
+})());
+check('youtube: sanitizes vendor text (control chars stripped)', (static function () use ($ytCfg): bool {
+    $fake = new FakeHttpClient([youtubeBody(["Bad\x00title\nsecond line"])]);
+    $r = (new YouTubeTrendsProvider($fake, $ytCfg))->fetch('general', 'US', 8);
+
+    return !str_contains($r[0]->topic, "\n") && !str_contains($r[0]->topic, "\x00");
+})());
+check('youtube: 403 → exception, key never leaked', (static function () use ($ytCfg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(403, '{"error":"quota"}')]);
+    try {
+        (new YouTubeTrendsProvider($fake, $ytCfg))->fetch('general', 'US', 8);
+
+        return false;
+    } catch (TrendProviderException $e) {
+        return str_contains($e->getMessage(), '403') && !str_contains($e->getMessage(), 'SECRET');
+    }
+})());
+check('youtube: transport error → wrapped exception', (static function () use ($ytCfg): bool {
+    $fake = new FakeHttpClient([new HttpTransportException('Operation timed out')]);
+
+    return throws(static fn () => (new YouTubeTrendsProvider($fake, $ytCfg))->fetch('general', 'US', 8), TrendProviderException::class);
+})());
+check('youtube: malformed JSON → exception', (static function () use ($ytCfg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(200, 'not json')]);
+
+    return throws(static fn () => (new YouTubeTrendsProvider($fake, $ytCfg))->fetch('general', 'US', 8), TrendProviderException::class);
+})());
+check('youtube: no items → exception (never an empty silent result)', (static function () use ($ytCfg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(200, '{}')]);
+
+    return throws(static fn () => (new YouTubeTrendsProvider($fake, $ytCfg))->fetch('general', 'US', 8), TrendProviderException::class);
+})());
+// Redaction proof — uses the REAL CurlHttpClient against loopback port 1
+// (instant "connection refused", NO external network): the message carries only
+// curl's transport description. The host may appear, but the SECRET key and the
+// path/query that carries it must NEVER reach the thrown message.
+check('http: real transport error redacts the key + query string', (static function (): bool {
+    $secret = 'KEY-SUPER-SECRET-XYZ';
+    try {
+        (new CurlHttpClient())->get('http://127.0.0.1:1/search?key=' . $secret, ['Accept' => 'application/json'], 2);
+
+        return false;
+    } catch (HttpTransportException $e) {
+        $msg = $e->getMessage();
+
+        return !str_contains($msg, $secret) && !str_contains($msg, 'key=') && !str_contains($msg, '/search');
+    }
+})());
+check('youtube: real-transport failure stays key-safe end-to-end', (static function (): bool {
+    $cfg = ['api_key' => 'yt-SECRET-REALPATH', 'endpoint' => 'http://127.0.0.1:1/search', 'timeout' => 2];
+    try {
+        (new YouTubeTrendsProvider(new CurlHttpClient(), $cfg))->fetch('general', 'US', 8);
+
+        return false;
+    } catch (TrendProviderException $e) {
+        return !str_contains($e->getMessage(), 'SECRET');
+    }
+})());
+
+echo "== Trend: GoogleTrendsProvider (fake transport, ZERO network) ==\n";
+
+$gtCfg = ['endpoint' => 'https://trends.test/dailytrends', 'timeout' => 5];
+$gtFake = new FakeHttpClient([googleTrendsBody(['election results', 'new movie release'])]);
+$gtResults = (new GoogleTrendsProvider($gtFake, $gtCfg))->fetch('general', 'US', 8);
+check('google: strips )]}\' prefix + parses trending searches', count($gtResults) === 2
+    && $gtResults[0]->topic === 'election results' && $gtResults[0]->source === 'google_trends'
+    && $gtResults[0]->score === 100 && $gtResults[1]->score === 95
+    && $gtResults[0]->raw['traffic'] === '200K+');
+check('google: non-2xx → exception', (static function () use ($gtCfg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(429, 'rate limited')]);
+
+    return throws(static fn () => (new GoogleTrendsProvider($fake, $gtCfg))->fetch('general', 'US', 8), TrendProviderException::class);
+})());
+check('google: no brace / garbage body → exception', (static function () use ($gtCfg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(200, 'garbage-no-json')]);
+
+    return throws(static fn () => (new GoogleTrendsProvider($fake, $gtCfg))->fetch('general', 'US', 8), TrendProviderException::class);
+})());
+check('google: no trending days → exception', (static function () use ($gtCfg): bool {
+    $fake = new FakeHttpClient([new HttpResponse(200, ")]}',\n{}")]);
+
+    return throws(static fn () => (new GoogleTrendsProvider($fake, $gtCfg))->fetch('general', 'US', 8), TrendProviderException::class);
+})());
+
+echo "== Trend: provider selection via the real binding ==\n";
+
+$buildTrendProvider = static function (string $mock, string $provider, string $key) use ($basePath): TrendProvider {
+    $_ENV['TREND_MOCK'] = $mock;
+    $_ENV['TREND_PROVIDER'] = $provider;
+    $_ENV['YOUTUBE_API_KEY'] = $key;
+    $container = require $basePath . '/src/bootstrap.php';
+
+    return $container->get(TrendProvider::class);
+};
+$tEnvBackup = [$_ENV['TREND_MOCK'] ?? null, $_ENV['TREND_PROVIDER'] ?? null, $_ENV['YOUTUBE_API_KEY'] ?? null];
+
+check('trend selection: mock=true → MockTrendProvider', $buildTrendProvider('true', 'youtube', 'k') instanceof MockTrendProvider);
+check('trend selection: mock=false + youtube + key → YouTubeTrendsProvider', $buildTrendProvider('false', 'youtube', 'yt-key') instanceof YouTubeTrendsProvider);
+check('trend selection: mock=false + youtube + no key → mock (fail-safe)', $buildTrendProvider('false', 'youtube', '') instanceof MockTrendProvider);
+check('trend selection: mock=false + google_trends → GoogleTrendsProvider', $buildTrendProvider('false', 'google_trends', '') instanceof GoogleTrendsProvider);
+
+foreach (['TREND_MOCK', 'TREND_PROVIDER', 'YOUTUBE_API_KEY'] as $i => $k) {
+    if ($tEnvBackup[$i] === null) { unset($_ENV[$k]); } else { $_ENV[$k] = $tEnvBackup[$i]; }
+}
+
+echo "== Trend: TrendExecutor (niche + create-from-trend paths) ==\n";
+
+$teDb = migratedDb($basePath);
+[$teUser, $teWs] = seedUser($teDb, 'te@example.com', $argonHash, 'TE WS');
+$teRepo = new TrendRepository($teDb);
+$teCfg = new TrendConfigRepository($teDb, ['niche' => 'general', 'region' => 'US']);
+$teClock = static fn (): string => '2026-06-12T10:00:00Z';
+$teSvc = new TrendService(new MockTrendProvider(), $teRepo, new QuotaCounter($teDb), ['cache_ttl_seconds' => 100, 'limit' => 8, 'quota_units' => []], $teClock);
+$teExec = new TrendExecutor($teSvc, $teRepo, $teCfg);
+
+$teNicheResult = $teExec->execute(['workspace_id' => $teWs, 'entity_type' => 'trend', 'entity_id' => null, 'run_id' => 1, 'step' => 1], []);
+check('executor: niche path emits top trend with a topic + format', $teNicheResult->status === JobResult::STATUS_READY
+    && ($teNicheResult->result['trend'] ?? '') !== ''
+    && in_array($teNicheResult->result['format'] ?? '', ['face', 'faceless'], true)
+    && ($teNicheResult->result['origin'] ?? '') === 'niche');
+
+$teRepo->replace($teWs, 'general', 'US', [trendResult('Pinned topic', 88, 'mock')], '2026-06-12T10:00:00Z');
+$pinnedId = $teRepo->cached($teWs, 'general', 'US')[0]['id'];
+$teSelected = $teExec->execute(['workspace_id' => $teWs, 'entity_type' => 'trend', 'entity_id' => $pinnedId, 'run_id' => 2, 'step' => 1], []);
+check('executor: create-from-trend emits the SELECTED trend', $teSelected->status === JobResult::STATUS_READY
+    && $teSelected->result['trend'] === 'Pinned topic' && ($teSelected->result['origin'] ?? '') === 'selected');
+$teGone = $teExec->execute(['workspace_id' => $teWs, 'entity_type' => 'trend', 'entity_id' => 999999, 'run_id' => 3, 'step' => 1], []);
+check('executor: selected trend missing → honest failure', $teGone->status === JobResult::STATUS_FAILED
+    && str_contains((string) $teGone->errorMessage, 'no longer available'));
+
+echo "== Trend: Engine create-from-trend (entity wiring + isolation) ==\n";
+
+$cfDb = migratedDb($basePath);
+[$cfUser, $cfWs] = seedUser($cfDb, 'cf@example.com', $argonHash, 'CF WS');
+[$cfUser2, $cfWs2] = seedUser($cfDb, 'cf2@example.com', $argonHash, 'CF WS2');
+$_SESSION = [];
+$cfCtx = new WorkspaceContext($cfDb);
+$cfCtx->set($cfWs);
+$cfNow = '2026-06-12T10:00:00Z';
+[$cfEngine, $cfWorker] = makeRig($cfDb, new MockExecutor($cfDb), $cfNow);
+(new WorkflowRepository($cfDb, $validator4))->ensureDefaults($cfCtx);
+$cfFullWf = null;
+foreach ((new WorkflowRepository($cfDb, $validator4))->listFor($cfCtx) as $wf) {
+    if ($wf['template'] === 'full') { $cfFullWf = $wf; break; }
+}
+$cfRepo = new TrendRepository($cfDb);
+$cfRepo->replace($cfWs, 'general', 'US', [trendResult('Engine pinned topic', 91, 'mock')], $cfNow);
+$cfTrendId = $cfRepo->cached($cfWs, 'general', 'US')[0]['id'];
+
+$cfRunId = $cfEngine->startRun($cfCtx, $cfFullWf['id'], null, $cfUser, $cfTrendId);
+check('engine cf: run pinned to the trend (entity_id set)', (static function () use ($cfDb, $cfRunId, $cfWs, $cfTrendId): bool {
+    $run = $cfDb->one('SELECT entity_type, entity_id FROM runs WHERE id = ? AND workspace_id = ?', [$cfRunId, $cfWs]);
+
+    return $run !== null && $run['entity_type'] === 'trend' && (int) $run['entity_id'] === $cfTrendId;
+})());
+check('engine cf: unknown trend id → WorkflowException(trend.not_found)', (static function () use ($cfEngine, $cfCtx, $cfFullWf, $cfUser): bool {
+    try {
+        $cfEngine->startRun($cfCtx, $cfFullWf['id'], null, $cfUser, 987654);
+
+        return false;
+    } catch (WorkflowException $e) {
+        return $e->messageKey === 'trend.not_found';
+    }
+})());
+check('engine cf: another tenant\'s trend id is rejected', (static function () use ($cfEngine, $cfCtx, $cfFullWf, $cfUser, $cfDb, $cfWs2, $cfNow): bool {
+    // seed a trend owned by WS2, try to use it from WS1's context
+    (new TrendRepository($cfDb))->replace($cfWs2, 'general', 'US', [trendResult('foreign', 50, 'mock')], $cfNow);
+    $foreignId = (new TrendRepository($cfDb))->cached($cfWs2, 'general', 'US')[0]['id'];
+    try {
+        $cfEngine->startRun($cfCtx, $cfFullWf['id'], null, $cfUser, $foreignId);
+
+        return false;
+    } catch (WorkflowException $e) {
+        return $e->messageKey === 'trend.not_found';
+    }
+})());
+
+$cfJobs = new JobRepository($cfDb);
+while ($cfWorker->tick()) {
+}
+check('engine cf: worker emits the pinned topic into trend_fetch', (static function () use ($cfJobs, $cfCtx, $cfRunId): bool {
+    $jobs = $cfJobs->jobsForRun($cfCtx, $cfRunId);
+    $trend = $jobs[0]['result']['trend'] ?? '';
+    $idea = $jobs[1]['result']['idea'] ?? '';
+
+    return $trend === 'Engine pinned topic' && str_contains($idea, 'Engine pinned topic');
 })());
 
 echo "\n" . $pass . ' PASS, ' . count($failures) . " FAIL\n";

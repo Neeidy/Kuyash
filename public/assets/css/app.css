@@ -527,3 +527,37 @@
   /* hide the whole chip — hiding only its inner spans left an empty pill */
   .mode-chip { display: none; }
 }
+
+/* ── Trend Radar (Phase 6) ─────────────────────────────────────────────── */
+.trend-niche { display: flex; gap: var(--s3); align-items: flex-end; flex-wrap: wrap; }
+.trend-niche .field { margin-bottom: 0; min-width: 120px; }
+
+.trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--gap-grid);
+}
+.trend-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.trend-card__top { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.trend-card__score {
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--accent);
+}
+.trend-card__topic { margin: 0; font-size: 15px; line-height: 1.35; }
+.trend-card__meta { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.trend-card__action { margin-top: auto; }
+
+@media (max-width: 480px) {
+  .trend-grid { grid-template-columns: 1fr; }
+  .trend-niche { gap: var(--s2); }
+}

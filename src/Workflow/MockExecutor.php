@@ -7,11 +7,12 @@ namespace Kuyash\Workflow;
 use Kuyash\Core\Database;
 
 /**
- * The mock executor for the NON-content job types (trend_fetch, tts,
- * asset_fetch, assembly, music_note, preview, compliance_check, render_review,
- * publish). The four content types (idea/script/caption/hashtag) are served by
- * ContentExecutor + a TextProvider (Phase 5) — this class no longer generates
- * content. Outputs are deterministic, result_json-only, and touch no network.
+ * The mock executor for the remaining NON-content job types (tts, asset_fetch,
+ * assembly, music_note, preview, compliance_check, render_review, publish).
+ * The four content types (idea/script/caption/hashtag) are served by
+ * ContentExecutor + a TextProvider (Phase 5); `trend_fetch` is served by
+ * TrendExecutor + a TrendProvider (Phase 6) — this class no longer produces
+ * content or trends. Outputs are deterministic, result_json-only, no network.
  *
  * Honesty rules baked in:
  * - provider is always 'mock'; costCents stays null (mock work is never
@@ -24,11 +25,6 @@ use Kuyash\Core\Database;
  */
 final class MockExecutor implements JobExecutor
 {
-    private const MOCK_TRENDS = [
-        '5-minute desk stretches', 'one-pan dinner ideas', 'budget travel hacks',
-        'phone photography tricks', 'morning routine reset',
-    ];
-
     public function __construct(private readonly Database $db)
     {
     }
@@ -38,13 +34,6 @@ final class MockExecutor implements JobExecutor
         $seed = crc32('run' . $job['run_id'] . '-step' . $job['step']);
 
         return match ((string) $job['type']) {
-            'trend_fetch' => JobResult::ready([
-                'trend' => self::pick(self::MOCK_TRENDS, $seed),
-                'niche' => 'general',
-                'score' => 60 + $seed % 40,
-                'source' => 'mock',
-            ], 'mock'),
-
             'tts' => JobResult::ready([
                 'voice' => 'mock-voice-1',
                 'duration_s' => 28.4,

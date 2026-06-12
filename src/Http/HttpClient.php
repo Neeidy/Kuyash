@@ -18,4 +18,13 @@ interface HttpClient
 {
     /** @param array<string, string> $headers */
     public function post(string $url, array $headers, string $body, int $timeoutSeconds): HttpResponse;
+
+    /**
+     * GET (Phase 6 trend providers). Same contract as post(): throws
+     * HttpTransportException only when no response arrives; a non-2xx response
+     * is a valid HttpResponse the caller inspects. Query params belong in $url.
+     *
+     * @param array<string, string> $headers
+     */
+    public function get(string $url, array $headers, int $timeoutSeconds): HttpResponse;
 }

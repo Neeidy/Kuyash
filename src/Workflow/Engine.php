@@ -43,14 +43,20 @@ final class Engine
     /**
      * Validate + create run and its first job in one short transaction.
      * Distribution runs REQUIRE a ready library video asset; full runs start
-     * from a mock trend (entity_type 'trend', no entity).
+     * from a trend — either a specific cached trend ("create from trend",
+     * entity_id = trends.id) or none (the worker fetches the niche's top trend).
      *
      * @return int the new run id
      *
      * @throws WorkflowException with a message key the controller can flash
      */
-    public function startRun(WorkspaceContext $ctx, int $workflowId, ?int $assetId, int $userId): int
-    {
+    public function startRun(
+        WorkspaceContext $ctx,
+        int $workflowId,
+        ?int $assetId,
+        int $userId,
+        ?int $trendId = null,
+    ): int {
         $wsId = $ctx->id();
 
         $workflow = $this->db->one(
@@ -83,6 +89,18 @@ final class Engine
         } else {
             $entityType = 'trend';
             $entityId = null;
+            if ($trendId !== null) {
+                // "create from trend": pin the run to a specific cached trend.
+                // Tenant-scoped existence check — a missing/foreign id is rejected.
+                $trend = $this->db->one(
+                    'SELECT id FROM trends WHERE id = ? AND workspace_id = ?',
+                    [$trendId, $wsId],
+                );
+                if ($trend === null) {
+                    throw new WorkflowException('trend.not_found');
+                }
+                $entityId = $trendId;
+            }
         }
 
         $chain = Nodes::expand(array_column($nodes, 'node'));

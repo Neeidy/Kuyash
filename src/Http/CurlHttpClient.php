@@ -15,16 +15,38 @@ final class CurlHttpClient implements HttpClient
 {
     public function post(string $url, array $headers, string $body, int $timeoutSeconds): HttpResponse
     {
+        return $this->send($url, $headers, $timeoutSeconds, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body,
+        ]);
+    }
+
+    public function get(string $url, array $headers, int $timeoutSeconds): HttpResponse
+    {
+        return $this->send($url, $headers, $timeoutSeconds, [CURLOPT_HTTPGET => true]);
+    }
+
+    /**
+     * Shared transport: the same TLS pinning, redirect ban and error handling
+     * for every verb — the only difference is the method-specific options.
+     *
+     * SECURITY: $url may carry a credential in its query string (e.g. the
+     * YouTube Data API ?key=). It must NEVER be logged or surfaced in an
+     * exception — only the transport error string is, which never echoes $url.
+     *
+     * @param array<string, string> $headers
+     * @param array<int, mixed>     $methodOptions
+     */
+    private function send(string $url, array $headers, int $timeoutSeconds, array $methodOptions): HttpResponse
+    {
         $headerLines = [];
         foreach ($headers as $name => $value) {
             $headerLines[] = $name . ': ' . $value;
         }
 
         $ch = curl_init();
-        curl_setopt_array($ch, [
+        curl_setopt_array($ch, $methodOptions + [
             CURLOPT_URL => $url,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => $headerLines,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => $timeoutSeconds,

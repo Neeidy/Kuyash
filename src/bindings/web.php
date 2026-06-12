@@ -18,6 +18,7 @@ use Kuyash\Controllers\LibraryController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
@@ -33,6 +34,9 @@ use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
 use Kuyash\Library\AssetValidator;
 use Kuyash\Library\MediaProbe;
+use Kuyash\Trend\QuotaCounter;
+use Kuyash\Trend\TrendConfigRepository;
+use Kuyash\Trend\TrendService;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\JobRepository;
@@ -153,6 +157,19 @@ return static function (Container $container, string $basePath): void {
         $c->get(EventLog::class),
         $c->get(Engine::class),
         $c->get(AssetRepository::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Auth::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
+    ));
+
+    $container->bind(TrendController::class, static fn (Container $c): TrendController => new TrendController(
+        $c->get(View::class),
+        $c->get(TrendService::class),
+        $c->get(TrendConfigRepository::class),
+        $c->get(QuotaCounter::class),
+        $c->get(WorkflowRepository::class),
+        $c->get(Engine::class),
         $c->get(WorkspaceContext::class),
         $c->get(Auth::class),
         $c->get(Csrf::class),
