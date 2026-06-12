@@ -31,7 +31,7 @@ Goals: TrendProvider adapters — Google Trends API + YouTube Data API (official
 Non-goals: scraping fragile sources as hard dependencies; Instagram trend promises; reposting/republishing watched creators' content (Creator Watch is research signal ONLY — compliance rule).
 
 ## Phase 7 — Media Production (Stock Mode) · token: START PHASE 7
-Goals: TTS adapter (OpenAI base), Whisper subtitles, Pexels StockProvider, ffmpeg assembly (voice + visuals + subtitles + music note), safe execution, temp cleanup, render artifacts; **draft-first rendering (low-res preview render for approval, full render only after approve)**; **content-addressed asset cache (hash TTS text+voice / stock clips → reuse, cut cost & time)**.
+Goals: TTS adapter (OpenAI base), Whisper subtitles, Pexels StockProvider, ffmpeg assembly (voice + visuals + subtitles + music note), safe execution, temp cleanup, render artifacts; **draft-first rendering (low-res preview render for approval, full render only after approve)**; **content-addressed asset cache (hash TTS text+voice / stock clips → reuse, cut cost & time)**; **dashboard cockpit first pass (ui-style-guide cockpit spec): KPI strip + active runs panel + awaiting-approval strip with render thumbnails — built from REAL data now available (runs, jobs, renders); countdown/deltas slots stay placeholder until Phase 10**.
 Non-goals: AI video generation, ElevenLabs (V2 premium).
 
 ## Phase 8 — Cloudflare R2 · token: START PHASE 8
