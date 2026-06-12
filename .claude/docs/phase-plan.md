@@ -27,8 +27,8 @@ Goals: OpenAI adapter (mock-first): ideas, scripts, hooks, CTAs, captions, hasht
 Non-goals: TTS, video, trends.
 
 ## Phase 6 — Trend Radar Backend · token: START PHASE 6
-Goals: TrendProvider adapters — Google Trends API + YouTube Data API (official, primary), TikTok third-party (best-effort, graceful degradation), caching, niche config, format recommendation (face/faceless), "create from trend".
-Non-goals: scraping fragile sources as hard dependencies; Instagram trend promises.
+Goals: TrendProvider adapters — Google Trends API + YouTube Data API (official, primary), TikTok third-party (best-effort, graceful degradation), caching, niche config, format recommendation (face/faceless), "create from trend"; **Creator Watch (optional sub-goal, best-effort): follow specific creators by handle via the same third-party TikTok provider — top clips (most viewed / latest / most engaged) cached daily, rendered as a wall section inside Trend Radar; person-based signal next to topic-based trends; degrades gracefully, never blocks the pipeline (see trend-sources.md)**.
+Non-goals: scraping fragile sources as hard dependencies; Instagram trend promises; reposting/republishing watched creators' content (Creator Watch is research signal ONLY — compliance rule).
 
 ## Phase 7 — Media Production (Stock Mode) · token: START PHASE 7
 Goals: TTS adapter (OpenAI base), Whisper subtitles, Pexels StockProvider, ffmpeg assembly (voice + visuals + subtitles + music note), safe execution, temp cleanup, render artifacts; **draft-first rendering (low-res preview render for approval, full render only after approve)**; **content-addressed asset cache (hash TTS text+voice / stock clips → reuse, cut cost & time)**.
@@ -43,7 +43,7 @@ Goals: compliance checks (AI-label requirement, slop/variation score, format rul
 Non-goals: any untruthful record. Compliance-reviewer mandatory before close.
 
 ## Phase 10 — Zernio Publishing · token: START PHASE 10
-Goals: mock Zernio client → real ONLY after doc-gate (.claude/docs/zernio-notes.md); account OAuth connect flows; publish/schedule; per-platform AI-label automation; webhook handling; status reconciliation; idempotency.
+Goals: mock Zernio client → real ONLY after doc-gate (.claude/docs/zernio-notes.md); account OAuth connect flows; publish/schedule; per-platform AI-label automation; webhook handling; status reconciliation; idempotency; **next-post countdown feed (topbar "NEXT UP <account> — mm:ss" + "last posted" line, fed by the schedule queue — UI spec in ui-style-guide.md)**; **daily account_metrics snapshot job (followers/views/engagement via Zernio/platform APIs where available, best-effort) → dashboard/accounts show growth deltas (+/−) against previous snapshot; missing data degrades to "no data", never blocks**.
 Non-goals: any real call before docs. Security-auditor + compliance-reviewer mandatory before close.
 
 ## Phase 11 — Usage, Costs & Credit Ledger · token: START PHASE 11
@@ -59,4 +59,4 @@ Goals: full security review, test checklist, SQLite + media backup/restore, Cadd
 Non-goals: new features.
 
 ## V2 / SaaS-ification Parking Lot (documented, NOT planned)
-Stripe billing & plans, multi-tenant UI, customer onboarding, team roles, AI avatars (HeyGen-class), ElevenLabs premium voice/music, additional AI-video providers, lip-sync/dubbing, multi-language.
+Stripe billing & plans, multi-tenant UI, customer onboarding, team roles, AI avatars (HeyGen-class), ElevenLabs premium voice/music, additional AI-video providers, lip-sync/dubbing, multi-language; **boost suggestion (detect high-engagement posts → "Promote in Ads Manager" deep link — recommendation + link ONLY, never an ads platform)**; **workspace→account branching graph visualization (read-only view; engine stays linear)**; **revenue/MRR panel (meaningful only after Stripe)**.

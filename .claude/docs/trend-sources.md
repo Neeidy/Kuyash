@@ -12,3 +12,9 @@
 - Trend output feeds: idea generation, format recommendation (face/faceless), MUSIC NOTE suggestions.
 - Platform-native trend sounds CANNOT be published via API — surface them as suggestions the user applies in-platform.
 - If a provider fails: show cached data with freshness indicator; pipeline continues without trend input if user chooses.
+
+## Creator Watch (Phase 6 optional sub-goal — person-based signals)
+- Follow specific creators by handle (TikTok first) via the SAME third-party provider/adapter as TikTok trends — no new dependency class.
+- Per creator, cache daily: top clips (most viewed / latest / most engaged) + follower/engagement stats. Render as a wall section inside Trend Radar.
+- Purpose: research signal feeding idea generation ("what works in my niche right now, by whom") — NEVER repost/republish watched creators' content (compliance rule; copyright + inauthentic-content risk).
+- Best-effort tier: cached, optional, degrades to "stale/no data", never blocks anything.

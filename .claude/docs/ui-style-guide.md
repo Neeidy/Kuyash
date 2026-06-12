@@ -76,6 +76,8 @@ Phase 0 simulates a living system with a lightweight ticker (setInterval driving
 - Live Logs: terminal-style streaming log pane (mono font, timestamped lines appearing) with pause/resume.
 - Status pulses: small animated dot on "processing"/"publishing" states only — motion is information, never decoration. Respect `prefers-reduced-motion`.
 - A global "LIVE" indicator in the topbar with last-update timestamp.
+- **Next-post countdown (cockpit upgrade, applies whenever the dashboard/topbar is next touched — do NOT reopen closed phases for it):** topbar shows "NEXT UP <account> — mm:ss" counting down to the next scheduled publish, plus a dim "last posted: <file> ✓" line. Mock data until Phase 10 wires the real schedule queue. Mono digits, no jitter.
+- **Account stats rail with deltas (same rule):** account cards show growth deltas vs previous snapshot (▲ +19 / ▼ −14, semantic colors) once Phase 10's account_metrics snapshots exist; until then mock. The dashboard remains the ONE deliberately dense cockpit screen: countdown topline → KPI strip → active runs → approval strip → accounts rail (deltas) → activity feed; Creator Watch wall docks as a bottom section when Phase 6 ships it.
 
 Later phases replace the ticker with real data via **SSE (Server-Sent Events)** from pure PHP — native, no dependencies, fits the stack. Design the JS so the ticker and the SSE client share one event interface (mock-first pattern applies to the live layer too).
 
