@@ -22,13 +22,15 @@ final class RenderRepository
     /**
      * @param array{kind: string, stored_name: string, poster_name: ?string,
      *   width: ?int, height: ?int, duration_s: ?float, size_bytes: ?int} $data
+     * @param string $storageDisk the durable disk the render landed on
+     *        ('local'|'r2') — recorded so serving resolves the provider per object
      */
-    public function create(int $workspaceId, int $runId, ?int $jobId, array $data): int
+    public function create(int $workspaceId, int $runId, ?int $jobId, array $data, string $storageDisk = 'local'): int
     {
         $this->db->run(
             'INSERT INTO renders (workspace_id, run_id, job_id, kind, stored_name, poster_name,
-                mime, width, height, duration_s, size_bytes, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, \'video/mp4\', ?, ?, ?, ?, ?)',
+                mime, width, height, duration_s, size_bytes, storage_disk, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, \'video/mp4\', ?, ?, ?, ?, ?, ?)',
             [
                 $workspaceId,
                 $runId,
@@ -40,6 +42,7 @@ final class RenderRepository
                 $data['height'],
                 $data['duration_s'],
                 $data['size_bytes'],
+                $storageDisk,
                 gmdate(self::ISO),
             ],
         );

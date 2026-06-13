@@ -4,15 +4,21 @@ declare(strict_types=1);
 
 namespace Kuyash\Library;
 
+use Kuyash\Storage\StorageKey;
+use Kuyash\Storage\StorageManager;
 use Kuyash\Workspace\WorkspaceContext;
 use RuntimeException;
 use Throwable;
 
 /**
  * The full upload pipeline behind the controller's SAPI gate:
- * validate → title default → probe → hash → store → create.
+ * validate → title default → probe → hash → store → put(durable) → create.
  * Lives outside the controller so the ordering is CLI-testable and so
  * Phase 6/7 stock/AI producers can reuse the same ingest path.
+ *
+ * The file always lands on local disk first (AssetStorage); put() then persists
+ * it to the configured durable disk and the row records which disk it is on. On
+ * the default 'local' driver put() is a no-op (the file is already in place).
  */
 final class AssetIngest
 {
@@ -21,6 +27,7 @@ final class AssetIngest
         private readonly MediaProbe $probe,
         private readonly AssetStorage $storage,
         private readonly AssetRepository $assets,
+        private readonly StorageManager $durable,
         private readonly int $maxTags,
         private readonly int $maxTagLength,
     ) {
@@ -51,9 +58,18 @@ final class AssetIngest
         }
 
         $storedName = $this->storage->newStoredName($meta['ext']);
-        $this->storage->store($ctx->id(), $file->tmpPath, $storedName);
+        $absPath = $this->storage->store($ctx->id(), $file->tmpPath, $storedName);
+        $disk = $this->durable->defaultName();
 
         try {
+            // persist to the durable disk (no-op on 'local'); a failed remote put
+            // must NOT leave a half-stored asset, so it joins the cleanup path
+            $this->durable->default()->put(
+                StorageKey::make('asset', $ctx->id(), $storedName),
+                $absPath,
+                $meta['mime'],
+            );
+
             return $this->assets->create($ctx, [
                 'kind' => $meta['kind'],
                 'type' => $type,
@@ -68,10 +84,12 @@ final class AssetIngest
                 'height' => $probed['height'],
                 'aspect' => $probed['aspect'],
                 'tags' => $this->parseTags($rawTags),
-            ]);
+            ], $disk);
         } catch (Throwable $e) {
-            // no orphan on DB failure: the row is the source of truth, so a
-            // failed insert must take the just-stored file with it
+            // no orphan on failure: the row is the source of truth, so a failed
+            // put/insert must take the just-stored local file with it. A failed
+            // remote put leaves nothing to clean up there — S3/R2 PUT is atomic
+            // (the object only becomes visible on a 2xx).
             $this->storage->delete($ctx->id(), $storedName);
             throw $e;
         }

@@ -7,20 +7,27 @@ namespace Kuyash\Controllers;
 use Kuyash\Core\Response;
 use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
+use Kuyash\Storage\StorageException;
+use Kuyash\Storage\StorageKey;
+use Kuyash\Storage\StorageManager;
 use Kuyash\Workspace\WorkspaceContext;
 
 /**
- * Private media serving with single-range support. Safari refuses to play
- * <video> without 206 responses (it probes with Range: bytes=0-1) and
- * Chrome needs ranges to seek — so this is required, not optional.
- * Multi-range requests are answered with a full 200 (allowed by RFC 9110).
+ * Private media serving. The tenant check runs FIRST (find() is workspace-scoped
+ * → another tenant's id is 404 before anything else). Then the provider is
+ * resolved PER OBJECT from storage_disk: an R2-located object 302-redirects to a
+ * short-TTL presigned GET (content-type + disposition pinned); a local object is
+ * streamed with single-range support — Safari refuses <video> without 206
+ * responses and Chrome needs ranges to seek. Multi-range → full 200 (RFC 9110).
  */
 final class MediaController
 {
     public function __construct(
         private readonly AssetRepository $assets,
         private readonly AssetStorage $storage,
+        private readonly StorageManager $disks,
         private readonly WorkspaceContext $workspace,
+        private readonly int $presignTtl = 300,
     ) {
     }
 
@@ -31,6 +38,17 @@ final class MediaController
         $asset = ctype_digit($id) ? $this->assets->find($this->workspace, (int) $id) : null;
         if ($asset === null) {
             return new Response('Not found', 404, ['Content-Type' => 'text/plain; charset=utf-8']);
+        }
+
+        // tenant already verified by the scoped find() above — only now is a URL
+        // minted. An R2 object redirects; a local one falls through to streaming.
+        $redirect = $this->maybeRedirect(
+            (string) ($asset['storage_disk'] ?? 'local'),
+            StorageKey::make('asset', (int) $asset['workspace_id'], (string) $asset['stored_name']),
+            (string) $asset['mime'],
+        );
+        if ($redirect !== null) {
+            return $redirect;
         }
 
         $path = $this->storage->path($asset['workspace_id'], (string) $asset['stored_name']);
@@ -69,6 +87,33 @@ final class MediaController
             'Content-Length' => (string) $length,
             'Content-Range' => "bytes {$start}-{$end}/{$size}",
         ], $start, $length);
+    }
+
+    /**
+     * Resolve the per-object provider; if it serves remotely, return a 302 to a
+     * short-TTL presigned GET (content-type + disposition pinned in the presign),
+     * else null so the caller streams locally. A misconfigured disk fails closed
+     * (404 + log) — never an unguarded 500 to the client.
+     */
+    private function maybeRedirect(string $disk, string $key, string $mime): ?Response
+    {
+        try {
+            $url = $this->disks->disk($disk)->temporaryUrl($key, $this->presignTtl, [
+                'response-content-type' => $mime,
+                'response-content-disposition' => 'inline',
+            ]);
+        } catch (StorageException $e) {
+            error_log('Kuyash: storage disk resolve failed — ' . $e->getMessage());
+
+            return new Response('Not found', 404, ['Content-Type' => 'text/plain; charset=utf-8']);
+        }
+
+        if ($url === null) {
+            return null; // local provider → stream
+        }
+
+        // no-store: the URL is short-lived; a cache must not pin an expiring link
+        return new Response('', 302, ['Location' => $url, 'Cache-Control' => 'private, no-store']);
     }
 
     /**

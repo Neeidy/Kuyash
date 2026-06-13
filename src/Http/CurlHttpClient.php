@@ -54,6 +54,9 @@ final class CurlHttpClient implements HttpClient
             CURLOPT_FOLLOWLOCATION => false,    // no redirect-based key exfiltration
             CURLOPT_SSL_VERIFYPEER => true,     // pin TLS verification (defense-in-depth:
             CURLOPT_SSL_VERIFYHOST => 2,        // a global override can't silently weaken it)
+            // every provider endpoint is https — deny file://, gopher:// etc.
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
             // best-effort body cap (Content-Length based) so a hostile/oversized
             // response can't balloon worker memory; a streaming cap for large
             // media downloads is a documented follow-up (see phase-7-followups)

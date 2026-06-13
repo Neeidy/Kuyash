@@ -25,16 +25,18 @@ final class AssetRepository
      *   duration_s: ?float, width: ?int, height: ?int, aspect: ?string,
      *   tags: list<string>
      * } $data
+     * @param string $storageDisk the durable disk the object landed on
+     *        ('local'|'r2') — recorded so serving resolves the provider per object
      */
-    public function create(WorkspaceContext $ctx, array $data): int
+    public function create(WorkspaceContext $ctx, array $data, string $storageDisk = 'local'): int
     {
         $now = gmdate('Y-m-d\TH:i:s\Z');
 
         $this->db->run(
             'INSERT INTO assets (workspace_id, kind, type, title, original_filename,
                 stored_name, mime, size_bytes, sha256, duration_s, width, height,
-                aspect, tags, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'ready\', ?, ?)',
+                aspect, tags, storage_disk, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'ready\', ?, ?)',
             [
                 $ctx->id(),
                 $data['kind'],
@@ -50,6 +52,7 @@ final class AssetRepository
                 $data['height'],
                 $data['aspect'],
                 json_encode($data['tags'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                $storageDisk,
                 $now,
                 $now,
             ],

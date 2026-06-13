@@ -50,5 +50,8 @@ return [
         'endpoint' => 'https://api.pexels.com/videos/search',
         'timeout' => (int) Config::env('STOCK_TIMEOUT', 30),
         'quota_units' => 1, // Pexels: 1 request unit (visibility; ledger is Phase 11)
+        // hard cap for the streamed clip download (Phase 8: clears the buffering
+        // HARD GATE) — an oversized clip aborts mid-transfer, never balloons
+        'max_download_bytes' => (int) Config::env('STOCK_MAX_DOWNLOAD_BYTES', 134_217_728), // 128 MiB
     ],
 ];

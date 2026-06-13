@@ -17,6 +17,7 @@ use Kuyash\Content\VariationEngine;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Database;
+use Kuyash\Http\CurlBlobClient;
 use Kuyash\Http\CurlHttpClient;
 use Kuyash\Library\AssetRepository;
 use Kuyash\Media\AssemblyEngine;
@@ -34,6 +35,10 @@ use Kuyash\Media\RenderRepository;
 use Kuyash\Media\StockProvider;
 use Kuyash\Media\TtsExecutor;
 use Kuyash\Media\TtsProvider;
+use Kuyash\Storage\LocalStorageProvider;
+use Kuyash\Storage\R2StorageProvider;
+use Kuyash\Storage\SigV4Signer;
+use Kuyash\Storage\StorageManager;
 use Kuyash\Trend\GoogleTrendsProvider;
 use Kuyash\Trend\MockTrendProvider;
 use Kuyash\Trend\QuotaCounter;
@@ -181,6 +186,48 @@ return static function (Container $container, string $basePath): void {
         ]);
     });
 
+    // StorageProvider seam (Phase 8): Local is always present (default); R2 is
+    // built ONLY when fully credentialed (else the manager fails safe to local).
+    // Serving + backfill resolve the provider PER OBJECT from row.storage_disk.
+    $container->bind(StorageManager::class, static function (Container $c): StorageManager {
+        $media = (array) $c->get(Config::class)->get('media');
+        $storage = (array) $c->get(Config::class)->get('storage');
+
+        $providers = ['local' => new LocalStorageProvider([
+            'asset' => (string) $media['asset_root'],
+            'cache' => (string) $media['cache_root'],
+            'render' => (string) $media['render_root'],
+        ])];
+
+        $r2 = (array) ($storage['r2'] ?? []);
+        $r2Ready = ((string) ($r2['account_id'] ?? '')) !== ''
+            && ((string) ($r2['access_key_id'] ?? '')) !== ''
+            && ((string) ($r2['secret_access_key'] ?? '')) !== ''
+            && ((string) ($r2['bucket'] ?? '')) !== '';
+        if ($r2Ready) {
+            $endpoint = (string) ($r2['endpoint'] ?? '');
+            $host = $endpoint !== ''
+                ? (string) (parse_url($endpoint, PHP_URL_HOST) ?? $endpoint)
+                : $r2['account_id'] . '.r2.cloudflarestorage.com';
+            $providers['r2'] = new R2StorageProvider(
+                new CurlBlobClient(),                                  // real transport, real path only
+                new SigV4Signer((string) $r2['access_key_id'], (string) $r2['secret_access_key'], (string) ($r2['region'] ?? 'auto'), 's3'),
+                $host,
+                (string) $r2['bucket'],
+                (int) ($r2['presign_ttl'] ?? 300),
+                (int) ($r2['max_download_bytes'] ?? 536_870_912),
+                (int) ($r2['timeout'] ?? 60),
+            );
+        }
+
+        $default = (string) ($storage['driver'] ?? 'local');
+        if (!isset($providers[$default])) {
+            $default = 'local'; // misconfigured driver → never block, serve local
+        }
+
+        return new StorageManager($providers, $default);
+    });
+
     $container->bind(Ffmpeg::class, static function (Container $c): Ffmpeg {
         $cfg = (array) $c->get(Config::class)->get('media');
 
@@ -222,7 +269,7 @@ return static function (Container $container, string $basePath): void {
         $final = (array) $media['final'];
 
         if ($useReal) {
-            return new PexelsStockProvider(new CurlHttpClient(), $c->get(Ffmpeg::class), $cfg);
+            return new PexelsStockProvider(new CurlHttpClient(), new CurlBlobClient(), $c->get(Ffmpeg::class), $cfg);
         }
 
         return new MockStockProvider(
@@ -235,13 +282,16 @@ return static function (Container $container, string $basePath): void {
 
     $container->bind(AssemblyEngine::class, static function (Container $c): AssemblyEngine {
         $cfg = (array) $c->get(Config::class)->get('media');
+        $storage = $c->get(StorageManager::class);
 
         return new AssemblyEngine(
             $c->get(Ffmpeg::class),
             $c->get(MediaPaths::class),
             $c->get(RenderRepository::class),
+            $storage->default(),
             (int) $cfg['fps'],
             ['burn_subtitles' => (bool) ($cfg['burn_subtitles'] ?? false)],
+            $storage->defaultName(),
         );
     });
 
@@ -264,6 +314,7 @@ return static function (Container $container, string $basePath): void {
             $c->get(Ffmpeg::class),
             $c->get(MediaPaths::class),
             $c->get(AssetCache::class),
+            $c->get(StorageManager::class),
             $c->get(QuotaCounter::class),
             (array) $media['final'],
             (int) (($media['stock']['quota_units'] ?? 1)),

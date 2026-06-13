@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kuyash\Media;
 
+use Kuyash\Storage\StorageKey;
+use Kuyash\Storage\StorageProvider;
+
 /**
  * Turns the pipeline's intermediate artifacts into a finished 9:16 MP4 render
  * via REAL ffmpeg, and records the render row. Shared by the draft pass
@@ -26,13 +29,18 @@ final class AssemblyEngine
 {
     /**
      * @param array{burn_subtitles?: bool} $options
+     * @param StorageProvider $storage the DEFAULT durable disk — the finished
+     *        render + poster are put() here after ffmpeg writes them locally
+     *        (no-op on 'local'); $storageDisk names it for the render row
      */
     public function __construct(
         private readonly Ffmpeg $ffmpeg,
         private readonly MediaPaths $paths,
         private readonly RenderRepository $renders,
+        private readonly StorageProvider $storage,
         private readonly int $fps = 24,
         private readonly array $options = [],
+        private readonly string $storageDisk = 'local',
     ) {
     }
 
@@ -171,6 +179,15 @@ final class AssemblyEngine
 
         $size = is_file($outPath) ? (int) filesize($outPath) : null;
 
+        // ffmpeg can only write local scratch; persist the finished artifacts to
+        // the durable disk here (no-op on 'local'). Done before the row is
+        // recorded so a remote put failure surfaces instead of recording a row
+        // pointing at an object that never landed.
+        $this->storage->put(StorageKey::make('render', $workspaceId, $name), $outPath, 'video/mp4');
+        if ($hasPoster) {
+            $this->storage->put(StorageKey::make('render', $workspaceId, $posterName), $posterPath, 'image/jpeg');
+        }
+
         $renderId = $this->renders->create($workspaceId, $runId, $jobId, [
             'kind' => $kind,
             'stored_name' => $name,
@@ -179,7 +196,7 @@ final class AssemblyEngine
             'height' => $geometry['height'],
             'duration_s' => $duration,
             'size_bytes' => $size,
-        ]);
+        ], $this->storageDisk);
 
         return [
             'render_id' => $renderId,

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kuyash\Media;
 
 use Kuyash\Core\Database;
+use Kuyash\Storage\StorageKey;
+use Kuyash\Storage\StorageManager;
 use Kuyash\Trend\QuotaCounter;
 use Kuyash\Workflow\JobExecutor;
 use Kuyash\Workflow\JobResult;
@@ -32,6 +34,7 @@ final class AssetFetchExecutor implements JobExecutor
         private readonly Ffmpeg $ffmpeg,
         private readonly MediaPaths $paths,
         private readonly AssetCache $cache,
+        private readonly StorageManager $storage,
         private readonly QuotaCounter $quota,
         private readonly array $geometry,
         private readonly int $stockQuotaUnits = 1,
@@ -112,7 +115,7 @@ final class AssetFetchExecutor implements JobExecutor
 
     private function stillClip(int $ws, array $asset, float $duration): CacheEntry
     {
-        $source = $this->paths->resolve($this->paths->ref('asset', $ws, (string) $asset['stored_name']));
+        $source = $this->localSourcePath($ws, $asset);
         $key = hash('sha256', 'still|' . (int) $asset['id'] . '|' . (int) round($duration));
 
         return $this->cache->remember($ws, 'stock', $key, 'mp4', function (string $out) use ($source, $duration): array {
@@ -192,9 +195,37 @@ final class AssetFetchExecutor implements JobExecutor
     private function readyAsset(int $ws, int $id): ?array
     {
         return $this->db->one(
-            "SELECT id, kind, type, title, stored_name, duration_s FROM assets
+            "SELECT id, kind, type, title, stored_name, duration_s, storage_disk FROM assets
              WHERE id = ? AND workspace_id = ? AND status = 'ready'",
             [$id, $ws],
         );
+    }
+
+    /**
+     * A LOCAL path ffmpeg can read for this asset. Local-disk assets resolve in
+     * place (no copy — byte-identical to before this seam); a remote-disk asset is
+     * staged into local cache scratch via getToLocal() before ffmpeg touches it.
+     *
+     * NOTE: this stages the photo still-clip input. A video referenced "as-is"
+     * crosses into AssemblyEngine as an asset ref and is resolved there; in
+     * Phase 8 local copies are never deleted so that resolve always finds the
+     * file. Assembly-side staging for an evicted remote video is a Phase 13
+     * follow-up (eviction is what makes it reachable).
+     *
+     * @param array<string, mixed> $asset
+     */
+    private function localSourcePath(int $ws, array $asset): string
+    {
+        $name = (string) $asset['stored_name'];
+        $disk = (string) ($asset['storage_disk'] ?? 'local');
+        if ($disk === 'local') {
+            return $this->paths->resolve($this->paths->ref('asset', $ws, $name));
+        }
+
+        $ext = pathinfo($name, PATHINFO_EXTENSION) ?: 'mp4';
+        $dest = $this->paths->pathFor('cache', $ws, $this->paths->newName($ext));
+        $this->storage->disk($disk)->getToLocal(StorageKey::make('asset', $ws, $name), $dest);
+
+        return $dest;
     }
 }

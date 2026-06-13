@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kuyash\Media;
 
+use Kuyash\Http\BlobClient;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpTransportException;
 use Throwable;
@@ -11,12 +12,14 @@ use Throwable;
 /**
  * Real Pexels Videos adapter (GET /videos/search) — OFF by default, selected
  * only when STOCK_MOCK=false and a key is present (see bindings/core.php).
- * Depends on the HttpClient seam, so tests drive every branch with a fake
- * transport and ZERO network.
+ * Depends on the HttpClient seam (search JSON) and the streaming BlobClient seam
+ * (clip download), so tests drive every branch with fakes and ZERO network.
  *
- * Two GETs: search (JSON) → pick a portrait mp4 video_file → download the clip
- * (binary). Maps the documented response shape — videos[].video_files[]
- * {link, width, height, file_type} — into a StockResult.
+ * Search (JSON) → pick a portrait mp4 video_file → download the clip STREAMING
+ * to disk with a hard byte cap (BlobClient::download) — never buffering a whole
+ * video into a PHP string. This clears the Phase 7 HARD GATE. Maps the documented
+ * response shape — videos[].video_files[] {link, width, height, file_type} —
+ * into a StockResult.
  *
  * Honesty + safety: failures become StockProviderException with a status/reason
  * only (never the key, which rides in the Authorization header, or the body).
@@ -26,10 +29,12 @@ use Throwable;
 final class PexelsStockProvider implements StockProvider
 {
     private const DEFAULT_ENDPOINT = 'https://api.pexels.com/videos/search';
+    private const DEFAULT_MAX_DOWNLOAD_BYTES = 134_217_728; // 128 MiB
 
     /** @param array<string, mixed> $config */
     public function __construct(
         private readonly HttpClient $http,
+        private readonly BlobClient $blob,
         private readonly Ffmpeg $ffmpeg,
         private readonly array $config,
     ) {
@@ -49,10 +54,7 @@ final class PexelsStockProvider implements StockProvider
     {
         $file = $this->pickPortraitFile($this->search($query));
 
-        $clip = $this->download((string) $file['link']);
-        if (@file_put_contents($targetPath, $clip) === false) {
-            throw new StockProviderException('Pexels clip could not be written to disk');
-        }
+        $this->download((string) $file['link'], $targetPath);
 
         $duration = $this->ffmpeg->probeDuration($targetPath) ?? max(1.0, $durationSeconds);
 
@@ -127,22 +129,26 @@ final class PexelsStockProvider implements StockProvider
         throw new StockProviderException('Pexels returned no usable portrait clip');
     }
 
-    private function download(string $link): string
+    /** Stream the clip to disk with a hard byte cap (no whole-file buffering). */
+    private function download(string $link, string $targetPath): void
     {
         if (!str_starts_with($link, 'https://')) {
             throw new StockProviderException('Pexels clip link was not https');
         }
 
+        $cap = (int) ($this->config['max_download_bytes'] ?? self::DEFAULT_MAX_DOWNLOAD_BYTES);
+
         try {
-            $response = $this->http->get($link, ['Accept' => 'video/mp4'], (int) ($this->config['timeout'] ?? 30));
+            // BlobClient::download throws on non-2xx, transport error, OR the cap
+            // being exceeded (the transfer aborts + the partial file is removed)
+            $this->blob->download('GET', $link, ['Accept' => 'video/mp4'], $targetPath, $cap, (int) ($this->config['timeout'] ?? 30));
         } catch (HttpTransportException $e) {
             throw new StockProviderException('Pexels download failed: ' . $e->getMessage());
         }
 
-        if ($response->status < 200 || $response->status >= 300 || $response->body === '') {
-            throw new StockProviderException('Pexels download failed (HTTP ' . $response->status . ')');
+        if (!is_file($targetPath) || filesize($targetPath) === 0) {
+            @unlink($targetPath);
+            throw new StockProviderException('Pexels download was empty');
         }
-
-        return $response->body;
     }
 }

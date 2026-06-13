@@ -95,6 +95,23 @@ function migratedDb(string $basePath): Database
 
 const NOW_ISO = 'Y-m-d\TH:i:s\Z';
 
+/**
+ * A 'local'-only StorageManager over the given asset root (cache/render default
+ * to siblings). put()/getToLocal() are in-place no-ops when objects already live
+ * under these roots — which is the case for AssetStorage/MediaPaths fixtures, so
+ * the seam adds zero behavior to the existing tests.
+ */
+function localStorageManager(string $assetRoot, ?string $cacheRoot = null, ?string $renderRoot = null): \Kuyash\Storage\StorageManager
+{
+    // FQN: this helper is defined above the file's `use` block, so the aliases
+    // are not yet in scope for its body.
+    return new \Kuyash\Storage\StorageManager(['local' => new \Kuyash\Storage\LocalStorageProvider([
+        'asset' => $assetRoot,
+        'cache' => $cacheRoot ?? $assetRoot . '/_cache',
+        'render' => $renderRoot ?? $assetRoot . '/_render',
+    ])], 'local');
+}
+
 /** Seed one user + workspace + owner membership; returns [userId, workspaceId]. */
 function seedUser(Database $db, string $email, string $hash, string $wsName): array
 {
@@ -258,9 +275,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 5);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 6);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -710,12 +727,13 @@ $cctx = new WorkspaceContext($cdb);
 [, $cWsOther] = seedUser($cdb, 'ctl2@example.com', $argonHash, 'Other WS');
 $cstorageRoot = tempDir('cassets');
 $cstorage = new AssetStorage($cstorageRoot, static fn (string $f, string $t): bool => rename($f, $t));
-$cingest = new AssetIngest($validator, $probe, $cstorage, $crepo, 10, 32);
+$cdisks = localStorageManager($cstorageRoot);
+$cingest = new AssetIngest($validator, $probe, $cstorage, $crepo, $cdisks, 10, 32);
 $libCtl = new LibraryController(
     $view, $crepo, $cingest, $cstorage, $cctx, new Csrf(), new Flash(),
     new Kuyash\Workspace\WorkspaceSettings($cdb), $libConfig,
 );
-$mediaCtl = new MediaController($crepo, $cstorage, $cctx);
+$mediaCtl = new MediaController($crepo, $cstorage, $cdisks, $cctx, 300);
 
 $cctx->set($cWs);
 check('library ctl: empty state renders', str_contains($libCtl->index()->body(), 'The library is empty'));
@@ -844,8 +862,11 @@ use Kuyash\Content\TextResult;
 use Kuyash\Content\VariationEngine;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Messages;
+use Kuyash\Http\BlobClient;
+use Kuyash\Http\BlobResult;
 use Kuyash\Http\CurlHttpClient;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpResponse;
@@ -867,6 +888,12 @@ use Kuyash\Media\SubtitleBuilder;
 use Kuyash\Media\TtsExecutor;
 use Kuyash\Media\TtsProvider;
 use Kuyash\Media\WavWriter;
+use Kuyash\Storage\LocalStorageProvider;
+use Kuyash\Storage\R2StorageProvider;
+use Kuyash\Storage\SigV4Signer;
+use Kuyash\Storage\StorageBackfill;
+use Kuyash\Storage\StorageKey;
+use Kuyash\Storage\StorageManager;
 use Kuyash\Trend\FormatRecommender;
 use Kuyash\Trend\GoogleTrendsProvider;
 use Kuyash\Trend\MockTrendProvider;
@@ -971,13 +998,14 @@ function makeMediaExecutors(Database $db): array
     $ff = new Ffmpeg($ffmpegBin, $ffprobeBin, 120);
     $cache = new AssetCache($db, $paths);
     $renders = new RenderRepository($db);
-    $engine = new AssemblyEngine($ff, $paths, $renders, 24, ['burn_subtitles' => false]);
+    $disks = localStorageManager("$TEST_MEDIA_ROOT/assets", "$TEST_MEDIA_ROOT/cache", "$TEST_MEDIA_ROOT/renders");
+    $engine = new AssemblyEngine($ff, $paths, $renders, $disks->default(), 24, ['burn_subtitles' => false], 'local');
     $draftGeo = ['width' => 540, 'height' => 960, 'preset' => 'ultrafast'];
     $finalGeo = ['width' => 1080, 'height' => 1920, 'preset' => 'ultrafast'];
 
     return [
         'tts' => new TtsExecutor(new MockTtsProvider(2.5), $cache, 'alloy'),
-        'asset_fetch' => new AssetFetchExecutor($db, new MockStockProvider($ff, 1080, 1920, 24), $ff, $paths, $cache, new QuotaCounter($db), $finalGeo, 1, 24),
+        'asset_fetch' => new AssetFetchExecutor($db, new MockStockProvider($ff, 1080, 1920, 24), $ff, $paths, $cache, $disks, new QuotaCounter($db), $finalGeo, 1, 24),
         'assembly' => new AssemblyExecutor($engine, $draftGeo),
         'final_render' => new FinalRenderExecutor($engine, $finalGeo),
         'paths' => $paths, 'renders' => $renders, 'cache' => $cache, 'ffmpeg' => $ff, 'engine' => $engine,
@@ -2900,6 +2928,57 @@ check('openai tts: empty body → exception', (static function () use ($ttsCfg, 
 
 echo "== Media: PexelsStockProvider (fake transport, ZERO network) ==\n";
 
+/** In-memory BlobClient fake: a simulated bucket (url => bytes) + recorded calls. */
+final class FakeBlobClient implements BlobClient
+{
+    /** @var list<array{method: string, url: string, headers: array<string, string>}> */
+    public array $calls = [];
+    /** @var array<string, string> url => stored bytes (the simulated bucket) */
+    public array $store = [];
+    /** Body returned by download() when the url isn't in $store (e.g. a Pexels CDN). */
+    public ?string $downloadBody = null;
+    public ?int $uploadStatus = null;
+
+    public function upload(string $url, array $headers, string $sourcePath, int $timeoutSeconds): int
+    {
+        $this->calls[] = ['method' => 'PUT', 'url' => $url, 'headers' => $headers];
+        $this->store[$url] = (string) file_get_contents($sourcePath);
+
+        return $this->uploadStatus ?? 200;
+    }
+
+    public function download(string $method, string $url, array $headers, string $destPath, int $maxBytes, int $timeoutSeconds): int
+    {
+        $this->calls[] = ['method' => $method, 'url' => $url, 'headers' => $headers];
+        $bytes = $this->store[$url] ?? $this->downloadBody ?? '';
+        if (strlen($bytes) > $maxBytes) {
+            @unlink($destPath); // mirror CurlBlobClient: cap breach removes the partial
+            throw new HttpTransportException("Blob download exceeded the {$maxBytes}-byte cap");
+        }
+        file_put_contents($destPath, $bytes);
+
+        return strlen($bytes);
+    }
+
+    public function send(string $method, string $url, array $headers, int $timeoutSeconds): BlobResult
+    {
+        $this->calls[] = ['method' => $method, 'url' => $url, 'headers' => $headers];
+        if ($method === 'HEAD') {
+            return isset($this->store[$url])
+                ? new BlobResult(200, ['content-length' => (string) strlen($this->store[$url])])
+                : new BlobResult(404);
+        }
+        if ($method === 'DELETE') {
+            $had = isset($this->store[$url]);
+            unset($this->store[$url]);
+
+            return new BlobResult($had ? 204 : 404);
+        }
+
+        return new BlobResult(200);
+    }
+}
+
 $pexCfg = ['api_key' => 'pk-PEXELS-SECRET', 'endpoint' => 'https://api.pexels.test/videos/search', 'timeout' => 5];
 $pexOutDir = tempDir('pexout');
 $pexFfmpeg = new Ffmpeg($ffmpegBin, $ffprobeBin, 30);
@@ -2913,17 +2992,20 @@ function pexelsSearchBody(): HttpResponse
         ]],
     ], JSON_THROW_ON_ERROR));
 }
-check('pexels: search → pick portrait → download → write', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
-    $fake = new FakeHttpClient([pexelsSearchBody(), new HttpResponse(200, 'MP4CLIPBYTES')]);
-    $r = (new PexelsStockProvider($fake, $pexFfmpeg, $pexCfg))->fetchClip('cooking', 5.0, $pexOutDir . '/c.mp4');
+check('pexels: search (http) → pick portrait → stream download (blob) → write', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
+    $http = new FakeHttpClient([pexelsSearchBody()]);
+    $blob = new FakeBlobClient();
+    $blob->downloadBody = 'MP4CLIPBYTES';
+    $r = (new PexelsStockProvider($http, $blob, $pexFfmpeg, $pexCfg))->fetchClip('cooking', 5.0, $pexOutDir . '/c.mp4');
 
     return is_file($pexOutDir . '/c.mp4') && $r->height === 1920 && $r->costCents === null
-        && count($fake->calls) === 2 && $fake->calls[1]['url'] === 'https://cdn.pexels.test/clip.mp4';
+        && count($http->calls) === 1 && count($blob->calls) === 1
+        && $blob->calls[0]['method'] === 'GET' && $blob->calls[0]['url'] === 'https://cdn.pexels.test/clip.mp4';
 })());
 check('pexels: 429 → exception, key never leaked', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
-    $fake = new FakeHttpClient([new HttpResponse(429, 'rate')]);
+    $http = new FakeHttpClient([new HttpResponse(429, 'rate')]);
     try {
-        (new PexelsStockProvider($fake, $pexFfmpeg, $pexCfg))->fetchClip('x', 5.0, $pexOutDir . '/n.mp4');
+        (new PexelsStockProvider($http, new FakeBlobClient(), $pexFfmpeg, $pexCfg))->fetchClip('x', 5.0, $pexOutDir . '/n.mp4');
 
         return false;
     } catch (Kuyash\Media\StockProviderException $e) {
@@ -2932,10 +3014,288 @@ check('pexels: 429 → exception, key never leaked', (static function () use ($p
 })());
 check('pexels: no portrait clip → exception', (static function () use ($pexCfg, $pexOutDir, $pexFfmpeg): bool {
     $body = new HttpResponse(200, json_encode(['videos' => [['video_files' => [['file_type' => 'video/mp4', 'width' => 1920, 'height' => 1080, 'link' => 'https://x.test/l.mp4']]]]], JSON_THROW_ON_ERROR));
-    $fake = new FakeHttpClient([$body]);
+    $http = new FakeHttpClient([$body]);
 
-    return throws(static fn () => (new PexelsStockProvider($fake, $pexFfmpeg, $pexCfg))->fetchClip('x', 5.0, $pexOutDir . '/p.mp4'), Kuyash\Media\StockProviderException::class);
+    return throws(static fn () => (new PexelsStockProvider($http, new FakeBlobClient(), $pexFfmpeg, $pexCfg))->fetchClip('x', 5.0, $pexOutDir . '/p.mp4'), Kuyash\Media\StockProviderException::class);
 })());
+check('pexels: oversized clip aborts at the byte cap (HARD GATE cleared)', (static function () use ($pexOutDir, $pexFfmpeg): bool {
+    $http = new FakeHttpClient([pexelsSearchBody()]);
+    $blob = new FakeBlobClient();
+    $blob->downloadBody = str_repeat('X', 64); // 64 bytes vs a 5-byte cap → abort
+    $capCfg = ['api_key' => 'pk', 'endpoint' => 'https://api.pexels.test/videos/search', 'timeout' => 5, 'max_download_bytes' => 5];
+
+    $threw = throws(static fn () => (new PexelsStockProvider($http, $blob, $pexFfmpeg, $capCfg))->fetchClip('x', 5.0, $pexOutDir . '/big.mp4'), Kuyash\Media\StockProviderException::class);
+
+    return $threw && !is_file($pexOutDir . '/big.mp4'); // no partial left behind
+})());
+
+/* ================== Phase 8: Storage (R2 abstraction) ================== */
+
+echo "== Storage: StorageKey validation ==\n";
+
+$skName = bin2hex(random_bytes(16)) . '.mp4';
+check('storage key: make → parse round-trip', (static function () use ($skName): bool {
+    $k = StorageKey::make('render', 7, $skName);
+    $p = StorageKey::parse($k);
+
+    return $k === "render/7/{$skName}" && $p->store === 'render' && $p->workspaceId === 7 && $p->name === $skName;
+})());
+check('storage key: rejects unknown store', throws(static fn () => StorageKey::make('secrets', 1, $skName), Kuyash\Storage\StorageException::class));
+check('storage key: rejects traversal / bad name', throws(static fn () => StorageKey::make('asset', 1, '../../etc/passwd'), Kuyash\Storage\StorageException::class));
+check('storage key: rejects bad workspace in parse', throws(static fn () => StorageKey::parse('asset/0/' . $skName), Kuyash\Storage\StorageException::class));
+
+echo "== Storage: SigV4Signer (known-answer, deterministic) ==\n";
+
+// AWS docs worked example "GET iam.amazonaws.com ListUsers": the canonical
+// request SHA256 is the AWS-published f536975d06c0309214f805bb90ccff089219ecd68b2577efef23edd43b7e1a59
+// ("Create a string to sign", SigV4 docs); the key derivation is canonical, so
+// this signature is the unique correct value (independently reproduced).
+check('sigv4: ListUsers known-answer signature + signed headers', (static function (): bool {
+    $s = new SigV4Signer('AKIDEXAMPLE', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'us-east-1', 'iam');
+    $r = $s->signRequest('GET', '/', 'Action=ListUsers&Version=2010-05-08', [
+        'content-type' => 'application/x-www-form-urlencoded; charset=utf-8',
+        'host' => 'iam.amazonaws.com',
+        'x-amz-date' => '20150830T123600Z',
+    ], SigV4Signer::EMPTY_PAYLOAD_SHA256, '20150830T123600Z');
+
+    return $r['signature'] === '33f5dad2191de0cb4b7ab912f876876c2c4f72e2991a458f9499233c7b992438'
+        && $r['signed_headers'] === 'content-type;host;x-amz-date'
+        && str_starts_with($r['authorization'], 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request');
+})());
+check('sigv4: empty-payload constant matches sha256("")', hash('sha256', '') === SigV4Signer::EMPTY_PAYLOAD_SHA256);
+check('sigv4: presigned GET is well-formed (query-signed, response headers pinned)', (static function (): bool {
+    $s = new SigV4Signer('AKID', 'secretkey', 'auto', 's3');
+    $u = $s->presignGet('acct.r2.cloudflarestorage.com', '/bucket/render/3/' . bin2hex(random_bytes(16)) . '.mp4', 120, ['response-content-type' => 'video/mp4'], '20150830T123600Z');
+
+    return str_starts_with($u, 'https://acct.r2.cloudflarestorage.com/bucket/render/3/')
+        && str_contains($u, 'X-Amz-Algorithm=AWS4-HMAC-SHA256')
+        && str_contains($u, 'X-Amz-Credential=AKID%2F20150830%2Fauto%2Fs3%2Faws4_request')
+        && str_contains($u, 'X-Amz-Expires=120')
+        && str_contains($u, 'X-Amz-SignedHeaders=host')
+        && str_contains($u, 'response-content-type=video%2Fmp4')
+        && preg_match('/&X-Amz-Signature=[0-9a-f]{64}$/', $u) === 1;
+})());
+
+echo "== Storage: LocalStorageProvider (round-trip) ==\n";
+
+$lspRoot = tempDir('lsp');
+$lsp = new LocalStorageProvider(['asset' => "$lspRoot/assets", 'cache' => "$lspRoot/cache", 'render' => "$lspRoot/renders"]);
+$lspName = bin2hex(random_bytes(16)) . '.bin';
+$lspKey = StorageKey::make('render', 4, $lspName);
+$lspSrc = $lspRoot . '/src.bin';
+file_put_contents($lspSrc, 'RENDERBYTES-2048');
+check('local provider: put copies into place + exists + size', (static function () use ($lsp, $lspKey, $lspSrc): bool {
+    $lsp->put($lspKey, $lspSrc, 'video/mp4');
+
+    return $lsp->exists($lspKey) && $lsp->size($lspKey) === strlen('RENDERBYTES-2048');
+})());
+check('local provider: getToLocal streams the bytes back', (static function () use ($lsp, $lspKey, $lspRoot): bool {
+    $dest = $lspRoot . '/out.bin';
+    $lsp->getToLocal($lspKey, $dest);
+
+    return is_file($dest) && file_get_contents($dest) === 'RENDERBYTES-2048';
+})());
+check('local provider: temporaryUrl is null (serve streams, never redirects)', $lsp->temporaryUrl($lspKey, 300) === null);
+check('local provider: in-place put is a no-op (default deployments unchanged)', (static function () use ($lsp): bool {
+    $name = bin2hex(random_bytes(16)) . '.bin';
+    $key = StorageKey::make('asset', 9, $name);
+    $inPlace = $lsp->path($key);
+    @mkdir(dirname($inPlace), 0750, true);
+    file_put_contents($inPlace, 'X');
+    $lsp->put($key, $inPlace, 'application/octet-stream'); // src === dest
+
+    return $lsp->exists($key) && file_get_contents($inPlace) === 'X';
+})());
+check('local provider: delete removes the object', (static function () use ($lsp, $lspKey): bool {
+    return $lsp->delete($lspKey) && !$lsp->exists($lspKey);
+})());
+
+echo "== Storage: R2StorageProvider (FakeBlobClient, ZERO network) ==\n";
+
+$makeR2 = static function (FakeBlobClient $blob): R2StorageProvider {
+    return new R2StorageProvider($blob, new SigV4Signer('AKID-R2', 'r2-SECRET-DO-NOT-LEAK', 'auto', 's3'), 'acct.r2.cloudflarestorage.com', 'kuyash', 300, 1 << 29, 60);
+};
+$r2Name = bin2hex(random_bytes(16)) . '.mp4';
+$r2Key = StorageKey::make('render', 5, $r2Name);
+$r2Src = tempDir('r2src') . '/clip.mp4';
+file_put_contents($r2Src, 'R2-VIDEO-BYTES');
+check('r2 provider: put issues a SIGNED streamed PUT (Authorization + UNSIGNED-PAYLOAD)', (static function () use ($makeR2, $r2Key, $r2Src): bool {
+    $blob = new FakeBlobClient();
+    $makeR2($blob)->put($r2Key, $r2Src, 'video/mp4');
+    $call = $blob->calls[0] ?? null;
+
+    return $call !== null && $call['method'] === 'PUT'
+        && str_starts_with((string) ($call['headers']['Authorization'] ?? ''), 'AWS4-HMAC-SHA256 Credential=AKID-R2/')
+        && ($call['headers']['x-amz-content-sha256'] ?? '') === 'UNSIGNED-PAYLOAD'
+        && str_contains((string) ($call['headers']['Authorization'] ?? ''), 'SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date');
+})());
+check('r2 provider: never leaks the secret in a signed header', (static function () use ($makeR2, $r2Key, $r2Src): bool {
+    $blob = new FakeBlobClient();
+    $makeR2($blob)->put($r2Key, $r2Src, 'video/mp4');
+
+    return !str_contains(json_encode($blob->calls, JSON_THROW_ON_ERROR), 'r2-SECRET-DO-NOT-LEAK');
+})());
+check('r2 provider: exists/size via signed HEAD; getToLocal round-trips; delete signs DELETE', (static function () use ($makeR2, $r2Key, $r2Src): bool {
+    $blob = new FakeBlobClient();
+    $r2 = $makeR2($blob);
+    $r2->put($r2Key, $r2Src, 'video/mp4');
+    $dest = tempDir('r2dl') . '/got.mp4';
+    $r2->getToLocal($r2Key, $dest);
+    $ok = $r2->exists($r2Key) && $r2->size($r2Key) === strlen('R2-VIDEO-BYTES')
+        && is_file($dest) && file_get_contents($dest) === 'R2-VIDEO-BYTES';
+    $deleted = $r2->delete($r2Key) && !$r2->exists($r2Key);
+    // a DELETE was signed and sent
+    $sawDelete = false;
+    foreach ($blob->calls as $c) {
+        if ($c['method'] === 'DELETE' && str_starts_with((string) ($c['headers']['Authorization'] ?? ''), 'AWS4-HMAC-SHA256')) {
+            $sawDelete = true;
+        }
+    }
+
+    return $ok && $deleted && $sawDelete;
+})());
+check('r2 provider: getToLocal honors the byte cap (oversized → throws)', (static function () use ($r2Key): bool {
+    $blob = new FakeBlobClient();
+    $blob->store['https://acct.r2.cloudflarestorage.com/kuyash/' . $r2Key] = str_repeat('Y', 200);
+    $tiny = new R2StorageProvider($blob, new SigV4Signer('AKID', 'sk', 'auto', 's3'), 'acct.r2.cloudflarestorage.com', 'kuyash', 300, 10, 60);
+
+    return throws(static fn () => $tiny->getToLocal($r2Key, tempDir('r2cap') . '/x.mp4'), Kuyash\Storage\StorageException::class);
+})());
+check('r2 provider: temporaryUrl returns a presigned GET (non-null, signed)', (static function () use ($makeR2, $r2Key): bool {
+    $u = $makeR2(new FakeBlobClient())->temporaryUrl($r2Key, 120, ['response-content-type' => 'video/mp4']);
+
+    return is_string($u) && str_contains($u, '/kuyash/render/5/') && str_contains($u, 'X-Amz-Signature=') && str_contains($u, 'X-Amz-Expires=120');
+})());
+
+echo "== Storage: StorageManager (per-disk resolution) ==\n";
+
+$smLocal = new LocalStorageProvider(['asset' => "$lspRoot/assets", 'cache' => "$lspRoot/cache", 'render' => "$lspRoot/renders"]);
+$smR2 = $makeR2(new FakeBlobClient());
+$sm = new StorageManager(['local' => $smLocal, 'r2' => $smR2], 'local');
+check('manager: disk() resolves each provider', $sm->disk('local') === $smLocal && $sm->disk('r2') === $smR2);
+check('manager: default() + defaultName()', $sm->default() === $smLocal && $sm->defaultName() === 'local');
+check('manager: has() reports configured disks', $sm->has('r2') && !$sm->has('s3'));
+check('manager: unknown disk throws', throws(static fn () => $sm->disk('s3'), Kuyash\Storage\StorageException::class));
+
+echo "== Storage: serving redirect (tenant check BEFORE the URL is minted) ==\n";
+
+$srvDb = migratedDb($basePath);
+[$srvUser, $srvWs] = seedUser($srvDb, 'srv@example.com', $argonHash, 'Serve WS');
+[$srvUser2, $srvWs2] = seedUser($srvDb, 'srv2@example.com', $argonHash, 'Serve WS2');
+$srvRoot = tempDir('srv');
+$srvStorage = new AssetStorage("$srvRoot/assets", static fn (string $f, string $t): bool => rename($f, $t));
+$srvDisks = new StorageManager([
+    'local' => new LocalStorageProvider(['asset' => "$srvRoot/assets", 'cache' => "$srvRoot/cache", 'render' => "$srvRoot/renders"]),
+    'r2' => $makeR2(new FakeBlobClient()),
+], 'local');
+$srvCtx = new WorkspaceContext($srvDb);
+$srvRepo = new AssetRepository($srvDb);
+
+// an R2-located asset and a LOCAL asset, both owned by srvWs
+$r2AssetName = bin2hex(random_bytes(16)) . '.mp4';
+$srvDb->run(
+    "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes, sha256, tags, storage_disk, status, created_at, updated_at)
+     VALUES (?, 'video', 'own', 'r2 clip', 'c.mp4', ?, 'video/mp4', 10, 'h', '[]', 'r2', 'ready', ?, ?)",
+    [$srvWs, $r2AssetName, gmdate(NOW_ISO), gmdate(NOW_ISO)],
+);
+$r2AssetId = $srvDb->lastInsertId();
+$localAssetName = bin2hex(random_bytes(16)) . '.mp4';
+@mkdir("$srvRoot/assets/$srvWs", 0750, true);
+file_put_contents("$srvRoot/assets/$srvWs/$localAssetName", 'LOCALBYTES');
+$srvDb->run(
+    "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes, sha256, tags, storage_disk, status, created_at, updated_at)
+     VALUES (?, 'video', 'own', 'local clip', 'l.mp4', ?, 'video/mp4', 10, 'h', '[]', 'local', 'ready', ?, ?)",
+    [$srvWs, $localAssetName, gmdate(NOW_ISO), gmdate(NOW_ISO)],
+);
+$localAssetId = $srvDb->lastInsertId();
+
+$srvMedia = new MediaController($srvRepo, $srvStorage, $srvDisks, $srvCtx, 300);
+$srvCtx->set($srvWs);
+$r2Resp = $srvMedia->serve(['id' => (string) $r2AssetId]);
+check('serve: R2 asset → 302 to a presigned GET', $r2Resp->status() === 302 && str_contains((string) ($r2Resp->headers()['Location'] ?? ''), 'X-Amz-Signature='));
+check('serve: R2 redirect is marked no-store', str_contains((string) ($r2Resp->headers()['Cache-Control'] ?? ''), 'no-store'));
+check('serve: local asset → streamed (200), NOT redirected', $srvMedia->serve(['id' => (string) $localAssetId])->status() === 200);
+$srvCtx->set($srvWs2);
+check('serve: another tenant\'s R2 asset → 404, NO url minted', $srvMedia->serve(['id' => (string) $r2AssetId])->status() === 404);
+
+// renders: seed a full run + an R2-located render with a poster
+$srvCtx->set($srvWs);
+$srvDb->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'wf', 'full', '[]', ?, ?)", [$srvWs, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$srvWf = $srvDb->lastInsertId();
+$srvDb->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, entity_id, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', NULL, '[]', 'running', ?, ?, ?)", [$srvWs, $srvWf, $srvUser, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$srvRun = $srvDb->lastInsertId();
+$rndName = bin2hex(random_bytes(16)) . '.mp4';
+$rndPoster = bin2hex(random_bytes(16)) . '.jpg';
+$srvDb->run(
+    "INSERT INTO renders (workspace_id, run_id, job_id, kind, stored_name, poster_name, mime, width, height, duration_s, size_bytes, storage_disk, created_at)
+     VALUES (?, ?, NULL, 'final', ?, ?, 'video/mp4', 1080, 1920, 12.0, 100, 'r2', ?)",
+    [$srvWs, $srvRun, $rndName, $rndPoster, gmdate(NOW_ISO)],
+);
+$srvRndId = $srvDb->lastInsertId();
+$srvRender = new RenderController(new RenderRepository($srvDb), new MediaPaths(['asset' => "$srvRoot/assets", 'cache' => "$srvRoot/cache", 'render' => "$srvRoot/renders", 'work' => "$srvRoot/work"]), $srvDisks, $srvCtx, 300);
+check('serve: R2 render → 302 presigned', $srvRender->serve(['id' => (string) $srvRndId])->status() === 302);
+check('serve: R2 render poster → 302 presigned', $srvRender->poster(['id' => (string) $srvRndId])->status() === 302);
+$srvCtx->set($srvWs2);
+check('serve: another tenant\'s R2 render → 404', $srvRender->serve(['id' => (string) $srvRndId])->status() === 404);
+
+echo "== Storage: backfill (local → r2, resumable, verified, non-destructive) ==\n";
+
+$bfDb = migratedDb($basePath);
+[$bfUser, $bfWs] = seedUser($bfDb, 'bf@example.com', $argonHash, 'Backfill WS');
+$bfRoot = tempDir('bf');
+$bfBlob = new FakeBlobClient();
+$bfDisks = new StorageManager([
+    'local' => new LocalStorageProvider(['asset' => "$bfRoot/assets", 'cache' => "$bfRoot/cache", 'render' => "$bfRoot/renders"]),
+    'r2' => $makeR2($bfBlob),
+], 'local');
+
+// one asset (with a real local file), one render (+ poster) with real files
+$bfAssetName = bin2hex(random_bytes(16)) . '.mp4';
+@mkdir("$bfRoot/assets/$bfWs", 0750, true);
+file_put_contents("$bfRoot/assets/$bfWs/$bfAssetName", 'ASSET-FILE-BYTES');
+$bfDb->run("INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes, sha256, tags, status, created_at, updated_at) VALUES (?, 'video','own','a','a.mp4',?, 'video/mp4', 16, 'h', '[]','ready',?,?)", [$bfWs, $bfAssetName, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$bfAssetId = $bfDb->lastInsertId();
+$bfDb->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'wf','full','[]',?,?)", [$bfWs, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$bfWf = $bfDb->lastInsertId();
+$bfDb->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, entity_id, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', NULL, '[]','running',?,?,?)", [$bfWs, $bfWf, $bfUser, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$bfRun = $bfDb->lastInsertId();
+$bfRndName = bin2hex(random_bytes(16)) . '.mp4';
+$bfRndPoster = bin2hex(random_bytes(16)) . '.jpg';
+@mkdir("$bfRoot/renders/$bfWs", 0750, true);
+file_put_contents("$bfRoot/renders/$bfWs/$bfRndName", 'RENDER-FILE-BYTES');
+file_put_contents("$bfRoot/renders/$bfWs/$bfRndPoster", 'POSTER');
+$bfDb->run("INSERT INTO renders (workspace_id, run_id, job_id, kind, stored_name, poster_name, mime, width, height, duration_s, size_bytes, storage_disk, created_at) VALUES (?, ?, NULL, 'final', ?, ?, 'video/mp4', 1080, 1920, 12.0, 17, 'local', ?)", [$bfWs, $bfRun, $bfRndName, $bfRndPoster, gmdate(NOW_ISO)]);
+$bfRndId = $bfDb->lastInsertId();
+
+$noop = static function (string $line): void {};
+$backfill = new StorageBackfill($bfDb, $bfDisks);
+
+$dry = $backfill->run('r2', 'all', true, 100, $noop);
+check('backfill: --dry-run reports work but mutates nothing', $dry['would_copy'] === 2 && $dry['copied'] === 0
+    && $bfDb->one('SELECT storage_disk FROM assets WHERE id = ?', [$bfAssetId])['storage_disk'] === 'local'
+    && count($bfBlob->calls) === 0);
+
+$run1 = $backfill->run('r2', 'all', false, 100, $noop);
+check('backfill: copies + verifies + flips both rows to r2', $run1['copied'] === 2 && $run1['errors'] === 0
+    && $bfDb->one('SELECT storage_disk FROM assets WHERE id = ?', [$bfAssetId])['storage_disk'] === 'r2'
+    && $bfDb->one('SELECT storage_disk FROM renders WHERE id = ?', [$bfRndId])['storage_disk'] === 'r2');
+check('backfill: render poster was also uploaded (PUT count = asset + render + poster)', (static function () use ($bfBlob): bool {
+    $puts = array_filter($bfBlob->calls, static fn ($c): bool => $c['method'] === 'PUT');
+
+    return count($puts) === 3;
+})());
+check('backfill: local copies are NEVER deleted (non-destructive)', is_file("$bfRoot/assets/$bfWs/$bfAssetName") && is_file("$bfRoot/renders/$bfWs/$bfRndName"));
+
+$run2 = $backfill->run('r2', 'all', false, 100, $noop);
+check('backfill: re-run is a no-op (idempotent / resumable)', $run2['copied'] === 0 && $run2['would_copy'] === 0);
+
+// a row whose local file is gone → skipped, never flipped
+$bfMissingName = bin2hex(random_bytes(16)) . '.mp4';
+$bfDb->run("INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes, sha256, tags, status, created_at, updated_at) VALUES (?, 'video','own','gone','g.mp4',?, 'video/mp4', 1, 'h', '[]','ready',?,?)", [$bfWs, $bfMissingName, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$bfMissingId = $bfDb->lastInsertId();
+$run3 = $backfill->run('r2', 'all', false, 100, $noop);
+check('backfill: missing local file → skipped, marker stays local', $run3['missing'] === 1 && $run3['copied'] === 0
+    && $bfDb->one('SELECT storage_disk FROM assets WHERE id = ?', [$bfMissingId])['storage_disk'] === 'local');
 
 echo "== Media: WorkspaceSettings avatar (tenant-scoped) ==\n";
 

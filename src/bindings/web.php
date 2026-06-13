@@ -38,6 +38,7 @@ use Kuyash\Library\MediaProbe;
 use Kuyash\Media\AssetCache;
 use Kuyash\Media\MediaPaths;
 use Kuyash\Media\RenderRepository;
+use Kuyash\Storage\StorageManager;
 use Kuyash\Workflow\Cockpit;
 use Kuyash\Trend\QuotaCounter;
 use Kuyash\Trend\TrendConfigRepository;
@@ -143,6 +144,7 @@ return static function (Container $container, string $basePath): void {
             $c->get(MediaProbe::class),
             $c->get(AssetStorage::class),
             $c->get(AssetRepository::class),
+            $c->get(StorageManager::class),
             (int) $config->get('library.max_tags'),
             (int) $config->get('library.max_tag_length'),
         );
@@ -163,13 +165,17 @@ return static function (Container $container, string $basePath): void {
     $container->bind(MediaController::class, static fn (Container $c): MediaController => new MediaController(
         $c->get(AssetRepository::class),
         $c->get(AssetStorage::class),
+        $c->get(StorageManager::class),
         $c->get(WorkspaceContext::class),
+        (int) $c->get(Config::class)->get('storage.r2.presign_ttl', 300),
     ));
 
     $container->bind(RenderController::class, static fn (Container $c): RenderController => new RenderController(
         $c->get(RenderRepository::class),
         $c->get(MediaPaths::class),
+        $c->get(StorageManager::class),
         $c->get(WorkspaceContext::class),
+        (int) $c->get(Config::class)->get('storage.r2.presign_ttl', 300),
     ));
 
     $container->bind(WorkflowController::class, static fn (Container $c): WorkflowController => new WorkflowController(
