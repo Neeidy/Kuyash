@@ -53,6 +53,16 @@ use Kuyash\Core\View;
             <?php if (isset($job['result']['word_count'], $job['result']['estimated_duration_s'])): ?>
             <span class="chip chip--neutral num"><?= (int) $job['result']['word_count'] ?> words · ~<?= View::e((string) $job['result']['estimated_duration_s']) ?>s</span>
             <?php endif; ?>
+            <?php if ($job['type'] === 'render_review' && isset($job['result']['compliance']['status'])): ?>
+            <?php $cs = (string) $job['result']['compliance']['status']; ?>
+            <?php if ($cs === 'warn'): ?>
+            <span class="chip chip--warn"><span class="dot"></span>slop <?= View::e(number_format((float) ($job['result']['compliance']['slop_score'] ?? 0), 2)) ?> — too similar to recent posts</span>
+            <?php elseif ($cs === 'pass_with_ai_label'): ?>
+            <span class="chip chip--ai">AI label will be set</span>
+            <?php elseif ($cs === 'pass'): ?>
+            <span class="chip chip--ok"><span class="dot"></span>compliance pass</span>
+            <?php endif; ?>
+            <?php endif; ?>
             <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $job['run_id'] ?>">View run</a>
           </div>
           <?php if ($job['type'] === 'script_draft' && isset($job['result']['script'])): ?>
@@ -85,8 +95,9 @@ use Kuyash\Core\View;
       </article>
       <?php endforeach; ?>
     </div>
-    <p class="note">Approving records “Approved by you” with your account and timestamp —
-      approval records are never faked.</p>
+    <p class="note">Approving here records “Approved by you” with your account and timestamp.
+      In Auto mode the agent's own approvals are recorded as “Auto-approved by compliance agent” —
+      records are never faked either way.</p>
     <?php endif; ?>
   </div>
 </div>
@@ -111,6 +122,8 @@ use Kuyash\Core\View;
           <span class="job-row__entity">run #<?= (int) $job['run_id'] ?> · <?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
           <?php if ($job['status'] === 'failed' && $job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?> (retry <?= $job['retry_count'] ?>/<?= $job['max_retries'] ?>)</span>
+          <?php elseif ($job['status'] === 'queued' && str_starts_with((string) $job['error_message'], 'deferred:')): ?>
+          <span class="job-row__entity">held by guardrail — <?= View::e((string) $job['error_message']) ?> · retries at <?= View::e(Format::utcTime((string) $job['run_after'])) ?> UTC</span>
           <?php endif; ?>
         </div>
         <span class="chip chip--<?= Format::statusTone((string) $job['status']) ?>"><span class="dot dot--<?= Format::statusTone((string) $job['status']) ?>"></span><?= View::e(Messages::status((string) $job['status'])) ?></span>

@@ -10,8 +10,13 @@ declare(strict_types=1);
 
 use Kuyash\Auth\Auth;
 use Kuyash\Auth\LoginThrottle;
+use Kuyash\Compliance\AutoApprovalGate;
+use Kuyash\Compliance\DigestReport;
+use Kuyash\Compliance\QualityScore;
 use Kuyash\Controllers\AuthController;
 use Kuyash\Controllers\DashboardController;
+use Kuyash\Controllers\DigestController;
+use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
 use Kuyash\Controllers\LibraryController;
@@ -83,10 +88,8 @@ return static function (Container $container, string $basePath): void {
     $container->bind(WorkspaceContext::class, static fn (Container $c): WorkspaceContext => new WorkspaceContext(
         $c->get(Database::class),
     ));
-
-    $container->bind(WorkspaceSettings::class, static fn (Container $c): WorkspaceSettings => new WorkspaceSettings(
-        $c->get(Database::class),
-    ));
+    // WorkspaceSettings is bound in core.php since Phase 9 (the worker-side
+    // AutoApprovalGate reads it).
 
     $container->bind(Auth::class, static fn (Container $c): Auth => new Auth(
         $c->get(Database::class),
@@ -215,6 +218,26 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(Flash::class),
         $c->get(WorkerHeartbeat::class),
+    ));
+
+    $container->bind(SettingsController::class, static fn (Container $c): SettingsController => new SettingsController(
+        $c->get(View::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(QualityScore::class),
+        $c->get(AutoApprovalGate::class),
+        $c->get(EventLog::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Auth::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
+    ));
+
+    $container->bind(DigestController::class, static fn (Container $c): DigestController => new DigestController(
+        $c->get(View::class),
+        $c->get(DigestReport::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
     ));
 
     $container->bind(LogsController::class, static fn (Container $c): LogsController => new LogsController(

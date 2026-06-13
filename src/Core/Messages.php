@@ -52,6 +52,12 @@ final class Messages
         'trend.refreshed' => 'Trends refreshed.',
         'trend.no_full_workflow' => 'No full pipeline workflow exists to start from.',
         'trend.invalid_niche' => 'Pick a niche from the list.',
+
+        // compliance settings (Phase 9)
+        'settings.saved' => 'Settings saved.',
+        'settings.invalid' => 'Check the settings values — mode, daily cap (1-10) or budget is invalid.',
+        'killswitch.on' => 'Kill switch is ON — auto-approvals stopped, queued auto publishes will hold.',
+        'killswitch.off' => 'Kill switch is OFF — autonomy resumes under the usual guardrails.',
     ];
 
     /**
@@ -76,7 +82,19 @@ final class Messages
         'approval.rejected' => '{node} rejected by {user} (run #{run})',
         'watchdog.requeued' => 'watchdog requeued stale {type}, retry {retry}/{max} (run #{run})',
         'watchdog.failed' => 'watchdog dead-lettered stale {type} (run #{run})',
-        'compliance.passed' => 'compliance pass — policy {policy} (run #{run})',
+        'compliance.passed' => 'compliance {status} — policy {policy} (run #{run})',
+        'compliance.warned' => 'compliance WARN: similarity {slop} — needs manual review (run #{run})',
+        'compliance.blocked' => 'compliance BLOCK: {reason} (policy {policy}, run #{run})',
+        'run.blocked_by_compliance' => 'run #{run} cancelled by compliance: {reason}',
+        'approval.auto_approved' => '{node} auto-approved by compliance agent (policy {policy}) (run #{run})',
+        'guardrail.kill_switch' => 'kill switch is ON — auto-approval denied, sent to manual review (run #{run})',
+        'guardrail.kill_switch_on' => 'kill switch flipped ON by {user}',
+        'guardrail.kill_switch_off' => 'kill switch flipped OFF by {user}',
+        'guardrail.daily_cap_reached' => 'daily auto-approval cap reached ({used}/{cap}) — sent to manual review (run #{run})',
+        'guardrail.budget_cap_reached' => 'monthly budget cap reached — sent to manual review (run #{run})',
+        'guardrail.fallback_to_manual' => 'quality score {score} dropped below {threshold} — workspace fell back to Manual mode (run #{run})',
+        'guardrail.publish_deferred' => 'publish deferred: {reason} (run #{run})',
+        'guardrail.approval_mode_changed' => 'approval mode set to {mode} by {user}',
     ];
 
     /**

@@ -55,7 +55,9 @@ final class RunRepository
     /**
      * Truthful approval records for a run, with the deciding user's email —
      * the UI renders "Approved by you · {email} · {time}" from the STORED
-     * record, never a re-derived claim.
+     * record, never a re-derived claim. LEFT JOIN: auto records (Phase 9)
+     * have decided_by NULL by design — they belong to the compliance agent,
+     * never a person.
      *
      * @return list<array<string, mixed>>
      */
@@ -64,7 +66,7 @@ final class RunRepository
         return $this->db->all(
             'SELECT a.*, u.email AS decided_by_email
              FROM approvals a
-             JOIN users u ON u.id = a.decided_by
+             LEFT JOIN users u ON u.id = a.decided_by
              WHERE a.workspace_id = ? AND a.run_id = ?
              ORDER BY a.id ASC',
             [$ctx->id(), $runId],

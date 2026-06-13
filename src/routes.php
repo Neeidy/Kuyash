@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Kuyash\Auth\Auth;
 use Kuyash\Controllers\AuthController;
 use Kuyash\Controllers\DashboardController;
+use Kuyash\Controllers\DigestController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
 use Kuyash\Controllers\LibraryController;
@@ -12,6 +13,7 @@ use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\RenderController;
+use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
@@ -71,6 +73,11 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/queue/job/{id}/retry', $protected([QueueController::class, 'retry']));
 
     $router->get('/logs', $protected([LogsController::class, 'index']));
+
+    $router->get('/settings', $protected([SettingsController::class, 'index']));
+    $router->post('/settings', $protected([SettingsController::class, 'save']));
+    $router->post('/settings/kill-switch', $protected([SettingsController::class, 'killSwitch']));
+    $router->get('/digest', $protected([DigestController::class, 'index']));
 
     // dev-only: verifies the central error handler (log + generic 500)
     if ($config->get('app.debug') === true) {

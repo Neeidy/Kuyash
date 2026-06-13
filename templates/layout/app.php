@@ -58,9 +58,19 @@ use Kuyash\Core\View;
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2 2-2 2M8.5 10h3"/></svg></span>
         Logs
       </a>
+      <a class="nav-item<?= ($active ?? '') === 'digest' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'digest' ? ' aria-current="page"' : '' ?> href="/digest">
+        <span class="nav-item__marker"></span>
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1.5" width="12" height="13" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3.5"/></svg></span>
+        Digest
+      </a>
+      <a class="nav-item<?= ($active ?? '') === 'settings' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'settings' ? ' aria-current="page"' : '' ?> href="/settings">
+        <span class="nav-item__marker"></span>
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg></span>
+        Settings
+      </a>
     </nav>
     <div class="sidebar__foot">
-      <p>Phase 7 · Media Production<br>Real ffmpeg renders; TTS &amp; stock are mock-first (real optional).</p>
+      <p>Phase 9 · Compliance Agent<br>Real policy checks (kuyash-v1); Manual approval is the default mode.</p>
     </div>
   </aside>
 

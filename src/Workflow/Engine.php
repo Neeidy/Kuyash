@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kuyash\Workflow;
 
 use Closure;
+use Kuyash\Compliance\AutoApprovalGate;
+use Kuyash\Compliance\GateDecision;
 use Kuyash\Core\Database;
 use Kuyash\Workspace\WorkspaceContext;
 
@@ -36,6 +38,7 @@ final class Engine
         private readonly EventLog $events,
         private readonly WorkflowValidator $validator,
         ?Closure $clock = null,
+        private readonly ?AutoApprovalGate $autoGate = null,
     ) {
         $this->clock = $clock ?? static fn (): string => gmdate(self::ISO);
     }
@@ -171,6 +174,7 @@ final class Engine
                 JobResult::STATUS_READY,
                 JobResult::STATUS_PUBLISHED => $this->finalizeSuccess($job, $result, $now),
                 JobResult::STATUS_AWAITING_APPROVAL => $this->finalizeAwaiting($job, $result, $now),
+                JobResult::STATUS_DEFERRED => $this->finalizeDeferred($job, $result, $now),
                 default => $this->finalizeFailure($job, (string) $result->errorMessage, $now),
             };
         });
@@ -322,14 +326,66 @@ final class Engine
             'run' => $runId,
         ], $runId, (int) $job['id']);
 
-        if ($job['type'] === 'compliance_check') {
-            $this->events->record($wsId, 'info', 'compliance', 'compliance.passed', [
-                'policy' => (string) ($result->result['policy'] ?? '?'),
-                'run' => $runId,
-            ], $runId, (int) $job['id']);
+        if ($job['type'] === 'compliance_check' && !$this->recordComplianceOutcome($job, $result, $now)) {
+            return; // blocked: run cancelled, the chain never advances
         }
 
         $this->advance($wsId, $job, $now);
+    }
+
+    /**
+     * Compliance verdict → audit events (+ run cancel on block). The check job
+     * itself stays 'ready' — a block is a completed judgement, not a job
+     * failure (retrying it would re-spend work for the same verdict).
+     * Returns false when the run may NOT advance (block).
+     */
+    private function recordComplianceOutcome(array $job, JobResult $result, string $now): bool
+    {
+        $wsId = (int) $job['workspace_id'];
+        $runId = (int) $job['run_id'];
+        $status = (string) ($result->result['status'] ?? 'pass');
+        $params = [
+            'status' => $status,
+            'policy' => (string) ($result->result['policy'] ?? '?'),
+            'slop' => $result->result['checks']['slop']['score'] ?? null,
+            'run' => $runId,
+        ];
+        $reasons = $result->result['reasons'] ?? [];
+        $reasonText = implode('; ', array_filter((array) $reasons, is_string(...)));
+
+        if ($status === 'block') {
+            $this->events->record($wsId, 'error', 'compliance', 'compliance.blocked', $params + [
+                'reason' => $reasonText,
+            ], $runId, (int) $job['id']);
+
+            // block = run cancelled with reasons (no revise-loop in V1); the
+            // user starts a corrected run
+            $this->db->run(
+                "UPDATE runs SET status = 'cancelled', updated_at = ?
+                 WHERE id = ? AND workspace_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+                [$now, $runId, $wsId],
+            );
+            $this->events->record($wsId, 'warn', 'transition', 'run.blocked_by_compliance', [
+                'run' => $runId,
+                'reason' => $reasonText,
+            ], $runId);
+
+            return false;
+        }
+
+        if ($status === 'warn') {
+            // warn advances — the gate guarantees a warned render lands in
+            // MANUAL review even in Auto mode
+            $this->events->record($wsId, 'warn', 'compliance', 'compliance.warned', $params + [
+                'reason' => $reasonText,
+            ], $runId, (int) $job['id']);
+
+            return true;
+        }
+
+        $this->events->record($wsId, 'info', 'compliance', 'compliance.passed', $params, $runId, (int) $job['id']);
+
+        return true;
     }
 
     private function finalizeAwaiting(array $job, JobResult $result, string $now): void
@@ -355,6 +411,20 @@ final class Engine
         }
 
         $runId = (int) $job['run_id'];
+
+        // Auto mode (Phase 9): consult the gate before the pause becomes
+        // externally visible. We own the row (the guarded UPDATE above just
+        // claimed it), so gate side-effects (deny guardrail events, fallback
+        // flip) are recorded exactly once, atomically with this finalize.
+        if ((string) $job['type'] === 'render_review' && $this->autoGate !== null) {
+            $decision = $this->autoGate->evaluate($job, $now);
+            if ($decision->approve) {
+                $this->finalizeAutoApproved($job, $decision, $now);
+
+                return;
+            }
+        }
+
         $this->db->run(
             "UPDATE runs SET status = 'awaiting_approval', current_node = ?, updated_at = ?
              WHERE id = ? AND workspace_id = ? AND status = 'running'",
@@ -366,6 +436,77 @@ final class Engine
             'node' => (string) $job['node'],
             'run' => $runId,
         ], $runId, (int) $job['id']);
+    }
+
+    /**
+     * The gate said yes: complete the review job, write the TRUTHFUL auto
+     * record (mode 'auto', NO user, policy version + score snapshot — the
+     * 0007 CHECK enforces this shape), and resume the chain. Runs inside the
+     * caller's finalize transaction.
+     */
+    private function finalizeAutoApproved(array $job, GateDecision $decision, string $now): void
+    {
+        $wsId = (int) $job['workspace_id'];
+        $runId = (int) $job['run_id'];
+
+        $this->db->run(
+            "UPDATE jobs SET status = 'ready', finished_at = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'awaiting_approval'",
+            [$now, $job['id'], $wsId],
+        );
+
+        $this->recordApproval(
+            $wsId,
+            $job,
+            'approved',
+            null,
+            $now,
+            'auto',
+            $decision->policyVersion,
+            json_encode($decision->score, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+        );
+        $this->events->record($wsId, 'info', 'compliance', 'approval.auto_approved', [
+            'node' => (string) $job['node'],
+            'policy' => (string) $decision->policyVersion,
+            'score' => $decision->score['quality']['score'] ?? null,
+            'run' => $runId,
+        ], $runId, (int) $job['id']);
+
+        $this->advance($wsId, $job, $now);
+    }
+
+    /**
+     * Guardrail deferral (Phase 9): the job returns to 'queued' with a future
+     * run_after and NO retry_count increment — a halt is not a failure, so it
+     * can never dead-letter. The reason is kept in error_message ("deferred: …")
+     * for the queue UI; the guardrail event fires only when the reason CHANGES
+     * (a kill-switch publish re-deferring every few minutes must not spam the
+     * audit feed).
+     */
+    private function finalizeDeferred(array $job, JobResult $result, string $now): void
+    {
+        $wsId = (int) $job['workspace_id'];
+        $runId = (int) $job['run_id'];
+        $reason = (string) $result->errorMessage;
+        $message = 'deferred: ' . $reason;
+
+        $updated = $this->db->run(
+            "UPDATE jobs SET status = 'queued', worker_id = NULL, started_at = NULL,
+                run_after = ?, error_message = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'processing' AND worker_id = ?",
+            [$this->later($now, $result->deferSeconds), $message, $job['id'], $wsId, $job['worker_id']],
+        );
+        if ($updated->rowCount() === 0) {
+            return;
+        }
+
+        if ((string) ($job['error_message'] ?? '') !== $message) {
+            $this->events->record($wsId, 'warn', 'guardrail', 'guardrail.publish_deferred', [
+                'type' => (string) $job['type'],
+                'reason' => $reason,
+                'run' => $runId,
+            ], $runId, (int) $job['id']);
+        }
     }
 
     /**
@@ -530,12 +671,26 @@ final class Engine
         ], $runId, $this->db->lastInsertId());
     }
 
-    private function recordApproval(int $wsId, array $job, string $decision, int $userId, string $now): void
-    {
+    /**
+     * Truthful record writer. Manual: real user, no policy stamp. Auto: no
+     * user, policy version + score snapshot. The 0007 schema CHECK rejects any
+     * other combination — misrepresentation is a constraint violation.
+     */
+    private function recordApproval(
+        int $wsId,
+        array $job,
+        string $decision,
+        ?int $userId,
+        string $now,
+        string $mode = 'manual',
+        ?string $policyVersion = null,
+        ?string $scoreJson = null,
+    ): void {
         $this->db->run(
-            'INSERT INTO approvals (workspace_id, run_id, job_id, node, decision, mode, decided_by, decided_at)
-             VALUES (?, ?, ?, ?, ?, \'manual\', ?, ?)',
-            [$wsId, $job['run_id'], $job['id'], $job['node'], $decision, $userId, $now],
+            'INSERT INTO approvals (workspace_id, run_id, job_id, node, decision, mode,
+                decided_by, decided_at, policy_version, score_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$wsId, $job['run_id'], $job['id'], $job['node'], $decision, $mode, $userId, $now, $policyVersion, $scoreJson],
         );
     }
 

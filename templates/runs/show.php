@@ -160,21 +160,35 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
   <div class="card__body">
     <ul class="job-list">
       <?php foreach ($approvals as $approval): ?>
+      <?php
+      // truthful badges (compliance rule): the badge is rendered from the
+      // STORED record's mode — an auto record NEVER reads "by you"
+      $isAuto = ($approval['mode'] ?? 'manual') === 'auto';
+      $scoreSnap = $isAuto ? (json_decode((string) ($approval['score_json'] ?? ''), true) ?: []) : [];
+      ?>
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type mono"><?= View::e($approval['node']) ?></span>
-          <span class="job-row__entity">mode: <?= View::e($approval['mode']) ?></span>
+          <span class="job-row__entity">mode: <?= View::e($approval['mode']) ?><?php if ($isAuto && isset($scoreSnap['quality']['score'])): ?> · quality score <?= (int) $scoreSnap['quality']['score'] ?><?php endif; ?></span>
         </div>
-        <span class="chip chip--<?= $approval['decision'] === 'approved' ? 'ok' : 'err' ?> chip--record">
-          <?= $approval['decision'] === 'approved' ? 'Approved by you' : 'Rejected by you' ?>
-          · <?= View::e($approval['decided_by_email']) ?>
+        <?php if ($isAuto): ?>
+        <span class="chip chip--ai chip--record">
+          Auto-approved by compliance agent (policy <?= View::e((string) ($approval['policy_version'] ?? '?')) ?>)
           · <?= View::e(substr((string) $approval['decided_at'], 0, 10) . ' ' . Format::utcTime((string) $approval['decided_at'])) ?>
         </span>
+        <?php else: ?>
+        <span class="chip chip--<?= $approval['decision'] === 'approved' ? 'ok' : 'err' ?> chip--record">
+          <?= $approval['decision'] === 'approved' ? 'Approved by you' : 'Rejected by you' ?>
+          · <?= View::e((string) ($approval['decided_by_email'] ?? '?')) ?>
+          · <?= View::e(substr((string) $approval['decided_at'], 0, 10) . ' ' . Format::utcTime((string) $approval['decided_at'])) ?>
+        </span>
+        <?php endif; ?>
       </li>
       <?php endforeach; ?>
     </ul>
     <p class="note">Records reflect what actually happened: manual decisions carry the deciding
-      account; auto-approval (Phase 9) will be labelled as the compliance agent, never as a human.</p>
+      account; auto-approvals are labelled as the compliance agent with their policy version —
+      never as a human.</p>
   </div>
 </div>
 <?php endif; ?>

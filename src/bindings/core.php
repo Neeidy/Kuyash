@@ -8,6 +8,12 @@ declare(strict_types=1);
  * scope comes from the workspace_id on each claimed job row).
  */
 
+use Kuyash\Compliance\AutoApprovalGate;
+use Kuyash\Compliance\ComplianceCheckExecutor;
+use Kuyash\Compliance\DigestReport;
+use Kuyash\Compliance\PublishGateExecutor;
+use Kuyash\Compliance\QualityScore;
+use Kuyash\Compliance\SlopScorer;
 use Kuyash\Content\ContentExecutor;
 use Kuyash\Content\MockTextProvider;
 use Kuyash\Content\OpenAiTextProvider;
@@ -57,6 +63,7 @@ use Kuyash\Workflow\RunRepository;
 use Kuyash\Workflow\WorkerHeartbeat;
 use Kuyash\Workflow\WorkflowRepository;
 use Kuyash\Workflow\WorkflowValidator;
+use Kuyash\Workspace\WorkspaceSettings;
 
 return static function (Container $container, string $basePath): void {
     $container->bind(Config::class, static fn (): Config => new Config($basePath . '/config'));
@@ -88,10 +95,43 @@ return static function (Container $container, string $basePath): void {
         $c->get(Database::class),
     ));
 
+    // Phase 9: compliance settings live on the workspaces row and are read by
+    // the worker-side gate — bound here (moved from web.php), session-free.
+    $container->bind(WorkspaceSettings::class, static fn (Container $c): WorkspaceSettings => new WorkspaceSettings(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(SlopScorer::class, static fn (Container $c): SlopScorer => new SlopScorer(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(QualityScore::class, static fn (Container $c): QualityScore => new QualityScore(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(ComplianceCheckExecutor::class, static fn (Container $c): ComplianceCheckExecutor => new ComplianceCheckExecutor(
+        $c->get(Database::class),
+        $c->get(SlopScorer::class),
+    ));
+
+    $container->bind(AutoApprovalGate::class, static fn (Container $c): AutoApprovalGate => new AutoApprovalGate(
+        $c->get(Database::class),
+        $c->get(EventLog::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(QualityScore::class),
+    ));
+
+    $container->bind(DigestReport::class, static fn (Container $c): DigestReport => new DigestReport(
+        $c->get(Database::class),
+        $c->get(QualityScore::class),
+    ));
+
     $container->bind(Engine::class, static fn (Container $c): Engine => new Engine(
         $c->get(Database::class),
         $c->get(EventLog::class),
         $c->get(WorkflowValidator::class),
+        null,
+        $c->get(AutoApprovalGate::class),
     ));
 
     // Worker liveness signal — written by the worker, read by the web UI
@@ -336,7 +376,8 @@ return static function (Container $container, string $basePath): void {
     // rest behind their seams — one register() line each (adapter rule).
     $container->bind(ExecutorRegistry::class, static function (Container $c): ExecutorRegistry {
         $registry = new ExecutorRegistry();
-        $registry->registerForAll(new MockExecutor());
+        $mock = new MockExecutor();
+        $registry->registerForAll($mock);
 
         $content = $c->get(ContentExecutor::class);
         foreach (ContentExecutor::contentTypes() as $type) {
@@ -348,6 +389,11 @@ return static function (Container $container, string $basePath): void {
         $registry->register('asset_fetch', $c->get(AssetFetchExecutor::class));
         $registry->register('assembly', $c->get(AssemblyExecutor::class));
         $registry->register('final_render', $c->get(FinalRenderExecutor::class));
+
+        // Phase 9: real compliance scoring + the guardrail gate around the
+        // (still mock) publish — Phase 10 swaps only the inner executor.
+        $registry->register('compliance_check', $c->get(ComplianceCheckExecutor::class));
+        $registry->register('publish', new PublishGateExecutor($c->get(Database::class), $mock));
 
         return $registry;
     });

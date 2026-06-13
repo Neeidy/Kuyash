@@ -26,8 +26,19 @@ use Kuyash\Core\Response;
 use Kuyash\Core\Router;
 use Kuyash\Core\Session;
 use Kuyash\Core\View;
+use Kuyash\Compliance\AutoApprovalGate;
+use Kuyash\Compliance\ComplianceCheckExecutor;
+use Kuyash\Compliance\CompliancePolicy;
+use Kuyash\Compliance\DigestReport;
+use Kuyash\Compliance\GateDecision;
+use Kuyash\Compliance\PublishGateExecutor;
+use Kuyash\Compliance\QualityScore;
+use Kuyash\Compliance\SlopScorer;
+use Kuyash\Controllers\DigestController;
+use Kuyash\Controllers\SettingsController;
 use Kuyash\Database\Migrator;
 use Kuyash\Core\Format;
+use Kuyash\Workspace\WorkspaceSettings;
 use Kuyash\Library\AssetIngest;
 use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
@@ -275,9 +286,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 6);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 7);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -1053,13 +1064,24 @@ function seedReadyVideo(Database $db, int $wsId, string $title = 'Distribute me'
  * the actual Phase 5 content seam. Mechanic tests (Recording/AlwaysThrows) pass
  * non-MockExecutor bases and keep their single executor for all types.
  */
-function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvider $contentProvider = null): array
+function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvider $contentProvider = null, bool $autoCompliance = false): array
 {
     $clock = static function () use (&$now): string {
         return $now;
     };
     $events = new EventLog($db);
-    $engine = new Engine($db, $events, new WorkflowValidator(), $clock);
+
+    // Phase 9: when $autoCompliance, the Engine carries the AutoApprovalGate so
+    // render_review consults Auto mode + guardrails (all sharing the test clock).
+    $autoGate = $autoCompliance
+        ? new \Kuyash\Compliance\AutoApprovalGate(
+            $db,
+            $events,
+            new \Kuyash\Workspace\WorkspaceSettings($db),
+            new \Kuyash\Compliance\QualityScore($db, $clock),
+        )
+        : null;
+    $engine = new Engine($db, $events, new WorkflowValidator(), $clock, $autoGate);
     $registry = new ExecutorRegistry();
     $registry->registerForAll($executor);
 
@@ -1084,6 +1106,14 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
         );
         $registry->register('trend_fetch', new TrendExecutor($trendSvc, $trendRepo, $trendCfg));
 
+        // Phase 9: real compliance scoring (replaces MockExecutor's removed
+        // compliance_check arm) — mirrors production so MockExecutor-based e2e
+        // exercises the actual kuyash-v1 policy.
+        $registry->register('compliance_check', new \Kuyash\Compliance\ComplianceCheckExecutor(
+            $db,
+            new \Kuyash\Compliance\SlopScorer($db),
+        ));
+
         // Phase 7: real Media executors (mock providers → REAL ffmpeg) when the
         // binary is present; stubs otherwise so the engine e2e stays portable.
         global $mediaReady;
@@ -1097,6 +1127,12 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
             foreach (['tts', 'asset_fetch', 'assembly', 'final_render'] as $t) {
                 $registry->register($t, $stub);
             }
+        }
+
+        // Phase 9: the guardrail gate wraps the (still mock) publish — only
+        // auto-approved runs are gated; manual publishes pass straight through.
+        if ($autoCompliance) {
+            $registry->register('publish', new \Kuyash\Compliance\PublishGateExecutor($db, new MockExecutor(), $clock));
         }
     }
 
@@ -1381,7 +1417,7 @@ check('full run: stops again at render review', (static function () use ($p4runs
 
     return $run['status'] === 'awaiting_approval' && $run['current_node'] === 'PUBLISH'
         && count($awaiting) === 1 && $awaiting[0]['type'] === 'render_review'
-        && str_contains((string) ($awaiting[0]['result']['summary'] ?? ''), 'mock-v0');
+        && str_contains((string) ($awaiting[0]['result']['summary'] ?? ''), 'kuyash-v1');
 })());
 
 $reviewJob = $p4jobs->awaitingApproval($p4ctx)[0];
@@ -1435,14 +1471,16 @@ check('full run: timeline starts with run.started, ends with run.completed', (st
     return $keys[0] === 'run.started' && end($keys) === 'run.completed'
         && in_array('approval.approved', $keys, true) && in_array('job.claimed', $keys, true);
 })());
-check('full run: compliance event recorded with mock-v0 policy', (static function () use ($p4events, $p4ctx, $fullRunId): bool {
+check('full run: compliance event recorded with kuyash-v1 policy + ai label', (static function () use ($p4events, $p4ctx, $fullRunId): bool {
     $compliance = array_values(array_filter(
         $p4events->timelineForRun($p4ctx, $fullRunId),
         static fn (array $e): bool => $e['kind'] === 'compliance',
     ));
 
+    // full runs carry TTS (synthetic voice) → pass_with_ai_label
     return count($compliance) === 1 && $compliance[0]['key'] === 'compliance.passed'
-        && ($compliance[0]['params']['policy'] ?? '') === 'mock-v0';
+        && ($compliance[0]['params']['policy'] ?? '') === 'kuyash-v1'
+        && ($compliance[0]['params']['status'] ?? '') === 'pass_with_ai_label';
 })());
 
 echo "== E2E: distribution run with a REAL library asset ==\n";
@@ -3404,6 +3442,853 @@ if ($mediaReady) {
     $stockRes = $m['asset_fetch']->execute($job + ['step' => 5], $prior);
     check('reference: faceless with nothing set → stock', ($stockRes->result['source'] ?? '') === 'stock');
 }
+
+/* ============================ PHASE 9: Compliance ============================ */
+
+echo "== 0007 schema: workspace compliance columns ==\n";
+
+$c9db = migratedDb($basePath);
+[$c9UserA, $c9WsA] = seedUser($c9db, 'c9a@example.com', $argonHash, 'C9 Tenant A');
+[$c9UserB, $c9WsB] = seedUser($c9db, 'c9b@example.com', $argonHash, 'C9 Tenant B');
+$c9now = '2026-06-12T12:00:00Z';
+
+check('0007: workspaces gained the 4 compliance columns with defaults', (static function () use ($c9db, $c9WsA): bool {
+    $w = $c9db->one('SELECT approval_mode, kill_switch, daily_post_cap, budget_cap_cents FROM workspaces WHERE id = ?', [$c9WsA]);
+
+    return $w['approval_mode'] === 'manual' && (int) $w['kill_switch'] === 0
+        && (int) $w['daily_post_cap'] === 2 && $w['budget_cap_cents'] === null;
+})());
+check('0007: approval_mode CHECK rejects a bad value', throws(static fn () => $c9db->run(
+    'UPDATE workspaces SET approval_mode = ? WHERE id = ?', ['semi', $c9WsA],
+), PDOException::class));
+check('0007: daily_post_cap CHECK rejects 0 and 11', throws(static fn () => $c9db->run(
+    'UPDATE workspaces SET daily_post_cap = 0 WHERE id = ?', [$c9WsA],
+), PDOException::class) && throws(static fn () => $c9db->run(
+    'UPDATE workspaces SET daily_post_cap = 11 WHERE id = ?', [$c9WsA],
+), PDOException::class));
+check('0007: budget_cap_cents CHECK rejects <= 0, allows NULL + positive', throws(static fn () => $c9db->run(
+    'UPDATE workspaces SET budget_cap_cents = 0 WHERE id = ?', [$c9WsA],
+), PDOException::class) && (static function () use ($c9db, $c9WsA): bool {
+    $c9db->run('UPDATE workspaces SET budget_cap_cents = 500 WHERE id = ?', [$c9WsA]);
+    $ok = (int) $c9db->one('SELECT budget_cap_cents AS b FROM workspaces WHERE id = ?', [$c9WsA])['b'] === 500;
+    $c9db->run('UPDATE workspaces SET budget_cap_cents = NULL WHERE id = ?', [$c9WsA]);
+
+    return $ok;
+})());
+
+echo "== 0007 schema: approvals truthful-record CHECK ==\n";
+
+// seed a run + a job to satisfy approvals FKs
+$c9db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'WF', 'full', '[]', ?, ?)", [$c9WsA, $c9now, $c9now]);
+$c9wf = $c9db->lastInsertId();
+$c9db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$c9WsA, $c9wf, $c9UserA, $c9now, $c9now]);
+$c9run = $c9db->lastInsertId();
+$c9db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, run_after, created_at) VALUES (?, ?, 'PUBLISH', 12, 'render_review', 'ready', ?, ?)", [$c9WsA, $c9run, $c9now, $c9now]);
+$c9job = $c9db->lastInsertId();
+
+$insApproval = static function (array $cols) use ($c9db, $c9WsA, $c9run, $c9job, $c9now): void {
+    $c9db->run(
+        'INSERT INTO approvals (workspace_id, run_id, job_id, node, decision, mode, decided_by, decided_at, policy_version, score_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [$c9WsA, $c9run, $c9job, 'PUBLISH', $cols['decision'] ?? 'approved', $cols['mode'], $cols['decided_by'] ?? null, $c9now, $cols['policy_version'] ?? null, $cols['score_json'] ?? null],
+    );
+};
+
+check('0007: manual record (real user, no policy) is accepted', (static function () use ($insApproval, $c9UserA, $c9db): bool {
+    $insApproval(['mode' => 'manual', 'decided_by' => $c9UserA]);
+
+    return (int) $c9db->one('SELECT COUNT(*) AS n FROM approvals')['n'] === 1;
+})());
+check('0007: auto record (no user, policy version) is accepted', (static function () use ($insApproval, $c9db): bool {
+    $insApproval(['mode' => 'auto', 'policy_version' => 'kuyash-v1', 'score_json' => '{"x":1}']);
+
+    return (int) $c9db->one('SELECT COUNT(*) AS n FROM approvals')['n'] === 2;
+})());
+check('0007: untruthful auto record WITH a user is REJECTED', throws(static fn () => $insApproval(
+    ['mode' => 'auto', 'decided_by' => $c9UserA, 'policy_version' => 'kuyash-v1'],
+), PDOException::class));
+check('0007: untruthful auto record WITHOUT a policy is REJECTED', throws(static fn () => $insApproval(
+    ['mode' => 'auto'],
+), PDOException::class));
+check('0007: untruthful manual record WITHOUT a user is REJECTED', throws(static fn () => $insApproval(
+    ['mode' => 'manual'],
+), PDOException::class));
+check('0007: untruthful manual record WITH a policy stamp is REJECTED', throws(static fn () => $insApproval(
+    ['mode' => 'manual', 'decided_by' => $c9UserA, 'policy_version' => 'kuyash-v1'],
+), PDOException::class));
+
+echo "== Compliance: WorkspaceSettings (compliance accessors, tenant-scoped) ==\n";
+
+$c9settings = new WorkspaceSettings($c9db);
+check('settings: defaults read back', (static function () use ($c9settings, $c9WsA): bool {
+    $s = $c9settings->compliance($c9WsA);
+
+    return $s['approval_mode'] === 'manual' && $s['kill_switch'] === false
+        && $s['daily_post_cap'] === 2 && $s['budget_cap_cents'] === null;
+})());
+check('settings: setApprovalMode validates + persists', $c9settings->setApprovalMode($c9WsA, 'auto')
+    && !$c9settings->setApprovalMode($c9WsA, 'bogus')
+    && $c9settings->compliance($c9WsA)['approval_mode'] === 'auto');
+check('settings: setDailyPostCap enforces the 1-10 band', $c9settings->setDailyPostCap($c9WsA, 5)
+    && !$c9settings->setDailyPostCap($c9WsA, 0) && !$c9settings->setDailyPostCap($c9WsA, 11)
+    && $c9settings->compliance($c9WsA)['daily_post_cap'] === 5);
+check('settings: setBudgetCapCents rejects <= 0, accepts NULL', $c9settings->setBudgetCapCents($c9WsA, 1000)
+    && !$c9settings->setBudgetCapCents($c9WsA, -1) && !$c9settings->setBudgetCapCents($c9WsA, 0)
+    && $c9settings->compliance($c9WsA)['budget_cap_cents'] === 1000
+    && $c9settings->setBudgetCapCents($c9WsA, null)
+    && $c9settings->compliance($c9WsA)['budget_cap_cents'] === null);
+check('settings: kill switch flips both ways', (static function () use ($c9settings, $c9WsA): bool {
+    $c9settings->setKillSwitch($c9WsA, true);
+    $on = $c9settings->compliance($c9WsA)['kill_switch'] === true;
+    $c9settings->setKillSwitch($c9WsA, false);
+
+    return $on && $c9settings->compliance($c9WsA)['kill_switch'] === false;
+})());
+// reset A back to manual defaults for later sections
+$c9settings->setApprovalMode($c9WsA, 'manual');
+$c9settings->setDailyPostCap($c9WsA, 2);
+
+echo "== Compliance: SlopScorer (bands, history, isolation) ==\n";
+
+// helper: seed a "content run" carrying script + caption text for slop history
+$seedContentRun = static function (Database $db, int $ws, int $userId, string $script, array $captions): int {
+    $now = gmdate(NOW_ISO);
+    $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'WF', 'full', '[]', ?, ?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'completed', ?, ?, ?)", [$ws, $wf, $userId, $now, $now]);
+    $run = $db->lastInsertId();
+    $scriptJson = json_encode(['script' => $script], JSON_UNESCAPED_UNICODE);
+    $capJson = json_encode(['captions' => $captions], JSON_UNESCAPED_UNICODE);
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, result_json, run_after, created_at) VALUES (?, ?, 'SCRIPT', 3, 'script_draft', 'ready', ?, ?, ?)", [$ws, $run, $scriptJson, $now, $now]);
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, result_json, run_after, created_at) VALUES (?, ?, 'CAPTION', 7, 'caption_generation', 'ready', ?, ?, ?)", [$ws, $run, $capJson, $now, $now]);
+
+    return $run;
+};
+
+$slDb = migratedDb($basePath);
+[$slUser, $slWs] = seedUser($slDb, 'sl@example.com', $argonHash, 'Slop WS');
+[, $slWs2] = seedUser($slDb, 'sl2@example.com', $argonHash, 'Slop WS2');
+$scorer = new SlopScorer($slDb);
+
+$baseText = 'The fastest way to brew espresso at home without a fancy machine and zero waste.';
+check('slop: empty history scores 0', $scorer->score($slWs, 999, $baseText)['score'] === 0.0);
+check('slop: blank candidate scores 0', $scorer->score($slWs, 999, '   ')['score'] === 0.0);
+
+// empty captions so the history text == the script (a clean identity match)
+$histRun = $seedContentRun($slDb, $slWs, $slUser, $baseText, []);
+check('slop: identical text vs one history run scores 1.0', $scorer->score($slWs, 12345, $baseText)['score'] === 1.0);
+check('slop: near-duplicate scores high (>= warn, < 1)', (static function () use ($scorer, $slWs, $baseText): bool {
+    $tweaked = str_replace('espresso', 'coffee', $baseText) . ' Enjoy.';
+    $s = $scorer->score($slWs, 12345, $tweaked)['score'];
+
+    return $s >= CompliancePolicy::SLOP_WARN && $s < 1.0;
+})());
+check('slop: a wholly different topic scores below warn', (static function () use ($scorer, $slWs): bool {
+    $s = $scorer->score($slWs, 12345, 'Three quick stretches for lower back pain you can do at your desk today.')['score'];
+
+    return $s < CompliancePolicy::SLOP_WARN;
+})());
+check('slop: tenant isolation — another workspace\'s runs never count', (static function () use ($scorer, $slDb, $slWs2, $slUser, $baseText, $seedContentRun): bool {
+    // tenant B has the exact same text; A's score against B must stay 0
+    $seedContentRun($slDb, $slWs2, $slUser, $baseText, ['instagram' => 'a']);
+
+    return $scorer->score($slWs2, 999, 'totally unrelated gardening tips for beginners in spring')['score'] < CompliancePolicy::SLOP_WARN
+        && $scorer->score($slWs2, 999, $baseText)['score'] === 1.0;
+})());
+check('slop: history excludes the current run', (static function () use ($scorer, $slWs, $histRun, $baseText): bool {
+    // scoring the history run against itself (excluded) → no self-match
+    return $scorer->score($slWs, $histRun, $baseText)['score'] === 0.0;
+})());
+check('slop: candidateText = script + captions (full) / captions only (dist)', (static function (): bool {
+    $full = SlopScorer::candidateText(['script_draft' => ['script' => 'S'], 'caption_generation' => ['captions' => ['ig' => 'C1', 'tt' => 'C2']]]);
+    $dist = SlopScorer::candidateText(['caption_generation' => ['captions' => ['ig' => 'C1']]]);
+
+    return str_contains($full, 'S') && str_contains($full, 'C1') && str_contains($full, 'C2')
+        && $dist === 'C1' && !str_contains($dist, 'S');
+})());
+
+echo "== Compliance: ComplianceCheckExecutor (statuses, ai-label, format) ==\n";
+
+$ceDb = migratedDb($basePath);
+[$ceUser, $ceWs] = seedUser($ceDb, 'ce@example.com', $argonHash, 'CE WS');
+$ce = new ComplianceCheckExecutor($ceDb, new SlopScorer($ceDb));
+
+// helper: a run + a seeded render row for format checks
+$seedRunWithRender = static function (Database $db, int $ws, int $userId, ?array $render): array {
+    $now = gmdate(NOW_ISO);
+    $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'WF', 'full', '[]', ?, ?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$ws, $wf, $userId, $now, $now]);
+    $run = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, run_after, created_at) VALUES (?, ?, 'COMPLIANCE', 11, 'compliance_check', 'processing', ?, ?)", [$ws, $run, $now, $now]);
+    $job = $db->lastInsertId();
+    if ($render !== null) {
+        $db->run("INSERT INTO renders (workspace_id, run_id, job_id, kind, stored_name, width, height, duration_s, created_at) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)", [$ws, $run, $job, bin2hex(random_bytes(16)) . '.mp4', $render['w'], $render['h'], $render['d'], $now]);
+    }
+
+    return ['workspace_id' => $ws, 'run_id' => $run, 'id' => $job];
+};
+
+// in-range render, no AI, no TTS, no slop history → pass
+$ceJob1 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1080, 'h' => 1920, 'd' => 20.0]);
+$ceR1 = $ce->execute($ceJob1, ['asset_fetch' => ['ai_label_required' => false]]);
+check('compliance: clean in-range render → pass', $ceR1->status === 'ready'
+    && $ceR1->result['status'] === 'pass' && $ceR1->result['policy'] === 'kuyash-v1'
+    && $ceR1->result['checks']['format']['status'] === 'pass'
+    && $ceR1->result['ai_label_required'] === false && $ceR1->provider === 'kuyash-compliance' && $ceR1->costCents === null);
+
+// AI visuals → pass_with_ai_label + reason ai_visuals
+$ceJob2 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1080, 'h' => 1920, 'd' => 20.0]);
+$ceR2 = $ce->execute($ceJob2, ['asset_fetch' => ['ai_label_required' => true]]);
+check('compliance: AI visuals → pass_with_ai_label + reason ai_visuals', $ceR2->result['status'] === 'pass_with_ai_label'
+    && $ceR2->result['ai_label_required'] === true
+    && in_array('ai_visuals', $ceR2->result['checks']['ai_label']['reasons'], true));
+
+// synthetic voice from ANY tts → pass_with_ai_label + reason synthetic_voice (mock counts)
+$ceJob3 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1080, 'h' => 1920, 'd' => 20.0]);
+$ceR3 = $ce->execute($ceJob3, ['tts' => ['audio_ref' => 'cache:1:abc', 'provider' => 'mock']]);
+check('compliance: mock TTS narration → synthetic_voice label required', $ceR3->result['status'] === 'pass_with_ai_label'
+    && in_array('synthetic_voice', $ceR3->result['checks']['ai_label']['reasons'], true));
+
+// out-of-range duration → block
+$ceJob4 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1080, 'h' => 1920, 'd' => 60.0]);
+$ceR4 = $ce->execute($ceJob4, []);
+check('compliance: out-of-range duration → block with a reason', $ceR4->status === 'ready'
+    && $ceR4->result['status'] === 'block' && $ceR4->result['reasons'] !== []
+    && str_contains(implode(' ', $ceR4->result['reasons']), 'duration'));
+
+// non-9:16 aspect → block
+$ceJob5 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1920, 'h' => 1080, 'd' => 20.0]);
+$ceR5 = $ce->execute($ceJob5, []);
+check('compliance: non-9:16 aspect → block', $ceR5->result['status'] === 'block'
+    && str_contains(implode(' ', $ceR5->result['reasons']), 'aspect'));
+
+// no render, no measurable metadata → unknown, never blocks
+$ceJob6 = $seedRunWithRender($ceDb, $ceWs, $ceUser, null);
+$ceR6 = $ce->execute($ceJob6, ['asset_fetch' => ['source' => 'stock']]);
+check('compliance: missing format metadata → unknown, never blocks', $ceR6->result['status'] === 'pass'
+    && $ceR6->result['checks']['format']['status'] === 'unknown');
+
+// distribution-shape: asset metadata used when no render exists
+$ceJob7 = $seedRunWithRender($ceDb, $ceWs, $ceUser, null);
+$ceAssetId = seedReadyVideo($ceDb, $ceWs, 'CE dist clip'); // 1080x1920, 21.5s
+$ceR7 = $ce->execute($ceJob7, ['asset_fetch' => ['asset_id' => $ceAssetId, 'duration_s' => 21.5]]);
+check('compliance: distribution uses asset metadata for format (pass)', $ceR7->result['status'] === 'pass'
+    && $ceR7->result['checks']['format']['status'] === 'pass'
+    && $ceR7->result['checks']['format']['source'] === 'asset');
+
+// slop warn / block via seeded history on the SAME workspace
+$ceHistText = 'Stop scrolling. Here is the one espresso trick nobody tells you about at home today.';
+$ceHistRun = $seedContentRun($ceDb, $ceWs, $ceUser, $ceHistText, ['instagram' => 'save this espresso trick', 'tiktok' => 'wait for it espresso', 'youtube' => 'full espresso breakdown']);
+$ceJob8 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1080, 'h' => 1920, 'd' => 20.0]);
+$ceR8 = $ce->execute($ceJob8, ['script_draft' => ['script' => $ceHistText], 'caption_generation' => ['captions' => ['instagram' => 'save this espresso trick', 'tiktok' => 'wait for it espresso', 'youtube' => 'full espresso breakdown']]]);
+check('compliance: near-duplicate of history → block (>= 0.80)', $ceR8->result['status'] === 'block'
+    && $ceR8->result['checks']['slop']['score'] >= CompliancePolicy::SLOP_BLOCK);
+$ceJob9 = $seedRunWithRender($ceDb, $ceWs, $ceUser, ['w' => 1080, 'h' => 1920, 'd' => 20.0]);
+$ceWarnScript = 'Here is the one espresso trick nobody tells you about at home today and tomorrow.';
+$ceR9 = $ce->execute($ceJob9, ['script_draft' => ['script' => $ceWarnScript], 'caption_generation' => ['captions' => ['instagram' => 'save this espresso trick', 'tiktok' => 'wait for it espresso', 'youtube' => 'new espresso angle']]]);
+check('compliance: moderately similar → warn band (>= 0.55, < 0.80)', $ceR9->result['status'] === 'warn'
+    && $ceR9->result['checks']['slop']['score'] >= CompliancePolicy::SLOP_WARN
+    && $ceR9->result['checks']['slop']['score'] < CompliancePolicy::SLOP_BLOCK);
+check('compliance: result_json is a full audit record', (static function () use ($ceR1): bool {
+    $r = $ceR1->result;
+
+    return isset($r['status'], $r['policy'], $r['reasons'], $r['ai_label_required'])
+        && isset($r['checks']['ai_label'], $r['checks']['format'], $r['checks']['slop'])
+        && array_key_exists('score', $r['checks']['slop']) && array_key_exists('warn_at', $r['checks']['slop']);
+})());
+
+echo "== Compliance: Engine outcomes (pass / warn / block) ==\n";
+
+// drive real compliance through the engine: a render_review pause carries the
+// verdict; a block cancels the run; status stays 'ready' (a verdict, not a fail)
+$enDb = migratedDb($basePath);
+[$enUser, $enWs] = seedUser($enDb, 'en@example.com', $argonHash, 'EN WS');
+$_SESSION = [];
+$enCtx = new WorkspaceContext($enDb);
+$enCtx->set($enWs);
+$enWfRepo = new WorkflowRepository($enDb, new WorkflowValidator());
+$enWfRepo->ensureDefaults($enCtx);
+$enWfs = $enWfRepo->listFor($enCtx);
+$enDistWf = $enWfs[1]['id'];
+$enRuns = new RunRepository($enDb);
+$enJobs = new JobRepository($enDb);
+$enEvents = new EventLog($enDb);
+$enNow = '2026-06-12T09:00:00Z';
+[$enEngine, $enWorker] = makeRig($enDb, new MockExecutor(), $enNow);
+
+// distribution clean run → compliance pass → pauses at render_review
+$enAsset = seedReadyVideo($enDb, $enWs, 'EN clip');
+$enRun1 = $enEngine->startRun($enCtx, $enDistWf, $enAsset, $enUser);
+while ($enWorker->tick()) {
+}
+check('engine: clean run records compliance.passed + pauses at review', (static function () use ($enEvents, $enCtx, $enJobs, $enRun1): bool {
+    $tl = $enEvents->timelineForRun($enCtx, $enRun1);
+    $passed = array_values(array_filter($tl, static fn ($e) => $e['key'] === 'compliance.passed'));
+    $cc = $enJobs->jobsForRun($enCtx, $enRun1);
+    $ccJob = array_values(array_filter($cc, static fn ($j) => $j['type'] === 'compliance_check'))[0] ?? null;
+    $awaiting = $enJobs->awaitingApproval($enCtx);
+
+    return count($passed) === 1 && ($passed[0]['params']['policy'] ?? '') === 'kuyash-v1'
+        && $ccJob !== null && $ccJob['status'] === 'ready'
+        && count($awaiting) === 1 && $awaiting[0]['type'] === 'render_review';
+})());
+// approve to clear the queue
+$enEngine->approve($enCtx, $enJobs->awaitingApproval($enCtx)[0]['id'], $enUser, 'en@example.com');
+while ($enWorker->tick()) {
+}
+
+// BLOCK path: seed a history run, then start a near-identical distribution run
+// whose captions repeat the history → slop block → run cancelled, not failed
+$enBlockText = 'Repeat me exactly. The same caption every single time is textbook slop output.';
+$seedContentRun($enDb, $enWs, $enUser, $enBlockText, ['instagram' => $enBlockText, 'tiktok' => $enBlockText, 'youtube' => $enBlockText]);
+// a fake text provider that always emits the SAME caption text (forces a block)
+$cloneProvider = new class ($enBlockText) implements Kuyash\Content\TextProvider {
+    public function __construct(private string $t)
+    {
+    }
+
+    public function name(): string
+    {
+        return 'mock';
+    }
+
+    public function generate(string $kind, array $context, int $seed): Kuyash\Content\TextResult
+    {
+        $data = match ($kind) {
+            'idea' => ['idea' => $this->t, 'hook' => $this->t, 'format' => '15-45s vertical'],
+            'script' => ['script' => $this->t, 'word_count' => 12, 'estimated_duration_s' => 20.0],
+            'caption' => ['captions' => ['instagram' => $this->t, 'tiktok' => $this->t, 'youtube' => $this->t]],
+            'hashtag' => ['hashtags' => ['#a', '#b', '#c']],
+            default => throw new Kuyash\Content\TextProviderException("bad kind {$kind}"),
+        };
+
+        return new Kuyash\Content\TextResult($data, 'mock', 'mock.v1', null, null);
+    }
+};
+$enNow2 = '2026-06-12T10:00:00Z';
+[$enEngine2, $enWorker2] = makeRig($enDb, new MockExecutor(), $enNow2, $cloneProvider);
+$enBlockRun = $enEngine2->startRun($enCtx, $enDistWf, $enAsset, $enUser);
+while ($enWorker2->tick()) {
+}
+check('engine: slop block cancels the run with reasons (job stays ready)', (static function () use ($enEvents, $enRuns, $enJobs, $enCtx, $enBlockRun): bool {
+    $run = $enRuns->find($enCtx, $enBlockRun);
+    $tl = $enEvents->timelineForRun($enCtx, $enBlockRun);
+    $keys = array_column($tl, 'key');
+    $jobs = $enJobs->jobsForRun($enCtx, $enBlockRun);
+    $ccJob = array_values(array_filter($jobs, static fn ($j) => $j['type'] === 'compliance_check'))[0] ?? null;
+    $hasReview = array_values(array_filter($jobs, static fn ($j) => $j['type'] === 'render_review'));
+
+    return $run['status'] === 'cancelled'
+        && in_array('compliance.blocked', $keys, true)
+        && in_array('run.blocked_by_compliance', $keys, true)
+        && $ccJob !== null && $ccJob['status'] === 'ready'   // a verdict, not a job failure
+        && $hasReview === [];                                // never advanced to review
+})());
+check('engine: blocked compliance event carries reasons', (static function () use ($enEvents, $enCtx, $enBlockRun): bool {
+    $blocked = array_values(array_filter(
+        $enEvents->timelineForRun($enCtx, $enBlockRun),
+        static fn ($e) => $e['key'] === 'compliance.blocked',
+    ))[0] ?? null;
+
+    return $blocked !== null && ($blocked['params']['reason'] ?? '') !== ''
+        && ($blocked['params']['status'] ?? '') === 'block';
+})());
+
+echo "== Compliance: AutoApprovalGate (auto-approve + guardrails) ==\n";
+
+$gtDb = migratedDb($basePath);
+[$gtUser, $gtWs] = seedUser($gtDb, 'gt@example.com', $argonHash, 'GT WS');
+[$gtUser2, $gtWs2] = seedUser($gtDb, 'gt2@example.com', $argonHash, 'GT WS2');
+$gtNow = '2026-06-12T12:00:00Z';
+$gtClock = static fn (): string => $gtNow;
+$gtEvents = new EventLog($gtDb);
+$gtSettings = new WorkspaceSettings($gtDb);
+$gtGate = new AutoApprovalGate($gtDb, $gtEvents, $gtSettings, new QualityScore($gtDb, $gtClock));
+
+// seed a run + a compliance_check(ready, given status) + a render_review job
+$seedGateScenario = static function (Database $db, int $ws, int $userId, string $complianceStatus) use ($gtNow): array {
+    $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'WF', 'full', '[]', ?, ?)", [$ws, $gtNow, $gtNow]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$ws, $wf, $userId, $gtNow, $gtNow]);
+    $run = $db->lastInsertId();
+    $ccResult = json_encode(['status' => $complianceStatus, 'policy' => 'kuyash-v1', 'checks' => ['slop' => ['score' => 0.1]]], JSON_UNESCAPED_UNICODE);
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, result_json, run_after, created_at) VALUES (?, ?, 'COMPLIANCE', 11, 'compliance_check', 'ready', ?, ?, ?)", [$ws, $run, $ccResult, $gtNow, $gtNow]);
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, run_after, created_at) VALUES (?, ?, 'PUBLISH', 12, 'render_review', 'awaiting_approval', ?, ?)", [$ws, $run, $gtNow, $gtNow]);
+    $jobId = $db->lastInsertId();
+
+    return ['workspace_id' => $ws, 'run_id' => $run, 'id' => $jobId];
+};
+
+// manual mode → silent manual (no event)
+$gtSettings->setApprovalMode($gtWs, 'manual');
+check('gate: manual mode → manual decision, silent', (static function () use ($gtGate, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
+    $before = (int) $gtDb->one('SELECT COUNT(*) AS n FROM events')['n'];
+    $d = $gtGate->evaluate($job, $gtNow);
+    $after = (int) $gtDb->one('SELECT COUNT(*) AS n FROM events')['n'];
+
+    return !$d->approve && $d->path === GateDecision::PATH_MANUAL_MODE && $after === $before;
+})());
+
+// auto mode + clean pass → auto-approve with policy + score snapshot
+$gtSettings->setApprovalMode($gtWs, 'auto');
+$gtSettings->setDailyPostCap($gtWs, 5);
+check('gate: auto + pass → auto-approve carrying policy + score', (static function () use ($gtGate, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
+    $d = $gtGate->evaluate($job, $gtNow);
+
+    return $d->approve && $d->path === GateDecision::PATH_AUTO
+        && $d->policyVersion === 'kuyash-v1' && isset($d->score['quality']['score']);
+})());
+check('gate: auto + pass_with_ai_label → auto-approve (locked decision 1)', (static function () use ($gtGate, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass_with_ai_label');
+
+    return $gtGate->evaluate($job, $gtNow)->approve;
+})());
+check('gate: auto + warn → manual review (never auto)', (static function () use ($gtGate, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $d = $gtGate->evaluate($seedGateScenario($gtDb, $gtWs, $gtUser, 'warn'), $gtNow);
+
+    return !$d->approve && $d->path === GateDecision::PATH_NOT_CLEAN;
+})());
+check('gate: auto + block → manual review (never auto)', (static function () use ($gtGate, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    return !$gtGate->evaluate($seedGateScenario($gtDb, $gtWs, $gtUser, 'block'), $gtNow)->approve;
+})());
+
+// kill switch → deny + guardrail.kill_switch event
+check('gate: kill switch ON → deny + guardrail event', (static function () use ($gtGate, $gtSettings, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $gtSettings->setKillSwitch($gtWs, true);
+    $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
+    $d = $gtGate->evaluate($job, $gtNow);
+    $ev = $gtDb->one("SELECT key FROM events WHERE kind = 'guardrail' AND key = 'guardrail.kill_switch' AND run_id = ?", [$job['run_id']]);
+    $gtSettings->setKillSwitch($gtWs, false);
+
+    return !$d->approve && $d->path === GateDecision::PATH_KILL_SWITCH && $ev !== null;
+})());
+
+// daily cap: record one auto approval today, set cap 1 → next denied
+check('gate: daily cap reached → deny + guardrail event', (static function () use ($gtGate, $gtSettings, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $gtSettings->setDailyPostCap($gtWs, 1);
+    // a prior auto approval today (truthful: no user, policy stamp)
+    $prior = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
+    $gtDb->run("INSERT INTO approvals (workspace_id, run_id, job_id, node, decision, mode, decided_at, policy_version, score_json) VALUES (?, ?, ?, 'PUBLISH', 'approved', 'auto', ?, 'kuyash-v1', '{}')", [$gtWs, $prior['run_id'], $prior['id'], $gtNow]);
+    $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
+    $d = $gtGate->evaluate($job, $gtNow);
+    $ev = $gtDb->one("SELECT key FROM events WHERE key = 'guardrail.daily_cap_reached' AND run_id = ?", [$job['run_id']]);
+    $gtSettings->setDailyPostCap($gtWs, 5);
+
+    return !$d->approve && $d->path === GateDecision::PATH_DAILY_CAP && $ev !== null;
+})());
+check('gate: autoApprovalsToday counts only auto-approved rows for the day', (static function () use ($gtGate, $gtDb, $gtWs, $gtNow): bool {
+    // the prior loop left exactly 1 auto approval dated gtNow
+    return $gtGate->autoApprovalsToday($gtWs, $gtNow) === 1
+        && $gtGate->autoApprovalsToday($gtWs, '2026-07-01T00:00:00Z') === 0;
+})());
+
+// budget cap: seed a costly job this month, set a low cap → deny
+check('gate: month budget cap reached → deny + guardrail event', (static function () use ($gtGate, $gtSettings, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
+    $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
+    $gtDb->run("UPDATE jobs SET cost_cents = 200 WHERE id = ?", [$job['id']]);
+    $gtSettings->setBudgetCapCents($gtWs, 50);
+    $d = $gtGate->evaluate($job, $gtNow);
+    $ev = $gtDb->one("SELECT key FROM events WHERE key = 'guardrail.budget_cap_reached' AND run_id = ?", [$job['run_id']]);
+    $gtSettings->setBudgetCapCents($gtWs, null);
+
+    return !$d->approve && $d->path === GateDecision::PATH_BUDGET_CAP && $ev !== null;
+})());
+
+// quality breach → fall back to Manual (persisted) + event. Fresh DB so the
+// earlier gate scenarios' checks don't dilute the (deterministic) breach math.
+check('gate: quality breach flips workspace to Manual + fallback event', (static function () use ($basePath, $argonHash, $seedGateScenario, $gtNow): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'gtq@example.com', $argonHash, 'GTQ WS');
+    $settings = new WorkspaceSettings($db);
+    $gate = new AutoApprovalGate($db, new EventLog($db), $settings, new QualityScore($db, static fn (): string => $gtNow));
+    $settings->setApprovalMode($ws, 'auto');
+    // 5 blocked, high-slop checks → risk = 0.40*0.95 + 0.35*1.0 = 0.73 → score 27
+    for ($i = 0; $i < 5; $i++) {
+        $bj = $seedGateScenario($db, $ws, $u, 'pass');
+        $db->run("UPDATE jobs SET result_json = ? WHERE workspace_id = ? AND run_id = ? AND type = 'compliance_check'", [json_encode(['status' => 'block', 'checks' => ['slop' => ['score' => 0.95]]]), $ws, $bj['run_id']]);
+    }
+    $job = $seedGateScenario($db, $ws, $u, 'pass');
+    $d = $gate->evaluate($job, $gtNow);
+    $ev = $db->one("SELECT key FROM events WHERE key = 'guardrail.fallback_to_manual' AND run_id = ?", [$job['run_id']]);
+
+    return !$d->approve && $d->path === GateDecision::PATH_QUALITY_BREACH
+        && $settings->compliance($ws)['approval_mode'] === 'manual'   // persisted flip
+        && $ev !== null;
+})());
+check('gate: tenant isolation — gate reads only its own workspace state', (static function () use ($gtGate, $seedGateScenario, $gtSettings, $gtDb, $gtWs2, $gtUser2, $gtNow): bool {
+    // WS2 is untouched (manual default) → manual decision regardless of WS1 state
+    $gtSettings->setApprovalMode($gtWs2, 'auto');
+    $gtSettings->setDailyPostCap($gtWs2, 5);
+    $d = $gtGate->evaluate($seedGateScenario($gtDb, $gtWs2, $gtUser2, 'pass'), $gtNow);
+
+    return $d->approve && $gtGate->autoApprovalsToday($gtWs2, $gtNow) === 0;
+})());
+
+echo "== Compliance: QualityScore (formula, boundaries, sample floor) ==\n";
+
+$qsDb = migratedDb($basePath);
+[$qsUser, $qsWs] = seedUser($qsDb, 'qs@example.com', $argonHash, 'QS WS');
+$qsNow = '2026-06-12T12:00:00Z';
+$qsClock = static fn (): string => $qsNow;
+$qs = new QualityScore($qsDb, $qsClock);
+// a dummy run per workspace satisfies the jobs.run_id FK (compliance scoring
+// aggregates by workspace, so a single shared run is fine)
+$dummyRunFor = static function (Database $db, int $ws) use ($qsNow): int {
+    static $cache = [];
+    $key = spl_object_id($db) . ':' . $ws;
+    if (isset($cache[$key])) {
+        return $cache[$key];
+    }
+    $u = (int) $db->one('SELECT user_id FROM workspace_users WHERE workspace_id = ? LIMIT 1', [$ws])['user_id'];
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','full','[]',?,?)", [$ws, $qsNow, $qsNow]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'trend','[]','completed',?,?,?)", [$ws, $wf, $u, $qsNow, $qsNow]);
+
+    return $cache[$key] = $db->lastInsertId();
+};
+$seedCheck = static function (Database $db, int $ws, string $status, float $slop) use ($qsNow, $dummyRunFor): void {
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, result_json, run_after, created_at) VALUES (?, ?, 'COMPLIANCE', 11, 'compliance_check', 'ready', ?, ?, ?)", [$ws, $dummyRunFor($db, $ws), json_encode(['status' => $status, 'checks' => ['slop' => ['score' => $slop]]]), $qsNow, $qsNow]);
+};
+
+check('quality: empty windows → score 100, no breach', (static function () use ($qs, $qsWs): bool {
+    $q = $qs->compute($qsWs);
+
+    return $q['score'] === 100 && $q['sample'] === 0 && $q['breach'] === false;
+})());
+check('quality: slop_avg drives the score (0.40 weight)', (static function () use ($qs, $seedCheck, $qsDb, $qsWs): bool {
+    for ($i = 0; $i < 5; $i++) {
+        $seedCheck($qsDb, $qsWs, 'pass', 0.20);
+    }
+    // risk = 0.40*0.20 = 0.08 → score 92
+    $q = $qs->compute($qsWs);
+
+    return $q['score'] === 92 && $q['sample'] === 5 && abs($q['slop_avg'] - 0.20) < 1e-9 && $q['breach'] === false;
+})());
+check('quality: blocks + high slop breach below 60 with enough sample', (static function () use ($seedCheck, $qsDb, $qsWs, $qsClock): bool {
+    $db = migratedDb($GLOBALS['basePath']);
+    // 5 blocked, slop 0.9 → risk = 0.40*0.9 + 0.35*1.0 = 0.71 → score 29
+    $qs2 = new QualityScore($db, $qsClock);
+    [, $ws] = seedUser($db, 'qsb@example.com', $GLOBALS['argonHash'], 'QSB');
+    for ($i = 0; $i < 5; $i++) {
+        $seedCheck($db, $ws, 'block', 0.90);
+    }
+    $q = $qs2->compute($ws);
+
+    return $q['score'] === 29 && $q['breach'] === true && abs($q['block_rate'] - 1.0) < 1e-9;
+})());
+check('quality: sample floor — < 5 checks never breaches', (static function () use ($seedCheck, $qsClock): bool {
+    $db = migratedDb($GLOBALS['basePath']);
+    [, $ws] = seedUser($db, 'qsf@example.com', $GLOBALS['argonHash'], 'QSF');
+    $qs3 = new QualityScore($db, $qsClock);
+    for ($i = 0; $i < 4; $i++) {
+        $seedCheck($db, $ws, 'block', 0.99);
+    }
+    $q = $qs3->compute($ws);
+
+    return $q['score'] < 60 && $q['sample'] === 4 && $q['breach'] === false;
+})());
+check('quality: reject/fail rate component (rejected reviews + failed publishes)', (static function () use ($qsClock): bool {
+    $db = migratedDb($GLOBALS['basePath']);
+    [$u, $ws] = seedUser($db, 'qsr@example.com', $GLOBALS['argonHash'], 'QSR');
+    $now = '2026-06-12T12:00:00Z';
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','full','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'trend','[]','running',?,?,?)", [$ws, $wf, $u, $now, $now]);
+    $run = $db->lastInsertId();
+    // 2 render_review jobs, 1 rejected + 1 approved
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'PUBLISH',12,'render_review','ready',?,?)", [$ws, $run, $now, $now]);
+    $rj1 = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'PUBLISH',12,'render_review','ready',?,?)", [$ws, $run, $now, $now]);
+    $rj2 = $db->lastInsertId();
+    $db->run("INSERT INTO approvals (workspace_id,run_id,job_id,node,decision,mode,decided_by,decided_at) VALUES (?,?,?,'PUBLISH','rejected','manual',?,?)", [$ws, $run, $rj1, $u, $now]);
+    $db->run("INSERT INTO approvals (workspace_id,run_id,job_id,node,decision,mode,decided_by,decided_at) VALUES (?,?,?,'PUBLISH','approved','manual',?,?)", [$ws, $run, $rj2, $u, $now]);
+    // 2 publishes, 1 failed + 1 published
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at,finished_at) VALUES (?,?,'PUBLISH',14,'publish','failed',?,?,?)", [$ws, $run, $now, $now, $now]);
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at,finished_at) VALUES (?,?,'PUBLISH',14,'publish','published',?,?,?)", [$ws, $run, $now, $now, $now]);
+    // reject_fail_rate = (1+1)/(2+2) = 0.5
+    $q = (new QualityScore($db, $qsClock))->compute($ws);
+
+    return abs($q['reject_fail_rate'] - 0.5) < 1e-9;
+})());
+
+echo "== Compliance: PublishGateExecutor (defer semantics) ==\n";
+
+$pgDb = migratedDb($basePath);
+[$pgUser, $pgWs] = seedUser($pgDb, 'pg@example.com', $argonHash, 'PG WS');
+$pgNow = '2026-06-12T12:00:00Z';
+$pgClock = static fn (): string => $pgNow;
+$pgMock = new MockExecutor();
+$pgGate = new PublishGateExecutor($pgDb, $pgMock, $pgClock);
+
+$seedPublishRun = static function (Database $db, int $ws, int $userId, string $mode) use ($pgNow): array {
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','full','[]',?,?)", [$ws, $pgNow, $pgNow]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'trend','[]','running',?,?,?)", [$ws, $wf, $userId, $pgNow, $pgNow]);
+    $run = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'PUBLISH',14,'publish','processing',?,?)", [$ws, $run, $pgNow, $pgNow]);
+    $job = $db->lastInsertId();
+    if ($mode === 'auto') {
+        $db->run("INSERT INTO approvals (workspace_id,run_id,job_id,node,decision,mode,decided_at,policy_version,score_json) VALUES (?,?,?,'PUBLISH','approved','auto',?,'kuyash-v1','{}')", [$ws, $run, $job, $pgNow]);
+    } else {
+        $db->run("INSERT INTO approvals (workspace_id,run_id,job_id,node,decision,mode,decided_by,decided_at) VALUES (?,?,?,'PUBLISH','approved','manual',?,?)", [$ws, $run, $job, $userId, $pgNow]);
+    }
+
+    return ['workspace_id' => $ws, 'run_id' => $run, 'id' => $job, 'step' => 14, 'type' => 'publish', 'error_message' => null];
+};
+
+check('publish gate: manual-approved run passes straight through', (static function () use ($pgGate, $seedPublishRun, $pgDb, $pgWs, $pgUser): bool {
+    $job = $seedPublishRun($pgDb, $pgWs, $pgUser, 'manual');
+    $r = $pgGate->execute($job, ['final_render' => ['render_id' => 1]]);
+
+    return $r->status === 'published';
+})());
+check('publish gate: auto run with kill switch ON → deferred', (static function () use ($pgGate, $seedPublishRun, $pgDb, $pgWs, $pgUser): bool {
+    $pgDb->run('UPDATE workspaces SET kill_switch = 1 WHERE id = ?', [$pgWs]);
+    $job = $seedPublishRun($pgDb, $pgWs, $pgUser, 'auto');
+    $r = $pgGate->execute($job, []);
+    $pgDb->run('UPDATE workspaces SET kill_switch = 0 WHERE id = ?', [$pgWs]);
+
+    return $r->status === 'deferred' && $r->errorMessage === 'kill_switch' && $r->deferSeconds > 0;
+})());
+check('publish gate: auto run over daily published cap → deferred to midnight', (static function () use ($pgGate, $seedPublishRun, $pgDb, $pgWs, $pgUser, $pgNow): bool {
+    $pgDb->run('UPDATE workspaces SET daily_post_cap = 1 WHERE id = ?', [$pgWs]);
+    // one already published today (a real run satisfies the jobs.run_id FK)
+    $already = $seedPublishRun($pgDb, $pgWs, $pgUser, 'auto');
+    $pgDb->run("UPDATE jobs SET status = 'published', finished_at = ? WHERE id = ?", [$pgNow, $already['id']]);
+    $job = $seedPublishRun($pgDb, $pgWs, $pgUser, 'auto');
+    $r = $pgGate->execute($job, []);
+    $pgDb->run('UPDATE workspaces SET daily_post_cap = 2 WHERE id = ?', [$pgWs]);
+
+    return $r->status === 'deferred' && $r->errorMessage === 'daily_cap' && $r->deferSeconds > 0;
+})());
+
+// Engine.finalizeDeferred: queued back, no retry bump, event only on reason change
+$dfDb = migratedDb($basePath);
+[$dfUser, $dfWs] = seedUser($dfDb, 'df@example.com', $argonHash, 'DF WS');
+$dfNow = '2026-06-12T12:00:00Z';
+[$dfEngine] = makeRig($dfDb, new MockExecutor(), $dfNow);
+$dfDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','full','[]',?,?)", [$dfWs, $dfNow, $dfNow]);
+$dfWf = $dfDb->lastInsertId();
+$dfDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'trend','[]','running',?,?,?)", [$dfWs, $dfWf, $dfUser, $dfNow, $dfNow]);
+$dfRun = $dfDb->lastInsertId();
+$dfDb->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,retry_count,worker_id,run_after,created_at,started_at) VALUES (?,?,'PUBLISH',14,'publish','processing',1,'w:1',?,?,?)", [$dfWs, $dfRun, $dfNow, $dfNow, $dfNow]);
+$dfJobId = $dfDb->lastInsertId();
+$dfJob = $dfDb->one('SELECT * FROM jobs WHERE id = ?', [$dfJobId]);
+$dfEngine->finalize($dfJob, Kuyash\Workflow\JobResult::deferred('kill_switch', 300));
+check('defer: job returns to queued with future run_after, retry_count unchanged', (static function () use ($dfDb, $dfJobId, $dfNow): bool {
+    $j = $dfDb->one('SELECT * FROM jobs WHERE id = ?', [$dfJobId]);
+
+    return $j['status'] === 'queued' && (int) $j['retry_count'] === 1
+        && $j['worker_id'] === null && $j['run_after'] > $dfNow
+        && str_starts_with((string) $j['error_message'], 'deferred: kill_switch');
+})());
+check('defer: a guardrail.publish_deferred event is recorded on first defer', (int) $dfDb->one(
+    "SELECT COUNT(*) AS n FROM events WHERE key = 'guardrail.publish_deferred' AND job_id = ?", [$dfJobId],
+)['n'] === 1);
+// re-defer with the SAME reason → no new event (no spam)
+$dfJob2 = $dfDb->one('SELECT * FROM jobs WHERE id = ?', [$dfJobId]);
+$dfDb->run("UPDATE jobs SET status = 'processing', worker_id = 'w:1' WHERE id = ?", [$dfJobId]);
+$dfJob2 = $dfDb->one('SELECT * FROM jobs WHERE id = ?', [$dfJobId]);
+$dfEngine->finalize($dfJob2, Kuyash\Workflow\JobResult::deferred('kill_switch', 300));
+check('defer: re-defer with the same reason emits NO new event (no spam)', (int) $dfDb->one(
+    "SELECT COUNT(*) AS n FROM events WHERE key = 'guardrail.publish_deferred' AND job_id = ?", [$dfJobId],
+)['n'] === 1);
+
+echo "== Compliance: Auto-mode end-to-end (truthful records, publish) ==\n";
+
+$aeDb = migratedDb($basePath);
+[$aeUser, $aeWs] = seedUser($aeDb, 'ae@example.com', $argonHash, 'AE WS');
+$_SESSION = [];
+$aeCtx = new WorkspaceContext($aeDb);
+$aeCtx->set($aeWs);
+$aeWfRepo = new WorkflowRepository($aeDb, new WorkflowValidator());
+$aeWfRepo->ensureDefaults($aeCtx);
+$aeDistWf = $aeWfRepo->listFor($aeCtx)[1]['id'];
+$aeRuns = new RunRepository($aeDb);
+$aeJobs = new JobRepository($aeDb);
+$aeEvents = new EventLog($aeDb);
+(new WorkspaceSettings($aeDb))->setApprovalMode($aeWs, 'auto');
+$aeNow = '2026-06-12T12:00:00Z';
+[$aeEngine, $aeWorker] = makeRig($aeDb, new MockExecutor(), $aeNow, null, true); // autoCompliance ON
+$aeAsset = seedReadyVideo($aeDb, $aeWs, 'AE clip');
+$aeRun = $aeEngine->startRun($aeCtx, $aeDistWf, $aeAsset, $aeUser);
+while ($aeWorker->tick()) {
+}
+check('auto e2e: distribution run auto-approves + publishes without human input', (static function () use ($aeRuns, $aeJobs, $aeCtx, $aeRun): bool {
+    $run = $aeRuns->find($aeCtx, $aeRun);
+    $jobs = $aeJobs->jobsForRun($aeCtx, $aeRun);
+    $statuses = array_column($jobs, 'status', 'type');
+
+    return $run['status'] === 'completed'
+        && ($statuses['render_review'] ?? '') === 'ready'
+        && ($statuses['publish'] ?? '') === 'published';
+})());
+check('auto e2e: approval record is TRUTHFUL (mode auto, no user, policy + score)', (static function () use ($aeRuns, $aeCtx, $aeRun): bool {
+    $records = $aeRuns->approvalsForRun($aeCtx, $aeRun);
+
+    return count($records) === 1 && $records[0]['mode'] === 'auto'
+        && $records[0]['decided_by'] === null && $records[0]['decided_by_email'] === null
+        && $records[0]['policy_version'] === 'kuyash-v1'
+        && str_contains((string) $records[0]['score_json'], 'quality');
+})());
+check('auto e2e: approval.auto_approved event recorded (compliance kind)', (static function () use ($aeEvents, $aeCtx, $aeRun): bool {
+    $auto = array_values(array_filter(
+        $aeEvents->timelineForRun($aeCtx, $aeRun),
+        static fn ($e) => $e['key'] === 'approval.auto_approved',
+    ));
+
+    return count($auto) === 1 && $auto[0]['kind'] === 'compliance'
+        && ($auto[0]['params']['policy'] ?? '') === 'kuyash-v1';
+})());
+
+echo "== Compliance: DigestReport (derive-only daily read-model) ==\n";
+
+$dgDigest = new DigestReport($aeDb, new QualityScore($aeDb, static fn (): string => $aeNow));
+$dgReport = $dgDigest->forDate($aeCtx, '2026-06-12');
+check('digest: lists the day\'s auto-approved item with policy + run', count($dgReport['auto_approved']) === 1
+    && $dgReport['auto_approved'][0]['run_id'] === $aeRun
+    && $dgReport['auto_approved'][0]['policy_version'] === 'kuyash-v1');
+check('digest: lists the day\'s auto-published job', count($dgReport['auto_published']) === 1
+    && $dgReport['auto_published'][0]['run_id'] === $aeRun);
+check('digest: empty on a different date', (static function () use ($dgDigest, $aeCtx): bool {
+    $other = $dgDigest->forDate($aeCtx, '2026-06-11');
+
+    return $other['auto_approved'] === [] && $other['auto_published'] === [];
+})());
+check('digest: tenant isolation — another workspace sees nothing of AE', (static function () use ($aeDb, $aeNow): bool {
+    $_SESSION = [];
+    [$dgU, $dgWs] = seedUser($aeDb, 'dg@example.com', $GLOBALS['argonHash'], 'DG WS');
+    $ctx = new WorkspaceContext($aeDb);
+    $ctx->set($dgWs);
+    $r = (new DigestReport($aeDb, new QualityScore($aeDb, static fn (): string => $aeNow)))->forDate($ctx, '2026-06-12');
+
+    return $r['auto_approved'] === [] && $r['auto_published'] === [];
+})());
+
+echo "== Compliance: truthful badges in UI (runs/show, queue) ==\n";
+
+$_SESSION = [];
+$aeCtx->set($aeWs);
+$badgeRuns = new RunRepository($aeDb);
+$badgeView = new View($basePath . '/templates');
+$badgeBody = $badgeView->render('runs/show', [
+    'title' => 'x', 'active' => 'queue', 'workspaceName' => 'AE', 'csrfField' => '',
+    'flashes' => [], 'run' => $badgeRuns->find($aeCtx, $aeRun),
+    'jobs' => $aeJobs->jobsForRun($aeCtx, $aeRun),
+    'timeline' => $aeEvents->timelineForRun($aeCtx, $aeRun),
+    'approvals' => $badgeRuns->approvalsForRun($aeCtx, $aeRun),
+], 'layout/app');
+check('badge: auto record renders "Auto-approved by compliance agent", NEVER "by you"', (static function () use ($badgeBody): bool {
+    return str_contains($badgeBody, 'Auto-approved by compliance agent')
+        && str_contains($badgeBody, 'policy kuyash-v1')
+        && !str_contains($badgeBody, 'Approved by you');
+})());
+
+// a manual run for the opposite badge
+$_SESSION = [];
+[$mbUser, $mbWs] = seedUser($aeDb, 'mb@example.com', $argonHash, 'MB WS');
+$mbCtx = new WorkspaceContext($aeDb);
+$mbCtx->set($mbWs);
+$mbWfRepo = new WorkflowRepository($aeDb, new WorkflowValidator());
+$mbWfRepo->ensureDefaults($mbCtx);
+$mbDistWf = $mbWfRepo->listFor($mbCtx)[1]['id'];
+$mbNow = '2026-06-12T13:00:00Z';
+[$mbEngine, $mbWorker] = makeRig($aeDb, new MockExecutor(), $mbNow); // manual (no autoGate)
+$mbAsset = seedReadyVideo($aeDb, $mbWs, 'MB clip');
+$mbRun = $mbEngine->startRun($mbCtx, $mbDistWf, $mbAsset, $mbUser);
+while ($mbWorker->tick()) {
+}
+$mbEngine->approve($mbCtx, $aeJobs->awaitingApproval($mbCtx)[0]['id'], $mbUser, 'mb@example.com');
+while ($mbWorker->tick()) {
+}
+$mbBody = $badgeView->render('runs/show', [
+    'title' => 'x', 'active' => 'queue', 'workspaceName' => 'MB', 'csrfField' => '',
+    'flashes' => [], 'run' => $badgeRuns->find($mbCtx, $mbRun),
+    'jobs' => $aeJobs->jobsForRun($mbCtx, $mbRun),
+    'timeline' => $aeEvents->timelineForRun($mbCtx, $mbRun),
+    'approvals' => $badgeRuns->approvalsForRun($mbCtx, $mbRun),
+], 'layout/app');
+check('badge: manual record renders "Approved by you · email", NEVER the agent', (static function () use ($mbBody): bool {
+    return str_contains($mbBody, 'Approved by you') && str_contains($mbBody, 'mb@example.com')
+        && !str_contains($mbBody, 'Auto-approved by compliance agent');
+})());
+
+echo "== Compliance: SettingsController + DigestController (unit) ==\n";
+
+$_SESSION = [];
+$_SESSION['auth_user_id'] = $aeUser;
+$aeCtx->set($aeWs);
+$scSettings = new WorkspaceSettings($aeDb);
+$scQuality = new QualityScore($aeDb, static fn (): string => $aeNow);
+$scGate = new AutoApprovalGate($aeDb, $aeEvents, $scSettings, $scQuality);
+$scAuth = new Auth($aeDb, new LoginThrottle($aeDb), $aeCtx);
+$settingsCtl = new SettingsController($badgeView, $scSettings, $scQuality, $scGate, $aeEvents, $aeCtx, $scAuth, new Csrf(), new Flash());
+
+check('settings ctl: index renders mode, policy, quality, auto-slots', (static function () use ($settingsCtl): bool {
+    $body = $settingsCtl->index()->body();
+
+    return str_contains($body, 'Approval mode') && str_contains($body, 'kuyash-v1')
+        && str_contains($body, 'Quality score') && str_contains($body, 'auto slots used today')
+        && str_contains($body, 'Kill switch');
+})());
+check('settings ctl: save valid settings persists + flashes success', (static function () use ($settingsCtl, $scSettings, $aeWs): bool {
+    $_POST = ['approval_mode' => 'manual', 'daily_post_cap' => '3', 'budget_cap_usd' => '25'];
+    $r = $settingsCtl->save();
+    $_POST = [];
+    $s = $scSettings->compliance($aeWs);
+
+    return $r->status() === 303 && $s['approval_mode'] === 'manual'
+        && $s['daily_post_cap'] === 3 && $s['budget_cap_cents'] === 2500;
+})());
+check('settings ctl: invalid cap → error flash, nothing changed', (static function () use ($settingsCtl, $scSettings, $aeWs): bool {
+    $before = $scSettings->compliance($aeWs);
+    $_POST = ['approval_mode' => 'auto', 'daily_post_cap' => '99', 'budget_cap_usd' => ''];
+    $r = $settingsCtl->save();
+    $_POST = [];
+    $after = $scSettings->compliance($aeWs);
+
+    return $r->status() === 303 && $after['approval_mode'] === $before['approval_mode']
+        && $after['daily_post_cap'] === $before['daily_post_cap'];
+})());
+check('settings ctl: mode change is audited (guardrail event with user)', (static function () use ($settingsCtl, $aeDb, $aeWs): bool {
+    $_POST = ['approval_mode' => 'auto', 'daily_post_cap' => '2', 'budget_cap_usd' => ''];
+    $settingsCtl->save();
+    $_POST = [];
+    $ev = $aeDb->one("SELECT params_json FROM events WHERE workspace_id = ? AND key = 'guardrail.approval_mode_changed' ORDER BY id DESC LIMIT 1", [$aeWs]);
+
+    return $ev !== null && str_contains((string) $ev['params_json'], 'ae@example.com');
+})());
+check('settings ctl: kill switch POST flips state + writes audit event', (static function () use ($settingsCtl, $scSettings, $aeDb, $aeWs): bool {
+    $_POST = ['state' => 'on'];
+    $settingsCtl->killSwitch();
+    $_POST = [];
+    $on = $scSettings->compliance($aeWs)['kill_switch'] === true;
+    $ev = $aeDb->one("SELECT key FROM events WHERE workspace_id = ? AND key = 'guardrail.kill_switch_on' ORDER BY id DESC LIMIT 1", [$aeWs]);
+    $_POST = ['state' => 'off'];
+    $settingsCtl->killSwitch();
+    $_POST = [];
+
+    return $on && $ev !== null && $scSettings->compliance($aeWs)['kill_switch'] === false;
+})());
+
+$digestCtl = new DigestController($badgeView, new DigestReport($aeDb, $scQuality), $aeCtx, new Csrf(), new Flash());
+check('digest ctl: renders the day with the auto-approved item', (static function () use ($digestCtl): bool {
+    $_GET = ['date' => '2026-06-12'];
+    $body = $digestCtl->index()->body();
+    $_GET = [];
+
+    return str_contains($body, 'Daily digest') && str_contains($body, 'Auto-approved by compliance agent');
+})());
+check('digest ctl: a malformed date falls back to today (no error)', (static function () use ($digestCtl): bool {
+    $_GET = ['date' => 'not-a-date'];
+    $status = $digestCtl->index()->status();
+    $_GET = [];
+
+    return $status === 200;
+})());
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {

@@ -15,6 +15,7 @@ final class JobResult
     public const STATUS_AWAITING_APPROVAL = 'awaiting_approval';
     public const STATUS_FAILED = 'failed';
     public const STATUS_PUBLISHED = 'published';
+    public const STATUS_DEFERRED = 'deferred';
 
     /** @param array<string, mixed> $result */
     private function __construct(
@@ -23,6 +24,7 @@ final class JobResult
         public readonly ?string $errorMessage = null,
         public readonly ?int $costCents = null,
         public readonly ?string $provider = null,
+        public readonly int $deferSeconds = 0,
     ) {
     }
 
@@ -53,5 +55,16 @@ final class JobResult
     public static function failed(string $errorMessage, ?string $provider = null): self
     {
         return new self(self::STATUS_FAILED, [], $errorMessage, null, $provider);
+    }
+
+    /**
+     * A guardrail HALT, not a failure (Phase 9): the job goes back to 'queued'
+     * with run_after = now + $delaySeconds and NO retry_count increment. The
+     * reason lands in error_message ("deferred: …") so the queue UI explains
+     * the wait truthfully.
+     */
+    public static function deferred(string $reason, int $delaySeconds): self
+    {
+        return new self(self::STATUS_DEFERRED, [], $reason, null, null, max(1, $delaySeconds));
     }
 }
