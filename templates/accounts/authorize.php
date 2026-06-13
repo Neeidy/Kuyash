@@ -13,29 +13,27 @@ use Kuyash\Core\View;
 ?>
 <div class="screen-head">
   <div>
-    <h1>Authorize <?= View::e($platform) ?></h1>
-    <p class="screen-sub">Mock Zernio authorization. Confirm to connect a <?= View::e($platform) ?>
-      account reference. No password or token is requested or stored.</p>
+    <h1><?= View::t('authz.title', ['platform' => $platform]) ?></h1>
+    <p class="screen-sub"><?= View::t('authz.subtitle', ['platform' => $platform]) ?></p>
   </div>
   <div class="screen-head__actions">
-    <a class="btn btn--ghost btn--sm" href="/accounts">Cancel</a>
+    <a class="btn btn--ghost btn--sm" href="/accounts"><?= View::t('authz.cancel') ?></a>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Connect to <?= View::e($platform) ?></h2></div>
+  <div class="card__head"><h2><?= View::t('authz.connect_to', ['platform' => $platform]) ?></h2></div>
   <div class="card__body">
-    <p class="muted">In production this is the platform's own OAuth screen (handled by Zernio).
-      Here it is mocked: choose a handle to identify the account.</p>
+    <p class="muted"><?= View::t('authz.desc') ?></p>
     <form method="get" action="/accounts/callback" class="settings-form">
       <input type="hidden" name="platform" value="<?= View::e($platform) ?>">
       <input type="hidden" name="state" value="<?= View::e($state) ?>">
       <input type="hidden" name="code" value="mock_authorization_code">
       <label class="field">
-        <span class="field__label">Account handle (optional)</span>
-        <input type="text" name="handle" placeholder="@your_<?= View::e($platform) ?>_handle" maxlength="64">
+        <span class="field__label"><?= View::t('authz.handle_label') ?></span>
+        <input type="text" name="handle" placeholder="<?= View::t('authz.handle_placeholder', ['platform' => $platform]) ?>" maxlength="64">
       </label>
-      <button type="submit" class="btn btn--primary">Authorize &amp; connect</button>
+      <button type="submit" class="btn btn--primary"><?= View::t('authz.authorize_connect') ?></button>
     </form>
   </div>
 </div>

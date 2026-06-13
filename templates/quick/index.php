@@ -15,46 +15,43 @@ use Kuyash\Core\View;
 ?>
 <div class="screen-head">
   <div>
-    <h1>Quick Create</h1>
-    <p class="screen-sub">Animate a photo into a <strong>15–45&nbsp;s vertical (9:16)</strong> AI clip, then send it
-      straight through compliance and publishing. No trend, script or voice — your prompt is the brief.</p>
+    <h1><?= View::t('quick.title') ?></h1>
+    <p class="screen-sub"><?= View::t('quick.subtitle_1') ?> <strong><?= View::t('quick.subtitle_strong') ?></strong> <?= View::t('quick.subtitle_2') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--neutral num" title="Estimated credit cost before this run starts">~<?= View::e(Format::cents($estimateCents)) ?> est.</span>
+    <span class="chip chip--neutral num" title="<?= View::t('quick.est_title') ?>">~<?= View::e(Format::cents($estimateCents)) ?> <?= View::t('quick.est') ?></span>
   </div>
 </div>
 
 <div class="callout callout--ai" role="note">
   <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 11h.01"/></svg></span>
-  <div><strong>This is realistic AI media.</strong> The platform <strong>AI label</strong> is set automatically on
-    publish — it cannot be turned off (compliance rule). Generation is credit-gated: an over-budget run is blocked
-    before it starts (see <a href="/usage">Usage</a>).</div>
+  <div><strong><?= View::t('quick.ai_callout_1') ?></strong> <?= View::t('quick.ai_callout_2') ?> <strong><?= View::t('quick.ai_callout_strong') ?></strong> <?= View::t('quick.ai_callout_3') ?> <a href="/usage"><?= View::t('nav.usage') ?></a><?= View::t('quick.ai_callout_4') ?></div>
 </div>
 
 <form class="card" method="post" action="/quick" enctype="multipart/form-data">
   <?= $csrfField ?>
-  <div class="card__head"><h2>Photo &amp; prompt</h2>
-    <span class="card__action"><span class="chip chip--ai">AI label always on</span></span>
+  <div class="card__head"><h2><?= View::t('quick.photo_prompt') ?></h2>
+    <span class="card__action"><span class="chip chip--ai"><?= View::t('quick.ai_always_on') ?></span></span>
   </div>
   <div class="card__body">
 
     <label class="field">
-      <span class="field__label">Motion prompt</span>
-      <span class="field__hint">Required · max <?= (int) $maxPrompt ?> characters.</span>
+      <span class="field__label"><?= View::t('quick.motion_prompt') ?></span>
+      <span class="field__hint"><?= View::t('quick.prompt_hint', ['n' => (int) $maxPrompt]) ?></span>
       <textarea name="prompt" rows="3" maxlength="<?= (int) $maxPrompt ?>" required
-        placeholder="e.g. slow cinematic push-in, soft daylight, gentle parallax"></textarea>
+        placeholder="<?= View::t('quick.prompt_placeholder') ?>"></textarea>
     </label>
 
     <label class="field">
-      <span class="field__label">Upload a photo</span>
-      <span class="field__hint"><?= View::e($photoLabel) ?> · up to <?= View::e($maxPhotoLabel) ?>. Leave this empty to use a picked photo below.</span>
+      <span class="field__label"><?= View::t('quick.upload_photo') ?></span>
+      <span class="field__hint"><?= View::t('quick.upload_hint', ['label' => $photoLabel, 'max' => $maxPhotoLabel]) ?></span>
       <input type="file" name="photo" accept="<?= View::e($acceptAttr) ?>">
     </label>
 
     <?php if ($photos !== []): ?>
-    <fieldset class="field" role="radiogroup" aria-label="Pick a photo from your library">
-      <span class="field__label">…or pick a photo from your library</span>
-      <span class="field__hint">An uploaded file (above) always takes precedence over a picked photo.</span>
+    <fieldset class="field" role="radiogroup" aria-label="<?= View::t('quick.pick_aria') ?>">
+      <span class="field__label"><?= View::t('quick.or_pick') ?></span>
+      <span class="field__hint"><?= View::t('quick.precedence_hint') ?></span>
       <div class="photo-pick">
         <?php foreach ($photos as $p): ?>
         <label class="photo-pick__item">
@@ -66,13 +63,12 @@ use Kuyash\Core\View;
       </div>
     </fieldset>
     <?php else: ?>
-    <p class="note">No photos in your library yet — upload one above, or add some in the
-      <a href="/library">Library</a>.</p>
+    <p class="note"><?= View::t('quick.no_photos_1') ?> <a href="/library"><?= View::t('nav.library') ?></a><?= View::t('quick.no_photos_2') ?></p>
     <?php endif; ?>
 
   </div>
   <div class="card__foot">
-    <span class="muted">The clip lands in the <a href="/queue">queue</a> for your approval before it publishes.</span>
-    <button type="submit" class="btn btn--primary">Generate AI clip</button>
+    <span class="muted"><?= View::t('quick.foot_1') ?> <a href="/queue"><?= View::t('quick.queue_word') ?></a> <?= View::t('quick.foot_2') ?></span>
+    <button type="submit" class="btn btn--primary"><?= View::t('quick.generate') ?></button>
   </div>
 </form>

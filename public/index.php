@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Kuyash\Auth\Auth;
+use Kuyash\Core\Config;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\ErrorHandler;
+use Kuyash\Core\I18n;
 use Kuyash\Core\Response;
 use Kuyash\Core\Router;
 use Kuyash\Core\Session;
@@ -39,6 +42,14 @@ try {
     // fixed order (security-critical): session before CSRF (the token lives in
     // it), CSRF gate before dispatch (a future route can never forget the check)
     $container->get(Session::class)->start();
+
+    // Activate the UI locale for this request (Phase 14): the logged-in user's
+    // session-cached locale, else the configured default. I18n clamps unknown
+    // values to EN. Set once here so every controller renders in one language.
+    I18n::setLocale(I18n::resolve(
+        $container->get(Auth::class)->sessionLocale(),
+        (string) $container->get(Config::class)->get('app.locale', I18n::DEFAULT),
+    ));
 
     $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
     if ($method === 'POST') {

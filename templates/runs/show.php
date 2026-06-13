@@ -56,29 +56,29 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 ?>
 <div class="screen-head">
   <div>
-    <h1>Run #<?= (int) $run['id'] ?> — <?= View::e($run['workflow_name']) ?></h1>
+    <h1><?= View::t('runs.run_n', ['n' => (int) $run['id']]) ?> — <?= View::e($run['workflow_name']) ?></h1>
     <p class="screen-sub mono"><?= View::e($run['workflow_template']) ?> ·
-      entity: <?= View::e($run['entity_type']) ?><?= $run['entity_id'] !== null ? ' #' . (int) $run['entity_id'] : '' ?> ·
-      started <?= View::e($run['created_at']) ?></p>
+      <?= View::t('runs.entity_label') ?> <?= View::e($run['entity_type']) ?><?= $run['entity_id'] !== null ? ' #' . (int) $run['entity_id'] : '' ?> ·
+      <?= View::t('runs.started_label') ?> <?= View::e($run['created_at']) ?></p>
   </div>
   <div class="screen-head__actions">
     <span class="chip chip--<?= Format::statusTone((string) $run['status']) ?>"><span class="dot dot--<?= Format::statusTone((string) $run['status']) ?>"></span><?= View::e(Messages::status((string) $run['status'])) ?></span>
-    <a class="btn btn--ghost btn--sm" href="/queue">Back to queue</a>
+    <a class="btn btn--ghost btn--sm" href="/queue"><?= View::t('runs.back_to_queue') ?></a>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Node track</h2></div>
+  <div class="card__head"><h2><?= View::t('runs.node_track') ?></h2></div>
   <div class="card__body">
     <div class="wf-canvas">
       <div class="node-track">
         <?php foreach ($run['nodes'] as $node): ?>
-        <?php $state = $nodeState((string) $node['node']); ?>
+        <?php $state = $nodeState((string) $node['node']); $stateLabel = View::t('runs.state_' . $state); ?>
         <div class="node-wrap">
           <div class="node<?= ($node['locked'] ?? false) ? ' node--locked' : '' ?><?= $state === 'pending' ? ' node--pending' : '' ?>">
-            <span class="node__status node__status--<?= View::e($state) ?>" title="<?= View::e($state) ?>"></span>
+            <span class="node__status node__status--<?= View::e($state) ?>" title="<?= $stateLabel ?>"></span>
             <span class="node__name mono"><?= View::e($node['node']) ?></span>
-            <span class="node__desc"><?= View::e($state) ?></span>
+            <span class="node__desc"><?= $stateLabel ?></span>
           </div>
           <span class="node-connector" aria-hidden="true"></span>
         </div>
@@ -90,7 +90,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 
 <?php if ($contentByType !== []): ?>
 <div class="card">
-  <div class="card__head"><h2>Generated content</h2></div>
+  <div class="card__head"><h2><?= View::t('runs.generated_content') ?></h2></div>
   <div class="card__body">
     <?php
     $idea = $contentByType['idea_generation']['result'] ?? [];
@@ -100,7 +100,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
     ?>
     <?php if (isset($idea['hook']) || isset($idea['idea'])): ?>
     <div class="content-block">
-      <h3 class="content-block__label">Idea</h3>
+      <h3 class="content-block__label"><?= View::t('runs.idea') ?></h3>
       <?php if (isset($idea['hook'])): ?><p class="content-block__hook">“<?= View::e((string) $idea['hook']) ?>”</p><?php endif; ?>
       <?php if (isset($idea['idea'])): ?><p class="content-block__body"><?= View::e((string) $idea['idea']) ?></p><?php endif; ?>
     </div>
@@ -108,8 +108,8 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 
     <?php if (isset($script['script'])): ?>
     <div class="content-block">
-      <h3 class="content-block__label">Script
-        <?php if (isset($script['word_count'])): ?><span class="chip chip--faint num"><?= (int) $script['word_count'] ?> words · ~<?= View::e((string) ($script['estimated_duration_s'] ?? '?')) ?>s</span><?php endif; ?>
+      <h3 class="content-block__label"><?= View::t('runs.script') ?>
+        <?php if (isset($script['word_count'])): ?><span class="chip chip--faint num"><?= (int) $script['word_count'] ?> <?= View::t('queue.words') ?> · ~<?= View::e((string) ($script['estimated_duration_s'] ?? '?')) ?>s</span><?php endif; ?>
         <?php if (isset($script['prompt_version'])): ?><span class="chip chip--faint mono"><?= View::e((string) $script['prompt_version']) ?></span><?php endif; ?>
       </h3>
       <blockquote class="content-block__script"><?= nl2br(View::e((string) $script['script'])) ?></blockquote>
@@ -118,7 +118,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 
     <?php if ($captions !== []): ?>
     <div class="content-block">
-      <h3 class="content-block__label">Captions (per platform)</h3>
+      <h3 class="content-block__label"><?= View::t('runs.captions') ?></h3>
       <dl class="caption-grid">
         <?php foreach ($captions as $platform => $caption): ?>
         <div class="caption-grid__row">
@@ -132,26 +132,26 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 
     <?php if ($hashtags !== []): ?>
     <div class="content-block">
-      <h3 class="content-block__label">Hashtags</h3>
+      <h3 class="content-block__label"><?= View::t('runs.hashtags') ?></h3>
       <div class="tag-row">
         <?php foreach ($hashtags as $tag): ?><span class="tag"><?= View::e((string) $tag) ?></span><?php endforeach; ?>
       </div>
     </div>
     <?php endif; ?>
-    <p class="note">All content is generated mock-first; provider and any real cost are shown per job below.</p>
+    <p class="note"><?= View::t('runs.content_note') ?></p>
   </div>
 </div>
 <?php endif; ?>
 
 <div class="card">
-  <div class="card__head"><h2>Jobs</h2></div>
+  <div class="card__head"><h2><?= View::t('queue.jobs') ?></h2></div>
   <div class="card__body">
     <ul class="job-list">
       <?php foreach ($jobs as $job): ?>
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type mono"><?= (int) $job['step'] ?>. <?= View::e($job['type']) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity"><?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · provider: ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
+          <span class="job-row__entity"><?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::t('runs.provider_label') . ' ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
           <?php if ($job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?></span>
           <?php endif; ?>
@@ -165,7 +165,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 
 <?php if ($posts !== []): ?>
 <div class="card">
-  <div class="card__head"><h2>Published targets</h2>
+  <div class="card__head"><h2><?= View::t('runs.published_targets') ?></h2>
     <span class="card__action"><span class="chip chip--faint num"><?= count($posts) ?></span></span>
   </div>
   <div class="card__body">
@@ -176,25 +176,24 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
           <span class="job-row__type mono"><?= View::e((string) $post['account_handle']) ?>
             <span class="muted">· <?= View::e((string) $post['platform']) ?></span></span>
           <span class="job-row__entity">
-            <?php if (($post['ai_label_applied'] ?? false)): ?><span class="chip chip--ai">AI label set</span> <?php endif; ?>
-            <?php if (($post['scheduled_for'] ?? null) !== null): ?>scheduled <?= View::e(substr((string) $post['scheduled_for'], 0, 16)) ?>Z · <?php endif; ?>
-            <?php if (preg_match('#^https?://#i', (string) ($post['external_url'] ?? '')) === 1): ?><a href="<?= View::e((string) $post['external_url']) ?>" rel="noopener noreferrer nofollow" target="_blank">view post</a><?php endif; ?>
+            <?php if (($post['ai_label_applied'] ?? false)): ?><span class="chip chip--ai"><?= View::t('runs.ai_label_set') ?></span> <?php endif; ?>
+            <?php if (($post['scheduled_for'] ?? null) !== null): ?><?= View::t('runs.scheduled_label') ?> <?= View::e(substr((string) $post['scheduled_for'], 0, 16)) ?>Z · <?php endif; ?>
+            <?php if (preg_match('#^https?://#i', (string) ($post['external_url'] ?? '')) === 1): ?><a href="<?= View::e((string) $post['external_url']) ?>" rel="noopener noreferrer nofollow" target="_blank"><?= View::t('runs.view_post') ?></a><?php endif; ?>
             <?php if (($post['error_message'] ?? null) !== null): ?><span class="job-row__error"><?= View::e((string) $post['error_message']) ?></span><?php endif; ?>
           </span>
         </div>
-        <span class="chip chip--<?= $postTone((string) $post['status']) ?>"><span class="dot dot--<?= $postTone((string) $post['status']) ?>"></span><?= View::e((string) $post['status']) ?></span>
+        <span class="chip chip--<?= $postTone((string) $post['status']) ?>"><span class="dot dot--<?= $postTone((string) $post['status']) ?>"></span><?= View::e(Messages::status((string) $post['status'])) ?></span>
       </li>
       <?php endforeach; ?>
     </ul>
-    <p class="note">One row per connected account. AI labels are applied per platform exactly when
-      compliance required them; failures are recorded per target without failing the whole run.</p>
+    <p class="note"><?= View::t('runs.targets_note') ?></p>
   </div>
 </div>
 <?php endif; ?>
 
 <?php if ($approvals !== []): ?>
 <div class="card">
-  <div class="card__head"><h2>Approval records</h2></div>
+  <div class="card__head"><h2><?= View::t('runs.approval_records') ?></h2></div>
   <div class="card__body">
     <ul class="job-list">
       <?php foreach ($approvals as $approval): ?>
@@ -207,16 +206,16 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type mono"><?= View::e($approval['node']) ?></span>
-          <span class="job-row__entity">mode: <?= View::e($approval['mode']) ?><?php if ($isAuto && isset($scoreSnap['quality']['score'])): ?> · quality score <?= (int) $scoreSnap['quality']['score'] ?><?php endif; ?></span>
+          <span class="job-row__entity"><?= View::t('digest.mode_label') ?> <?= View::e($approval['mode']) ?><?php if ($isAuto && isset($scoreSnap['quality']['score'])): ?> · <?= View::t('runs.quality_score_label') ?> <?= (int) $scoreSnap['quality']['score'] ?><?php endif; ?></span>
         </div>
         <?php if ($isAuto): ?>
         <span class="chip chip--ai chip--record">
-          Auto-approved by compliance agent (policy <?= View::e((string) ($approval['policy_version'] ?? '?')) ?>)
+          <?= View::t('digest.approved_by_agent', ['policy' => (string) ($approval['policy_version'] ?? '?')]) ?>
           · <?= View::e(substr((string) $approval['decided_at'], 0, 10) . ' ' . Format::utcTime((string) $approval['decided_at'])) ?>
         </span>
         <?php else: ?>
         <span class="chip chip--<?= $approval['decision'] === 'approved' ? 'ok' : 'err' ?> chip--record">
-          <?= $approval['decision'] === 'approved' ? 'Approved by you' : 'Rejected by you' ?>
+          <?= $approval['decision'] === 'approved' ? View::t('runs.approved_by_you') : View::t('runs.rejected_by_you') ?>
           · <?= View::e((string) ($approval['decided_by_email'] ?? '?')) ?>
           · <?= View::e(substr((string) $approval['decided_at'], 0, 10) . ' ' . Format::utcTime((string) $approval['decided_at'])) ?>
         </span>
@@ -224,20 +223,18 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       </li>
       <?php endforeach; ?>
     </ul>
-    <p class="note">Records reflect what actually happened: manual decisions carry the deciding
-      account; auto-approvals are labelled as the compliance agent with their policy version —
-      never as a human.</p>
+    <p class="note"><?= View::t('runs.records_note') ?></p>
   </div>
 </div>
 <?php endif; ?>
 
 <div class="card">
-  <div class="card__head"><h2>Event timeline</h2>
-    <span class="card__action"><span class="chip chip--faint">append-only</span></span>
+  <div class="card__head"><h2><?= View::t('runs.event_timeline') ?></h2>
+    <span class="card__action"><span class="chip chip--faint"><?= View::t('runs.append_only') ?></span></span>
   </div>
   <div class="card__body">
     <?php if ($timeline === []): ?>
-    <p class="muted">No events recorded.</p>
+    <p class="muted"><?= View::t('runs.no_events') ?></p>
     <?php else: ?>
     <div class="tl">
       <?php foreach ($timeline as $event): ?>

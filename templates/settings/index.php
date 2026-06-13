@@ -16,40 +16,37 @@ $killOn = $settings['kill_switch'];
 ?>
 <div class="screen-head">
   <div>
-    <h1>Settings</h1>
-    <p class="screen-sub">Approval mode and autonomy guardrails. Manual is the default —
-      Auto lets the compliance agent approve clean renders, within the caps below.</p>
+    <h1><?= View::t('settings.title') ?></h1>
+    <p class="screen-sub"><?= View::t('settings.subtitle') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--<?= $isAuto ? 'warn' : 'ok' ?>"><span class="dot"></span>mode: <?= View::e($settings['approval_mode']) ?></span>
-    <span class="chip chip--faint mono">policy <?= View::e($policyVersion) ?></span>
+    <span class="chip chip--<?= $isAuto ? 'warn' : 'ok' ?>"><span class="dot"></span><?= View::t('digest.mode_label') ?> <?= View::e($settings['approval_mode']) ?></span>
+    <span class="chip chip--faint mono"><?= View::t('digest.policy_label') ?> <?= View::e($policyVersion) ?></span>
   </div>
 </div>
 
 <?php if ($killOn): ?>
 <div class="callout callout--err callout--banner" role="alert">
   <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13.5h13z"/><path d="M8 6.5V10M8 12h.01"/></svg></span>
-  <div><strong>Kill switch is ON.</strong> Auto-approvals are stopped and queued auto-approved
-    publishes are held. Manual approvals are unaffected.</div>
+  <div><strong><?= View::t('settings.kill_banner_title') ?></strong> <?= View::t('settings.kill_banner_body') ?></div>
 </div>
 <?php endif; ?>
 
 <div class="card">
-  <div class="card__head"><h2>Kill switch</h2>
-    <span class="card__action"><span class="chip chip--<?= $killOn ? 'err' : 'ok' ?>"><span class="dot"></span><?= $killOn ? 'ON — autonomy stopped' : 'off' ?></span></span>
+  <div class="card__head"><h2><?= View::t('settings.kill_switch_card') ?></h2>
+    <span class="card__action"><span class="chip chip--<?= $killOn ? 'err' : 'ok' ?>"><span class="dot"></span><?= $killOn ? View::t('settings.kill_on_chip') : View::t('digest.off') ?></span></span>
   </div>
   <div class="card__body">
     <div class="killswitch-row">
-      <p class="muted">Instantly stops all auto-approvals and holds queued auto-approved publishes.
-        Never touches manual decisions. Flips are audited.</p>
+      <p class="muted"><?= View::t('settings.kill_desc') ?></p>
       <?php /* data-confirm goes on the FORM — the global handler matches form[data-confirm] (app.js) */ ?>
-      <form method="post" action="/settings/kill-switch"<?= $killOn ? '' : ' data-confirm="Stop all autonomy now? Queued auto-approved publishes will hold until you turn it back off."' ?>>
+      <form method="post" action="/settings/kill-switch"<?= $killOn ? '' : ' data-confirm="' . View::t('settings.kill_confirm') . '"' ?>>
         <?= $csrfField ?>
         <input type="hidden" name="state" value="<?= $killOn ? 'off' : 'on' ?>">
         <?php if ($killOn): ?>
-        <button type="submit" class="btn btn--primary">Turn kill switch OFF</button>
+        <button type="submit" class="btn btn--primary"><?= View::t('settings.kill_turn_off') ?></button>
         <?php else: ?>
-        <button type="submit" class="btn btn--danger">Turn kill switch ON</button>
+        <button type="submit" class="btn btn--danger"><?= View::t('settings.kill_turn_on') ?></button>
         <?php endif; ?>
       </form>
     </div>
@@ -57,49 +54,45 @@ $killOn = $settings['kill_switch'];
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Approval mode &amp; guardrails</h2></div>
+  <div class="card__head"><h2><?= View::t('settings.mode_card') ?></h2></div>
   <div class="card__body">
     <form method="post" action="/settings" class="settings-form">
       <?= $csrfField ?>
 
       <fieldset class="mode-pick">
-        <legend class="field__label">Approval mode</legend>
+        <legend class="field__label"><?= View::t('settings.approval_mode') ?></legend>
         <label class="mode-option<?= $isAuto ? '' : ' is-picked' ?>">
           <input type="radio" name="approval_mode" value="manual"<?= $isAuto ? '' : ' checked' ?>>
-          <span><strong>Manual</strong> (default) — every render waits for your decision.
-            Records say “Approved by you”.</span>
+          <span><strong><?= View::t('settings.manual_strong') ?></strong> <?= View::t('settings.manual_desc') ?></span>
         </label>
         <label class="mode-option<?= $isAuto ? ' is-picked' : '' ?>">
           <input type="radio" name="approval_mode" value="auto"<?= $isAuto ? ' checked' : '' ?>>
-          <span><strong>Auto</strong> — the compliance agent approves renders whose checks are
-            clean (pass, or pass with the AI label set automatically). Anything warned or blocked
-            still comes to you. Records say “Auto-approved by compliance agent (policy <?= View::e($policyVersion) ?>)” —
-            never “approved by you”.</span>
+          <span><strong><?= View::t('settings.auto_strong') ?></strong> <?= View::t('settings.auto_desc', ['policy' => $policyVersion]) ?></span>
         </label>
       </fieldset>
 
       <div class="settings-grid">
         <label class="field">
-          <span class="field__label">Daily post cap (auto)</span>
+          <span class="field__label"><?= View::t('settings.daily_cap_label') ?></span>
           <input type="text" inputmode="numeric" name="daily_post_cap" value="<?= (int) $settings['daily_post_cap'] ?>">
-          <span class="field__hint num">auto slots used today: <?= (int) $autoUsedToday ?>/<?= (int) $settings['daily_post_cap'] ?></span>
+          <span class="field__hint num"><?= View::t('settings.auto_slots') ?> <?= (int) $autoUsedToday ?>/<?= (int) $settings['daily_post_cap'] ?></span>
         </label>
         <label class="field">
-          <span class="field__label">Monthly budget cap (USD, empty = none)</span>
+          <span class="field__label"><?= View::t('settings.budget_label') ?></span>
           <input type="text" inputmode="numeric" name="budget_cap_usd"
-                 value="<?= $settings['budget_cap_cents'] !== null ? (int) ($settings['budget_cap_cents'] / 100) : '' ?>" placeholder="no cap">
-          <span class="field__hint num">observed spend this month: $<?= View::e(number_format($spentThisMonthCents / 100, 2)) ?></span>
+                 value="<?= $settings['budget_cap_cents'] !== null ? (int) ($settings['budget_cap_cents'] / 100) : '' ?>" placeholder="<?= View::t('settings.no_cap') ?>">
+          <span class="field__hint num"><?= View::t('settings.observed_spend') ?> $<?= View::e(number_format($spentThisMonthCents / 100, 2)) ?></span>
         </label>
       </div>
 
-      <button type="submit" class="btn btn--primary">Save settings</button>
+      <button type="submit" class="btn btn--primary"><?= View::t('settings.save') ?></button>
     </form>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Quality score</h2>
-    <span class="card__action"><span class="chip chip--faint mono">policy <?= View::e($policyVersion) ?></span></span>
+  <div class="card__head"><h2><?= View::t('settings.quality_score') ?></h2>
+    <span class="card__action"><span class="chip chip--faint mono"><?= View::t('digest.policy_label') ?> <?= View::e($policyVersion) ?></span></span>
   </div>
   <div class="card__body">
     <?php $hasSample = (int) $quality['sample'] >= 5; ?>
@@ -107,19 +100,19 @@ $killOn = $settings['kill_switch'];
       <span class="quality-score num<?= $quality['breach'] ? ' quality-score--bad' : '' ?>"><?= $hasSample ? (int) $quality['score'] : '—' ?></span>
       <div class="quality-meta">
         <?php if (!$hasSample): ?>
-        <p class="muted">Not enough checks yet — the score appears once at least 5 compliance checks have run
-          (so far: <?= (int) $quality['sample'] ?>). Until then it can't trigger an auto-fallback.</p>
+        <p class="muted"><?= View::t('settings.quality_insufficient', ['n' => (int) $quality['sample']]) ?></p>
         <?php else: ?>
-        <p class="muted">Derived from the last checks: slop average <?= View::e(number_format($quality['slop_avg'], 2)) ?> ·
-          block rate <?= View::e(number_format($quality['block_rate'] * 100, 0)) ?>% ·
-          reject/fail rate (7d) <?= View::e(number_format($quality['reject_fail_rate'] * 100, 0)) ?>% ·
-          sample <?= (int) $quality['sample'] ?>.</p>
+        <p class="muted"><?= View::t('settings.quality_derived', [
+            'slop' => number_format($quality['slop_avg'], 2),
+            'block' => number_format($quality['block_rate'] * 100, 0),
+            'reject' => number_format($quality['reject_fail_rate'] * 100, 0),
+            'sample' => (int) $quality['sample'],
+        ]) ?></p>
         <?php endif; ?>
         <?php if ($quality['breach']): ?>
-        <p class="quality-warn">Below 60 with enough sample — Auto mode falls back to Manual automatically.
-          Re-enabling Auto is your call, above.</p>
+        <p class="quality-warn"><?= View::t('settings.quality_breach') ?></p>
         <?php elseif ($hasSample): ?>
-        <p class="muted">Falls back to Manual automatically if the score drops below 60 (needs ≥ 5 checks of sample).</p>
+        <p class="muted"><?= View::t('settings.quality_ok') ?></p>
         <?php endif; ?>
       </div>
     </div>

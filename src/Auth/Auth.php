@@ -18,6 +18,14 @@ final class Auth
     private const SESSION_USER = 'auth_user_id';
 
     /**
+     * The logged-in user's UI locale, cached in the session at login so locale
+     * resolution on every request needs no DB hit (the column is the source of
+     * truth; the /locale switch updates both). Public so the front controller
+     * and the locale switcher read/write one canonical key.
+     */
+    public const SESSION_LOCALE = 'auth_locale';
+
+    /**
      * Valid Argon2id hash of a random throwaway string. When the email is
      * unknown we verify against this instead of returning early, so response
      * timing does not reveal whether an account exists.
@@ -47,7 +55,7 @@ final class Auth
         }
 
         $user = $this->db->one(
-            'SELECT id, email, password_hash FROM users WHERE email = ?',
+            'SELECT id, email, password_hash, locale FROM users WHERE email = ?',
             [$email],
         );
 
@@ -69,6 +77,7 @@ final class Auth
         }
 
         $_SESSION[self::SESSION_USER] = (int) $user['id'];
+        $_SESSION[self::SESSION_LOCALE] = (string) ($user['locale'] ?? 'en');
         $this->workspace->set($membership['id']);
         $this->cachedUser = false;
 
@@ -93,7 +102,7 @@ final class Auth
         if ($this->cachedUser === false) {
             $id = $_SESSION[self::SESSION_USER] ?? null;
             $this->cachedUser = is_int($id)
-                ? $this->db->one('SELECT id, email, name, created_at FROM users WHERE id = ?', [$id])
+                ? $this->db->one('SELECT id, email, name, locale, created_at FROM users WHERE id = ?', [$id])
                 : null;
         }
 
@@ -103,6 +112,27 @@ final class Auth
     public function check(): bool
     {
         return $this->user() !== null;
+    }
+
+    /**
+     * The session-cached UI locale, or null when none is set (anonymous, or a
+     * session predating Phase 14). The front controller falls back to the
+     * configured default; validation/clamping lives in I18n.
+     */
+    public function sessionLocale(): ?string
+    {
+        $locale = $_SESSION[self::SESSION_LOCALE] ?? null;
+
+        return is_string($locale) ? $locale : null;
+    }
+
+    /**
+     * Update the session-cached locale after the /locale switch persists the
+     * column. Keeps the cache and the DB in step within the same request.
+     */
+    public function setSessionLocale(string $locale): void
+    {
+        $_SESSION[self::SESSION_LOCALE] = $locale;
     }
 
     /** Clear the session and rotate the id so the old cookie is dead. */

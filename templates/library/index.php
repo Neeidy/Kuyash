@@ -18,50 +18,58 @@ use Kuyash\Core\View;
 /** @var string $maxVideoLabel */
 /** @var string $maxPhotoLabel */
 
-$typeChips = ['' => 'All', 'own' => 'Own', 'face' => 'Face', 'stock' => 'Stock', 'ai' => 'AI'];
+// labels already escaped by View::t — echoed raw below
+$typeChips = [
+    '' => View::t('library.type_all'),
+    'own' => View::t('library.type_own'),
+    'face' => View::t('library.type_face'),
+    'stock' => View::t('library.type_stock'),
+    'ai' => View::t('library.type_ai'),
+];
 // color is reserved for STATUS — every non-AI type chip stays neutral
 $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' : 'chip chip--neutral';
 ?>
 <div class="screen-head">
   <div>
-    <h1>Content Library</h1>
-    <p class="screen-sub">Own and face clips for the LIBRARY visuals source.
-      Stock and AI assets arrive in later phases.</p>
+    <h1><?= View::t('library.title') ?></h1>
+    <p class="screen-sub"><?= View::t('library.subtitle') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--neutral num"><?= count($items) ?> asset<?= count($items) === 1 ? '' : 's' ?></span>
+    <span class="chip chip--neutral num"><?= count($items) ?> <?= count($items) === 1 ? View::t('library.asset_one') : View::t('library.asset_many') ?></span>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Upload</h2></div>
+  <div class="card__head"><h2><?= View::t('library.upload') ?></h2></div>
   <div class="card__body">
     <form method="post" action="/library/upload" enctype="multipart/form-data"
           data-max-video="<?= $maxVideoBytes ?>" data-max-photo="<?= $maxPhotoBytes ?>">
       <?= $csrfField ?>
       <label class="upload-box">
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 11V3M4.5 6.5L8 3l3.5 3.5M2.5 13h11"/></svg></span>
-        <span data-file-label>Choose a file — <?= View::e($videoLabel) ?> video (≤<?= View::e($maxVideoLabel) ?>)
-          or <?= View::e($photoLabel) ?> photo (≤<?= View::e($maxPhotoLabel) ?>)</span>
+        <span data-file-label><?= View::t('library.choose_file', [
+            'video' => $videoLabel, 'maxv' => $maxVideoLabel,
+            'photo' => $photoLabel, 'maxp' => $maxPhotoLabel,
+        ]) ?></span>
         <input type="file" name="file" accept="<?= View::e($acceptAttr) ?>" required>
       </label>
-      <p class="note text-warn" data-size-warning hidden role="alert">That file is over the size limit — it will be rejected.</p>
+      <p class="note text-warn" data-size-warning hidden role="alert"><?= View::t('library.size_warning') ?></p>
       <div class="field-row">
-        <label class="field"><span>Title</span>
-          <input type="text" name="title" maxlength="120" placeholder="Defaults to the file name">
+        <label class="field"><span><?= View::t('library.title_field') ?></span>
+          <input type="text" name="title" maxlength="120" placeholder="<?= View::t('library.title_placeholder') ?>">
         </label>
-        <label class="field"><span>Type</span>
+        <label class="field"><span><?= View::t('library.type_field') ?></span>
           <select name="type">
-            <option value="own">Own footage</option>
-            <option value="face">Face clip (shooting brief)</option>
+            <option value="own"><?= View::t('library.opt_own') ?></option>
+            <option value="face"><?= View::t('library.opt_face') ?></option>
           </select>
         </label>
-        <label class="field"><span>Tags</span>
-          <input type="text" name="tags" placeholder="comma, separated, tags">
+        <label class="field"><span><?= View::t('library.tags_field') ?></span>
+          <input type="text" name="tags" placeholder="<?= View::t('library.tags_placeholder') ?>">
         </label>
-        <button type="submit" class="btn btn--primary">Upload</button>
+        <button type="submit" class="btn btn--primary"><?= View::t('library.upload_btn') ?></button>
       </div>
-      <p class="note">Upload 9:16 vertical for best results — other aspect ratios get a format warning.</p>
+      <p class="note"><?= View::t('library.upload_note') ?></p>
     </form>
   </div>
 </div>
@@ -69,14 +77,14 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
 <div class="filter-row">
   <form method="get" action="/library" class="search">
     <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5l-3.2-3.2"/></svg></span>
-    <input type="search" name="q" value="<?= View::e($q) ?>" placeholder="Search title or tags…"
-           aria-label="Search assets by title or tags">
+    <input type="search" name="q" value="<?= View::e($q) ?>" placeholder="<?= View::t('library.search_placeholder') ?>"
+           aria-label="<?= View::t('library.search_aria') ?>">
     <?php if ($type !== ''): ?><input type="hidden" name="type" value="<?= View::e($type) ?>"><?php endif; ?>
   </form>
   <div class="chip-row">
     <?php foreach ($typeChips as $t => $label): ?>
     <a class="fchip<?= $type === $t ? ' is-active' : '' ?>"
-       href="/library<?= ($t !== '' || $q !== '') ? '?' . http_build_query(array_filter(['type' => $t, 'q' => $q], static fn ($v) => $v !== '')) : '' ?>"><?= View::e($label) ?></a>
+       href="/library<?= ($t !== '' || $q !== '') ? '?' . http_build_query(array_filter(['type' => $t, 'q' => $q], static fn ($v) => $v !== '')) : '' ?>"><?= $label ?></a>
     <?php endforeach; ?>
   </div>
 </div>
@@ -84,11 +92,9 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
 <?php if ($items === []): ?>
 <div class="ui-state">
   <span class="ui-state__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 2.5v11M11.5 2.5v11M1.5 6h3M1.5 10h3M11.5 6h3M11.5 10h3"/></svg></span>
-  <h3><?= ($q !== '' || $type !== '') ? 'No assets match' : 'The library is empty' ?></h3>
-  <p><?= ($q !== '' || $type !== '')
-      ? 'Try a different search or clear the type filter.'
-      : 'Upload your first clip or photo above — it becomes available to workflows as the LIBRARY visuals source.' ?></p>
-  <?php if ($q !== '' || $type !== ''): ?><a class="btn btn--ghost btn--sm" href="/library">Clear filters</a><?php endif; ?>
+  <h3><?= ($q !== '' || $type !== '') ? View::t('library.empty_filtered') : View::t('library.empty') ?></h3>
+  <p><?= ($q !== '' || $type !== '') ? View::t('library.empty_filtered_hint') : View::t('library.empty_hint') ?></p>
+  <?php if ($q !== '' || $type !== ''): ?><a class="btn btn--ghost btn--sm" href="/library"><?= View::t('library.clear_filters') ?></a><?php endif; ?>
 </div>
 <?php else: ?>
 <div class="asset-grid">
@@ -114,10 +120,10 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
         <?php elseif ($item['aspect'] !== null): ?>
         <span class="chip chip--warn"><?= View::e($item['aspect']) ?></span>
         <?php else: ?>
-        <span class="chip chip--faint">aspect unknown</span>
+        <span class="chip chip--faint"><?= View::t('library.aspect_unknown') ?></span>
         <?php endif; ?>
         <?php if ($item['ai_label_required']): ?>
-        <span class="chip chip--ai">AI label</span>
+        <span class="chip chip--ai"><?= View::t('library.ai_label') ?></span>
         <?php endif; ?>
       </div>
       <?php if ($item['tags'] !== []): ?>

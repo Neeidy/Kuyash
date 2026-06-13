@@ -38,6 +38,18 @@ final class View
         return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 
+    /**
+     * Translate + escape — the template short form for static UI chrome:
+     * `<?= View::t('queue.title') ?>`. Equivalent to e(I18n::t(...)); the
+     * translated string is always escaped, so lang files hold plain text.
+     *
+     * @param array<string, scalar|null> $params
+     */
+    public static function t(string $key, array $params = []): string
+    {
+        return self::e(I18n::t($key, $params));
+    }
+
     /** @param array<string, mixed> $data */
     private function renderFile(string $template, array $data): string
     {

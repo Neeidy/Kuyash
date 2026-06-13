@@ -21,6 +21,7 @@ use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
 use Kuyash\Controllers\LibraryController;
+use Kuyash\Controllers\LocaleController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
@@ -303,6 +304,12 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(Flash::class),
         (array) $c->get(Config::class)->get('library'),
+    ));
+
+    $container->bind(LocaleController::class, static fn (Container $c): LocaleController => new LocaleController(
+        $c->get(Database::class),
+        $c->get(Auth::class),
+        $c->get(Flash::class),
     ));
 
     $container->bind(Router::class, static function (Container $c): Router {

@@ -24,22 +24,21 @@ $healthTone = static fn (string $h): string => match ($h) {
 ?>
 <div class="screen-head">
   <div>
-    <h1>Accounts</h1>
-    <p class="screen-sub">Connected publishing targets (via Zernio). Kuyash stores an account
-      reference and health only — never your platform password or tokens.</p>
+    <h1><?= View::t('accounts.title') ?></h1>
+    <p class="screen-sub"><?= View::t('accounts.subtitle') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--faint mono">publishing: mock</span>
+    <span class="chip chip--faint mono"><?= View::t('accounts.publishing_mock') ?></span>
   </div>
 </div>
 
 <div class="callout callout--banner callout--ok" role="status">
   <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 11h.01"/></svg></span>
-  <div><strong>Next scheduled publish:</strong>
+  <div><strong><?= View::t('accounts.next_scheduled') ?></strong>
     <?php if ($nextScheduled === null): ?>
-    nothing scheduled — approved renders publish immediately.
+    <?= View::t('accounts.nothing_scheduled') ?>
     <?php else: ?>
-    run #<?= (int) $nextScheduled['run_id'] ?> at
+    <?= View::t('accounts.run_at', ['run' => (int) $nextScheduled['run_id']]) ?>
     <span class="mono"><?= View::e(substr((string) $nextScheduled['run_after'], 0, 10)) ?>
       <?= View::e(Format::utcTime((string) $nextScheduled['run_after'])) ?> UTC</span>.
     <?php endif; ?>
@@ -47,28 +46,27 @@ $healthTone = static fn (string $h): string => match ($h) {
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Connect an account</h2></div>
+  <div class="card__head"><h2><?= View::t('accounts.connect_account') ?></h2></div>
   <div class="card__body">
-    <p class="muted">Opens a mock Zernio authorization screen. No real platform call is made
-      (publishing is doc-gated) — this records a reference so the pipeline can target the account.</p>
+    <p class="muted"><?= View::t('accounts.connect_desc') ?></p>
     <div class="tag-row">
       <?php foreach ($platforms as $platform): ?>
-      <a class="btn btn--ghost btn--sm" href="/accounts/connect/<?= View::e($platform) ?>">Connect <?= View::e($platform) ?></a>
+      <a class="btn btn--ghost btn--sm" href="/accounts/connect/<?= View::e($platform) ?>"><?= View::t('accounts.connect', ['platform' => $platform]) ?></a>
       <?php endforeach; ?>
     </div>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Your accounts</h2>
+  <div class="card__head"><h2><?= View::t('accounts.your_accounts') ?></h2>
     <span class="card__action"><span class="chip chip--faint num"><?= count($accounts) ?></span></span>
   </div>
   <div class="card__body">
     <?php if ($accounts === []): ?>
     <div class="ui-state">
       <span class="ui-state__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="5" r="2.5"/><path d="M3 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg></span>
-      <h3>No accounts connected</h3>
-      <p>Connect a platform above so approved renders have somewhere to publish.</p>
+      <h3><?= View::t('accounts.none') ?></h3>
+      <p><?= View::t('accounts.none_hint') ?></p>
     </div>
     <?php else: ?>
     <ul class="job-list">
@@ -78,43 +76,42 @@ $healthTone = static fn (string $h): string => match ($h) {
           <span class="job-row__type mono"><?= View::e((string) $account['handle']) ?>
             <span class="muted">· <?= View::e((string) $account['platform']) ?></span></span>
           <span class="job-row__entity">
-            published today: <?= (int) $account['published_today'] ?>/<?= (int) $account['daily_cap'] ?>
+            <?= View::t('accounts.published_today', ['n' => (int) $account['published_today'], 'cap' => (int) $account['daily_cap']]) ?>
             <?php if (($account['reference_title'] ?? null) !== null): ?>
-            · reference: <?= View::e((string) $account['reference_title']) ?>
+            · <?= View::t('accounts.reference_label') ?> <?= View::e((string) $account['reference_title']) ?>
             <?php endif; ?>
           </span>
           <form method="post" action="/accounts/<?= (int) $account['id'] ?>/reference" class="account-ref-form">
             <?= $csrfField ?>
             <label class="field field--inline">
-              <span class="field__label">Default reference</span>
+              <span class="field__label"><?= View::t('accounts.default_reference') ?></span>
               <select name="asset_id">
-                <option value="">— none —</option>
+                <option value=""><?= View::t('accounts.none_option') ?></option>
                 <?php foreach ($references as $ref): ?>
                 <option value="<?= (int) $ref['id'] ?>"<?= (int) ($account['default_reference_asset_id'] ?? 0) === (int) $ref['id'] ? ' selected' : '' ?>><?= View::e((string) $ref['title']) ?></option>
                 <?php endforeach; ?>
               </select>
             </label>
-            <button type="submit" class="btn btn--ghost btn--sm">Save</button>
+            <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('accounts.save') ?></button>
           </form>
         </div>
         <div class="job-row__side">
           <div class="job-row__chips">
             <span class="chip chip--<?= $statusTone((string) $account['status']) ?>"><span class="dot dot--<?= $statusTone((string) $account['status']) ?>"></span><?= View::e((string) $account['status']) ?></span>
-            <span class="chip chip--<?= $healthTone((string) $account['health']) ?>"><span class="dot dot--<?= $healthTone((string) $account['health']) ?>"></span>health: <?= View::e((string) $account['health']) ?></span>
+            <span class="chip chip--<?= $healthTone((string) $account['health']) ?>"><span class="dot dot--<?= $healthTone((string) $account['health']) ?>"></span><?= View::t('accounts.health_label') ?> <?= View::e((string) $account['health']) ?></span>
           </div>
           <?php if ((string) $account['status'] !== 'disconnected'): ?>
           <form method="post" action="/accounts/<?= (int) $account['id'] ?>/disconnect"
-                data-confirm="Disconnect <?= View::e((string) $account['handle']) ?>? It will stop receiving published renders.">
+                data-confirm="<?= View::t('accounts.disconnect_confirm', ['handle' => (string) $account['handle']]) ?>">
             <?= $csrfField ?>
-            <button type="submit" class="btn btn--danger-ghost btn--sm">Disconnect</button>
+            <button type="submit" class="btn btn--danger-ghost btn--sm"><?= View::t('accounts.disconnect') ?></button>
           </form>
           <?php endif; ?>
         </div>
       </li>
       <?php endforeach; ?>
     </ul>
-    <p class="note">Per-account daily caps apply to auto-approved publishes only; manual publishes
-      are your call. AI labels are set automatically per platform when compliance requires them.</p>
+    <p class="note"><?= View::t('accounts.caps_note') ?></p>
     <?php endif; ?>
   </div>
 </div>

@@ -20,6 +20,8 @@ use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Database;
+use Kuyash\Core\I18n;
+use Kuyash\Controllers\LocaleController;
 use Kuyash\Core\ErrorHandler;
 use Kuyash\Core\Flash;
 use Kuyash\Core\Response;
@@ -305,9 +307,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 11);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 12);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -5792,6 +5794,172 @@ $qkR5 = $qkDrive(['prompt' => 'cinematic push in', 'photo_id' => (string) $qkPho
 check('quick ctl POST: valid prompt + picked photo → run started, redirect /queue', $qkR5['status'] === 303 && $qkR5['loc'] === '/queue' && $qkR5['key'] === 'quick.started'
     && (int) $qkDb->one("SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ? AND entity_type = 'quick_create'", [$qkWs])['n'] === 1);
 $_SESSION = [];
+
+echo "== i18n: I18n translator (fallback, interpolation, clamp, resolve) ==\n";
+
+// crafted lang dir so fallback precedence is exercised exactly (tr → en → key)
+$langTmp = tempDir('lang');
+file_put_contents($langTmp . '/en.php', "<?php return ['only_en' => 'English only', 'both' => 'EN {x}', 'html' => '<b>{x}</b>'];");
+file_put_contents($langTmp . '/tr.php', "<?php return ['both' => 'TR {x}'];");
+I18n::setLangDir($langTmp);
+
+I18n::setLocale('tr');
+check('i18n: tr value used when the key exists in tr', I18n::t('both', ['x' => '7']) === 'TR 7');
+check('i18n: missing tr key falls back to the en value', I18n::t('only_en') === 'English only');
+check('i18n: key missing in both langs returns the key itself', I18n::t('no.such.key') === 'no.such.key');
+check('i18n: a placeholder with no param is left literal', I18n::t('both') === 'TR {x}');
+check('i18n: lookup() returns null on a total miss (custom-fallback seam)', I18n::lookup('no.such.key') === null);
+
+I18n::setLocale('xx');
+check('i18n: setLocale clamps an unsupported locale to en', I18n::locale() === 'en');
+check('i18n: en locale reads the en map', I18n::t('both', ['x' => '1']) === 'EN 1');
+
+check('i18n: resolve honors a valid session locale', I18n::resolve('tr', 'en') === 'tr');
+check('i18n: resolve uses the default when session is null', I18n::resolve(null, 'tr') === 'tr');
+check('i18n: resolve rejects an unsupported value → en', I18n::resolve('de', 'de') === 'en');
+
+check('i18n: View::t escapes the translated string AND interpolated params', View::t('html', ['x' => '<i>']) === '&lt;b&gt;&lt;i&gt;&lt;/b&gt;');
+
+// back to the real lang files for the remaining checks
+I18n::setLangDir($basePath . '/lang');
+I18n::setLocale('en');
+
+echo "== i18n: lang-file parity + template key coverage (no-bare-literal guard) ==\n";
+
+$enMap = require $basePath . '/lang/en.php';
+$trMap = require $basePath . '/lang/tr.php';
+check('i18n: no TR-only keys (catches a mistyped key)', array_diff(array_keys($trMap), array_keys($enMap)) === []);
+check('i18n: every template View::t key exists in en.php', (static function () use ($basePath, $enMap): bool {
+    $files = array_merge(glob($basePath . '/templates/*.php'), glob($basePath . '/templates/*/*.php'));
+    foreach ($files as $f) {
+        $src = (string) file_get_contents($f);
+        if (preg_match_all('/(?:View|I18n)::t\(\s*[\x27"]([^\x27"]+)[\x27"]/', $src, $m)) {
+            foreach ($m[1] as $k) {
+                if (str_ends_with($k, 'state_')) {
+                    continue; // dynamic: runs.state_<state>, all six keys verified below
+                }
+                if (!array_key_exists($k, $enMap)) {
+                    return false;
+                }
+            }
+        }
+    }
+    foreach (['pending', 'failed', 'awaiting', 'running', 'done', 'cancelled'] as $s) {
+        if (!array_key_exists('runs.state_' . $s, $enMap)) {
+            return false;
+        }
+    }
+    return true;
+})());
+
+echo "== i18n: Messages facade localizes after the fold ==\n";
+
+I18n::setLocale('tr');
+check('messages: status label localizes under tr', Messages::status('published') === 'yayınlandı');
+check('messages: event line localizes + interpolates under tr', str_contains(
+    Messages::event('job.requeued', ['type' => 'tts', 'retry' => 1, 'max' => 3, 'run' => 5]),
+    'yeniden kuyruğa',
+) && str_contains(Messages::event('job.requeued', ['type' => 'tts', 'retry' => 1, 'max' => 3, 'run' => 5]), '1/3'));
+check('messages: flash text localizes under tr', Messages::text('settings.saved') === 'Ayarlar kaydedildi.');
+check('messages: unknown status still falls back to the raw enum under tr', Messages::status('weird') === 'weird');
+I18n::setLocale('en');
+
+echo "== i18n: TR render smoke (≥2 screens) + <html lang> ==\n";
+
+I18n::setLocale('tr');
+$i18nView = new View($basePath . '/templates');
+$loginTr = $i18nView->render('auth/login', ['title' => 'T', 'csrfField' => '', 'error' => null, 'email' => '']);
+check('render tr: login is Turkish, carries lang="tr", no leftover EN chrome',
+    str_contains($loginTr, 'Giriş yap')
+    && str_contains($loginTr, '<html lang="tr">')
+    && !str_contains($loginTr, 'Sign in to Kuyash'));
+$errTr = $i18nView->render('errors/404', ['title' => '404']);
+check('render tr: 404 page is Turkish', str_contains($errTr, 'Bulunamadı') && !str_contains($errTr, 'This page does not exist'));
+I18n::setLocale('en');
+$loginEn = $i18nView->render('auth/login', ['title' => 'T', 'csrfField' => '', 'error' => null, 'email' => '']);
+check('render en: unchanged English baseline still renders', str_contains($loginEn, 'Sign in to Kuyash') && str_contains($loginEn, '<html lang="en">'));
+
+echo "== i18n: compliance-string truthfulness in BOTH languages (gate) ==\n";
+
+foreach (['en' => ['agent' => 'compliance agent', 'you' => 'Approved by you'],
+          'tr' => ['agent' => 'uyumluluk aracı', 'you' => 'Sizin tarafınızdan onaylandı']] as $loc => $exp) {
+    I18n::setLocale($loc);
+    $auto = I18n::t('digest.approved_by_agent', ['policy' => 'v1']);
+    $manual = I18n::t('runs.approved_by_you');
+    check("compliance ({$loc}): auto record names the compliance agent, never the human",
+        stripos($auto, $exp['agent']) !== false
+        && $auto !== $manual
+        && stripos($auto, 'by you') === false
+        && stripos($auto, 'tarafınızdan') === false);
+    check("compliance ({$loc}): manual record names the human (you), never the agent",
+        str_contains($manual, $exp['you'])
+        && stripos($manual, 'compliance agent') === false
+        && stripos($manual, 'uyumluluk aracı') === false);
+    check("compliance ({$loc}): AI-label-always-on string is present (not a missing key)",
+        I18n::t('quick.ai_always_on') !== '' && I18n::t('quick.ai_always_on') !== 'quick.ai_always_on');
+}
+I18n::setLocale('en');
+
+echo "== i18n: migration 0012 (users.locale) ==\n";
+
+$locDb = migratedDb($basePath);
+$userCols = array_column($locDb->all('PRAGMA table_info(users)'), 'name');
+check('migration 0012: users.locale column added', in_array('locale', $userCols, true));
+$locDb->run('INSERT INTO users (email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)', ['loc@x', 'h', 't', 't']);
+check('migration 0012: default locale is en', ($locDb->one("SELECT locale FROM users WHERE email = 'loc@x'")['locale'] ?? null) === 'en');
+check('migration 0012: CHECK rejects an unsupported locale', throws(static fn () => $locDb->run(
+    "INSERT INTO users (email, password_hash, locale, created_at, updated_at) VALUES ('bad@x', 'h', 'de', 't', 't')",
+)));
+check('migration 0012: CHECK accepts tr', (static function () use ($locDb): bool {
+    $locDb->run("INSERT INTO users (email, password_hash, locale, created_at, updated_at) VALUES ('tr@x', 'h', 'tr', 't', 't')");
+    return ($locDb->one("SELECT locale FROM users WHERE email = 'tr@x'")['locale'] ?? null) === 'tr';
+})());
+
+echo "== i18n: Auth caches locale + LocaleController /locale switch ==\n";
+
+$liDb = migratedDb($basePath);
+[$liUser] = seedUser($liDb, 'li@example.com', $argonHash, 'LI WS');
+$liDb->run('UPDATE users SET locale = ? WHERE id = ?', ['tr', $liUser]);
+$liCtx = new WorkspaceContext($liDb);
+$liAuth = new Auth($liDb, new LoginThrottle($liDb), $liCtx);
+$_SESSION = ['auth_user_id' => $liUser];
+check('auth: user() exposes the locale column', ($liAuth->user()['locale'] ?? null) === 'tr');
+
+$liFlash = new Flash();
+$liCtl = new LocaleController($liDb, $liAuth, $liFlash);
+$_SESSION = ['auth_user_id' => $liUser];
+$_SERVER['HTTP_REFERER'] = 'http://localhost:8082/settings';
+$_POST = ['locale' => 'tr'];
+$rLoc = $liCtl->set([]);
+check('locale ctl: valid switch → 303 back to the referer path', $rLoc->status() === 303 && ($rLoc->headers()['Location'] ?? '') === '/settings');
+check('locale ctl: persists the column', ($liDb->one('SELECT locale FROM users WHERE id = ?', [$liUser])['locale'] ?? null) === 'tr');
+check('locale ctl: caches the session locale', ($_SESSION[Auth::SESSION_LOCALE] ?? null) === 'tr');
+check('locale ctl: success flash locale.updated', ($liFlash->pull()[0]['key'] ?? '') === 'locale.updated');
+
+$_POST = ['locale' => 'de'];
+$rBad = $liCtl->set([]);
+check('locale ctl: unsupported locale is not persisted + error flash', ($liDb->one('SELECT locale FROM users WHERE id = ?', [$liUser])['locale'] ?? null) === 'tr'
+    && ($liFlash->pull()[0]['key'] ?? '') === 'locale.invalid');
+
+$_POST = ['locale' => 'en'];
+$_SERVER['HTTP_REFERER'] = 'http://evil.example.com/somewhere?x=1';
+$rExt = $liCtl->set([]);
+check('locale ctl: external referer host is dropped, only the local path is used (no open redirect)', ($rExt->headers()['Location'] ?? '') === '/somewhere?x=1');
+$liFlash->pull();
+
+$_POST = ['locale' => 'tr'];
+unset($_SERVER['HTTP_REFERER']);
+$rNoRef = $liCtl->set([]);
+check('locale ctl: missing referer → /dashboard', ($rNoRef->headers()['Location'] ?? '') === '/dashboard');
+$liFlash->pull();
+
+$_POST = ['locale' => 'tr'];
+$_SERVER['HTTP_REFERER'] = 'http://localhost/\\evil.example.com/x'; // backslash protocol-relative
+$rBackslash = $liCtl->set([]);
+check('locale ctl: backslash protocol-relative referer is rejected → /dashboard', ($rBackslash->headers()['Location'] ?? '') === '/dashboard');
+$_SESSION = [];
+$_POST = [];
+unset($_SERVER['HTTP_REFERER']);
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {

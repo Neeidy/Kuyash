@@ -78,6 +78,23 @@
   font-size: 12px; font-weight: 500; color: var(--text-2);
 }
 
+/* EN/TR language switch (Phase 14): a compact segmented toggle in the topbar */
+.lang-switch {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+  overflow: hidden; background: var(--surface);
+}
+.lang-switch form { display: flex; margin: 0; }
+.lang-switch > * + * { border-left: 1px solid var(--border); }
+.lang-switch__opt {
+  appearance: none; cursor: pointer; font-family: inherit;
+  border: 0; background: transparent;
+  padding: 4px 9px; font-size: 12px; font-weight: 600; line-height: 1.5;
+  color: var(--text-2);
+}
+button.lang-switch__opt:hover { color: var(--text); background: var(--surface-2); }
+.lang-switch__opt.is-active { color: var(--accent); background: var(--surface-2); cursor: default; }
+
 .main {
   grid-area: main;
   padding: var(--s5) var(--s6) var(--s8);
@@ -150,6 +167,9 @@
   white-space: nowrap;
 }
 .chip .icon svg { width: 11px; height: 11px; }
+/* opt-in wrap for chips that hold a full sentence (e.g. the slop warning) —
+   keeps longer localized strings (TR runs ~15-30% longer) from overflowing at 375px */
+.chip--wrap { white-space: normal; text-align: left; }
 .chip--ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.25); background: var(--ok-dim); }
 .chip--warn { color: var(--warn); border-color: rgba(245, 158, 11, 0.25); background: var(--warn-dim); }
 .chip--err { color: var(--err); border-color: rgba(244, 63, 94, 0.25); background: var(--err-dim); }

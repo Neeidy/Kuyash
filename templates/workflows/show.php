@@ -16,32 +16,29 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
 <div class="screen-head">
   <div>
     <h1><?= View::e($workflow['name']) ?></h1>
-    <p class="screen-sub">Read-only node track — canonical order, fixed by design.
-      <?= $isDistribution
-          ? 'Distributes one ready library video.'
-          : 'Full pipeline: TTS + visuals + real ffmpeg render. Optionally build it around a reference subject.' ?></p>
+    <p class="screen-sub"><?= View::t('wf.show_subtitle') ?>
+      <?= $isDistribution ? View::t('wf.show_sub_distribution') : View::t('wf.show_sub_full') ?></p>
   </div>
   <div class="screen-head__actions">
     <span class="chip chip--neutral mono"><?= View::e($workflow['template']) ?></span>
-    <a class="btn btn--ghost btn--sm" href="/workflows">All workflows</a>
+    <a class="btn btn--ghost btn--sm" href="/workflows"><?= View::t('wf.all_workflows') ?></a>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Start a run</h2></div>
+  <div class="card__head"><h2><?= View::t('wf.start_run') ?></h2></div>
   <div class="card__body">
     <?php if ($isDistribution && $readyVideos === []): ?>
     <div class="callout callout--warn">
       <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13.5h13z"/><path d="M8 6.5V10M8 12h.01"/></svg></span>
-      <div><strong>No ready library videos.</strong> Distribution needs an uploaded video —
-        add one in the <a href="/library">library</a> first.</div>
+      <div><strong><?= View::t('wf.no_videos_title') ?></strong> <?= View::t('wf.no_videos_body_1') ?> <a href="/library"><?= View::t('wf.library_word') ?></a><?= View::t('wf.no_videos_body_2') ?></div>
     </div>
     <?php else: ?>
     <form method="post" action="/workflows/<?= (int) $workflow['id'] ?>/run">
       <?= $csrfField ?>
       <div class="field-row">
         <?php if ($isDistribution): ?>
-        <label class="field"><span>Library video</span>
+        <label class="field"><span><?= View::t('wf.library_video') ?></span>
           <select name="asset_id" required>
             <?php foreach ($readyVideos as $video): ?>
             <option value="<?= (int) $video['id'] ?>">
@@ -51,9 +48,9 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
           </select>
         </label>
         <?php elseif ($references !== []): ?>
-        <label class="field"><span>Reference subject (optional)</span>
+        <label class="field"><span><?= View::t('wf.reference_subject') ?></span>
           <select name="reference_asset_id">
-            <option value="">— auto (workspace avatar / stock) —</option>
+            <option value=""><?= View::t('wf.auto_reference') ?></option>
             <?php foreach ($references as $ref): ?>
             <option value="<?= (int) $ref['id'] ?>">
               <?= View::e($ref['title']) ?> · <?= View::e($ref['kind']) ?><?= $ref['type'] === 'ai' ? ' · AI' : '' ?>
@@ -62,26 +59,24 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
           </select>
         </label>
         <?php endif; ?>
-        <button type="submit" class="btn btn--primary">Start run</button>
+        <button type="submit" class="btn btn--primary"><?= View::t('wf.start_run_btn') ?></button>
       </div>
-      <p class="note"><?= $isDistribution
-          ? 'The library video is normalized to 9:16 at the final render.'
-          : 'A reference asset (avatar, a photo, anything) is composited as the visual; otherwise stock footage is used. TTS &amp; stock are mock-first; ffmpeg renders are real.' ?>
-        Real publishing is still Phase 10 (mock).</p>
+      <p class="note"><?= $isDistribution ? View::t('wf.note_distribution') : View::t('wf.note_full') ?>
+        <?= View::t('wf.note_publish') ?></p>
     </form>
     <?php endif; ?>
   </div>
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Node track</h2></div>
+  <div class="card__head"><h2><?= View::t('runs.node_track') ?></h2></div>
   <div class="card__body">
     <div class="wf-canvas">
       <div class="node-track">
         <?php foreach ($workflow['nodes'] as $node): ?>
         <div class="node-wrap">
           <div class="node<?= ($node['locked'] ?? false) ? ' node--locked' : '' ?>">
-            <span class="node__name mono"><?= View::e($node['node']) ?><?php if ($node['locked'] ?? false): ?><span class="icon node__lock" role="img" aria-label="Locked — compliance is mandatory" title="Locked — compliance is mandatory"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="7" width="9" height="6" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg></span><?php endif; ?></span>
+            <span class="node__name mono"><?= View::e($node['node']) ?><?php if ($node['locked'] ?? false): ?><span class="icon node__lock" role="img" aria-label="<?= View::t('wf.locked_compliance') ?>" title="<?= View::t('wf.locked_compliance') ?>"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="7" width="9" height="6" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg></span><?php endif; ?></span>
             <span class="node__desc mono"><?= View::e(implode(' + ', Nodes::NODE_JOBS[$node['node']] ?? [])) ?></span>
           </div>
           <span class="node-connector" aria-hidden="true"></span>
@@ -93,7 +88,7 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
 </div>
 
 <div class="card">
-  <div class="card__head"><h2>Node settings (read-only)</h2></div>
+  <div class="card__head"><h2><?= View::t('wf.node_settings') ?></h2></div>
   <div class="card__body">
     <dl class="kv-list">
       <?php foreach ($workflow['nodes'] as $node): ?>
@@ -101,7 +96,7 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
         <div class="kv">
           <dt class="mono"><?= View::e($node['node']) ?></dt>
           <dd>
-            <?php if ($node['locked'] ?? false): ?>locked — mandatory in every workflow<?php endif; ?>
+            <?php if ($node['locked'] ?? false): ?><?= View::t('wf.locked_mandatory') ?><?php endif; ?>
             <?php foreach (($node['settings'] ?? []) as $k => $v): ?>
               <?= View::e($k) ?>=<?= View::e(is_bool($v) ? ($v ? 'true' : 'false') : (string) $v) ?>
             <?php endforeach; ?>
@@ -110,7 +105,6 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
         <?php endif; ?>
       <?php endforeach; ?>
     </dl>
-    <p class="note">Settings become editable when the engines that read them arrive (Phase 5+).
-      Mock executors ignore settings.</p>
+    <p class="note"><?= View::t('wf.settings_note') ?></p>
   </div>
 </div>
