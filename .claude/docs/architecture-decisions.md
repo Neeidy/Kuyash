@@ -49,3 +49,50 @@ selected reference asset (photo → ffmpeg still-clip), NO AI generation; **Phas
 runs/jobs CHECK enums as an unused stub (SQLite CHECK removal = table rebuild;
 harmless). The Phase 6 `format` recommendation (face/faceless) keeps its stored
 values; `face` now MEANS "reference".
+
+## ADR-013: Media production = real ffmpeg fed by mock-first providers (Phase 7, 2026-06-12)
+Producing real bytes runs through REAL ffmpeg locally; the TTS and stock providers
+are mock-first behind seams but feed genuine inputs, so a full draft+final render
+works offline. `src/Media/*`: `Ffmpeg` (proc_open arg-array — never a shell string;
+timeout + temp cleanup), `MediaPaths` (tagged `store:ws:name` refs that cross the
+job seam, traversal-proof, never absolute paths in the DB), `WavWriter` (pure-PHP
+WAV), `AssetCache` (content-addressed sha256 — a hit re-uses the file, no respend),
+`AssemblyEngine` (narrated = looped visual + TTS + script-timed subtitles; distribution
+= normalize a library video; draft 540x960 then final 1080x1920 = draft-first
+rendering), `TtsProvider`/`StockProvider` seams (Mock default / OpenAI-TTS + Pexels
+real-but-flag-OFF), `AssetFetchExecutor` (reference → avatar → stock resolution per
+ADR-012; photo → still-clip, video → ref). Nodes: PUBLISH expands to
+`render_review → final_render → publish` (both templates), so the full-res render is
+the approved content. **Subtitles:** the dev ffmpeg build lacks libass/libfreetype
+(`subtitles`/`drawtext` filters), so the SRT ships as a sidecar + soft `mov_text`
+track; burn-in is behind the `media.burn_subtitles` flag (a build-with-libass
+followup). Serving = authed, tenant-scoped `/render` + `/media` with HTTP single-range
+(Safari needs 206 for `<video>`). migration 0005 (`avatar_asset_id`, `reference_asset_id`,
+`renders`, `asset_cache`). Commit `b90cb8e`.
+
+## ADR-014: Storage abstraction — Local default + Cloudflare R2, flag-OFF (Phase 8, 2026-06-12)
+`StorageProvider` is the durable-storage + serving seam (ADR-004/006 realized):
+`put`/`getToLocal`/`delete`/`exists`/`size`/`temporaryUrl`, keyed by a logical
+`{store}/{ws}/{name}` object key (`StorageKey`, traversal-proof, reuses the codebase
+NAME_RE; user input never reaches a key). **`LocalStorageProvider`** is the default and
+its put/getToLocal are in-place no-ops when the object already lives under the local
+roots — so default deployments are byte-identical to Phase 7. **`R2StorageProvider`**
+is real but flag-OFF (S3-compatible, path-style, region `auto`, service `s3`), signed by
+a **hand-rolled `SigV4Signer`** (HMAC-SHA256 chain, no AWS SDK / no new dep; verified
+against the AWS-published "GET ListUsers" known-answer — canonical-request hash
+`f536975d…`, signature `33f5dad2…`). Streaming is a **new `Http/BlobClient` seam**
+(`CurlBlobClient`: file-handle PUT, capped sink GET, DELETE/HEAD) — the buffering
+`HttpClient` structurally can't express file-handle uploads or abort-on-cap downloads.
+**Serving** resolves the provider PER OBJECT from a `storage_disk` column: R2 → 302 to a
+short-TTL presigned GET (content-type + disposition pinned; tenant check BEFORE the URL
+is minted; `no-store`), local → today's range-stream. **Seam placement:** ffmpeg always
+reads/writes local scratch; `put()` runs after a render is produced, `getToLocal()`
+stages a remote asset before ffmpeg. **Migration** = per-object `storage_disk` marker
+(assets/renders/asset_cache, default `local`) + `bin/migrate-storage.php` backfill
+(local→r2, verify-before-flip, idempotent/resumable, **never deletes the local copy** —
+delete-after-verify is a Phase 13 eviction concern). The streaming+capped download
+utility also retrofits the Pexels clip download (clears the Phase 7 buffering HARD GATE).
+`asset_cache` stays a LOCAL reuse layer in Phase 8. **Enable-time HARD GATE:** a
+live-bucket SigV4 smoke + PRIVATE/no-ACL bucket confirmation before `STORAGE_DRIVER=r2`.
+**Deferred to Phase 13:** assembly-side staging for an evicted remote video; render/cache
+eviction. Commit `ddc5cf9`.

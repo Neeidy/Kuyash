@@ -7,40 +7,21 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-12
-- Güncelleyen: Claude (FAZ 7 KABUL EDİLDİ, commit `b90cb8e` + push edildi — /next-phase → START PHASE 8 bekleniyor)
+- Güncelleyen: Claude (**FAZ 8 KABUL + commit `ddc5cf9` + push edildi**; checkpoint temizliği: Faz 7/8 mimari
+  detayı `architecture-decisions.md` ADR-013/014'e taşındı, "Mevcut durum" özetlendi. Sıra: /next-phase → Faz 9)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 7 (Media Production) KABUL EDİLDİ, commit'lendi + push edildi** (2026-06-12).
-  Commit'ler: ... Faz 5 `d293145`, Faz 6 `393d666`, **Faz 7 `b90cb8e` = HEAD** (Step A doc pivotu +
-  Faz 7 kodu + awaiting_recording etiket temizliği tek commit'te). origin/main = HEAD. Working tree temiz.
-- Faz 7 içeriği: executor seam'e **gerçek ffmpeg + TTS + stock** (mock-first sağlayıcılar GERÇEK
-  ffmpeg'i besler). `src/Media/*` (~24 sınıf): Ffmpeg (proc_open arg-array, timeout, temp cleanup) +
-  MediaPaths (tagged ref'ler, traversal-proof) + WavWriter (saf-PHP WAV) + AssetCache (içerik-adresli
-  sha256, hit'te respend yok) + RenderRepository + AssemblyEngine (narrated + distribution; draft
-  540x960 + final 1080x1920) + TtsProvider seam (Mock gerçek WAV / OpenAi flag-KAPALI) + TtsExecutor +
-  SubtitleBuilder (script-timed SRT; **bu ffmpeg build'inde subtitles/drawtext YOK → SRT sidecar +
-  mov_text soft-mux; burn-in flag arkasında, libass-build followup**) + StockProvider seam (Mock
-  lavfi / Pexels flag-KAPALI) + AssetFetchExecutor (reference→avatar→stock çözümleme; foto→still-clip,
-  video→ref) + AssemblyExecutor (draft) + FinalRenderExecutor (onay-sonrası final). Nodes: PUBLISH →
-  render_review→**final_render**→publish (her iki template). RenderController + /render(authed,range) +
-  /render/{id}/poster. WorkspaceSettings avatar pointer + Library avatar butonu. Dashboard cockpit ilk
-  geçiş (KPI şerit + aktif run'lar + onay-bekleyen thumbnail'lar). migration 0005 (avatar_asset_id,
-  reference_asset_id, renders, asset_cache). config/media.php + .env.example (TTS_MOCK/STOCK_MOCK=true).
-- Doğrulama: lint temiz; **432 PASS, 0 FAIL** (46 yeni; ~8s, suite içinde GERÇEK ffmpeg render);
-  sıfır ağ (OpenAiTts/Pexels FakeHttpClient, ffmpeg lokal); secret yok; ffmpeg arg-injection testi
-  (shell metachar → literal dosya adı, komut DEĞİL); canlı iki-terminal smoke: full run → script
-  approve → [Terminal-2] worker GERÇEK draft render (540x960 21.6s poster) → /render authed (200/206/
-  poster) + queue <video> önizleme → render approve → final render (1080x1920) → completed; cockpit
-  KPI/aktif/thumbnail; reference picker + avatar butonu render ediyor.
-- Review (3 paralel): security **GO**, integration **0 blocker**, php-architect **GO** → **0 blocker**.
-  Ucuz should-fix uygulandı: RenderController resolve() (read side-effect yok); AssetCache UNIQUE-only
-  race-catch + json_encode dışarı; CurlHttpClient MAXFILESIZE 128MiB; OpenAiTts cost yorumu
-  (per-token approx); Ffmpeg/MediaPaths/FinalRender yorum netliği. **HARD GATE'ler**
-  (`.claude/docs/phase-7-followups.md`): Pexels download stream+cap (gerçek stock PROD öncesi);
-  trend web-fetch worker'a (Faz 6); burn-in libass-build gerektirir.
-- (Faz 6 referans: `trend_fetch` TrendProvider arkasında [Mock varsayılan / YouTube+Google flag-KAPALI];
-  HttpClient.get(); create-from-trend [Engine $trendId]; `api_quota_usage`; commit `393d666`.)
+- Aşama: **FAZ 8 (Cloudflare R2 — storage abstraction) KABUL EDİLDİ, commit'lendi + push edildi** (2026-06-12).
+  **Faz 8 `ddc5cf9` = HEAD** (Faz 7 `b90cb8e`, Faz 6 `393d666`, Faz 5 `d293145`). origin/main = HEAD. Working tree
+  temiz (bu state commit'i hariç).
+- Faz 8 özeti: StorageProvider seam (Local varsayılan + R2 flag-KAPALI), el yazımı SigV4 (AWS ListUsers KAT'a
+  karşı doğrulandı), yeni Http/BlobClient streaming seam, serving per-object disk → R2 302 presigned (tenant-check
+  önce) / local stream, `storage_disk` marker + `bin/migrate-storage.php` backfill (lokal SİLİNMEZ), Pexels
+  download stream+cap (Faz 7 HARD GATE temiz). Lokal yol byte-aynı. **Tam mimari detay → ADR-014** (Faz 7 → ADR-013).
+- Doğrulama: **467 PASS, 0 FAIL** (+35); 3 reviewer (security/php-architect/integration) **GO / 0 blocker**; canlı
+  smoke (default local) regresyonsuz; secret grep temiz. **Enable-time HARD GATE:** STORAGE_DRIVER=r2 öncesi
+  canlı-bucket SigV4 smoke + PRIVATE/no-ACL teyidi. **Faz 13'e ertelenen:** assembly-side staging + render/cache eviction.
 - KURAL (kullanıcı, 2026-06-11): tüm run/test komutları `cd ~/Desktop/Kuyash &&` önekiyle.
 - Test: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
   Smoke (iki terminal): **[Terminal-1]** sunucu (8080 dolu → 8082)
@@ -70,13 +51,10 @@
 
 ## Sıradaki adım
 
-1. **Faz 7 KABUL + commit `b90cb8e` + push tamamlandı.** Kullanıcı isteğiyle `awaiting_recording`
-   durum-etiketleri Messages.php/Format.php'den çıkarıldı (şema CHECK stub'ı kaldı). Sıra:
-   `/next-phase` (Plan Mode) → **Faz 8 (Cloudflare R2)**: private storage + signed URL +
-   StorageProvider soyutlaması + lokal→R2 migrasyonu. İnşa yalnızca `START PHASE 8` ile.
-2. Faz 8'e taşınacak tetikleyiciler (`phase-7-followups.md`): **Pexels download stream+cap HARD GATE**
-   (gerçek stock PROD öncesi), render/cache eviction (R2 offload ile örtüşür); ayrıca trend web-fetch
-   worker'a (Faz 6 HARD GATE).
+1. **/next-phase → Faz 9 (Compliance Agent).** Faz 9 kapanışında `compliance-reviewer` ZORUNLU
+   (+ security/ux). İnşa yalnızca **`START PHASE 9`** token'ı ile başlar.
+2. Açık HARD GATE'ler (Faz 8'den): STORAGE_DRIVER=r2 enable-time canlı-bucket SigV4 smoke + PRIVATE/no-ACL
+   teyidi; Faz 13'e ertelenen assembly-side staging + render/cache eviction. Detay: ADR-014.
 
 ## Açık konular / bekleyenler
 
@@ -89,6 +67,9 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-06-12 — FAZ 8 KABUL: kullanıcı kabul + commit + push onayı verdi. Faz 8 `ddc5cf9` commit'lendi, origin/main'e push edildi (auto-push). Ardından checkpoint temizliği: Faz 7 + Faz 8 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-013 Media Production, ADR-014 Storage abstraction), "Mevcut durum" 4 satıra indirildi (~1 sayfa kuralı). Sıra: /next-phase → Faz 9.
+- 2026-06-12 — START PHASE 8: Cloudflare R2 storage abstraction İNŞA EDİLDİ. StorageProvider seam (Local varsayılan + real R2 flag-OFF) + el yazımı SigV4 (AWS ListUsers KAT'a karşı doğrulandı) + yeni Http/BlobClient streaming seam + StorageManager/StorageKey/StorageBackfill + migration 0006 (`storage_disk`). Serving per-object → R2 302 presigned (tenant-check önce) / local stream. Write seam put()+storage_disk; Pexels download stream+cap (Faz 7 HARD GATE temizlendi). bin/migrate-storage.php backfill. 467 PASS, 3 reviewer GO/0 blocker, ucuz should-fix (CURLPROTO_HTTPS pin vb.). Commit YAPILMADI — kabul bekliyor.
+- 2026-06-12 — /next-phase: Faz 8 (Cloudflare R2) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-8-plan.md`'e kaydedildi. 3 kilitli karar: Real R2StorageProvider flag-OFF (el yazımı SigV4, FakeHttpClient) / presigned-redirect serving (tenant-check redirect'ten önce) / per-object `storage_disk` marker + bin/ backfill (coexist, lokal silinmez). Pexels stream+cap HARD GATE plana folded. Kod YAZILMADI — START PHASE 8 bekleniyor.
 - 2026-06-12 — FAZ 7 KABUL: kullanıcı kabul + commit + push onayı + `awaiting_recording` etiket temizliği istedi (Messages/Format'tan çıkarıldı; şema stub kaldı). 432 test PASS. Faz 7 `b90cb8e` commit'lendi (Step A doc pivotu dahil), origin/main'e push edildi (auto-push). Sıra: /next-phase → START PHASE 8.
 - 2026-06-12 — START PHASE 7: Media Production inşa edildi (src/Media ~24 sınıf: Ffmpeg arg-array wrapper + MediaPaths + WavWriter + AssetCache içerik-adresli + AssemblyEngine draft/final + TTS/Stock seam'leri [mock varsayılan, gerçek flag-kapalı] + AssetFetchExecutor reference→avatar→stock; Nodes final_render; RenderController; cockpit; migration 0005). GERÇEK ffmpeg varsayılan; build'de subtitles/drawtext YOK → SRT sidecar+mov_text. 3 reviewer 0 blocker.
 - 2026-06-12 — /next-phase + PİVOT: Faz 7 planı ONAYLANDI. Kullanıcı reference-asset modelini tanımladı → shooting-brief/awaiting_recording KALDIRILDI (ADR-012). Step A doc güncellemeleri yapıldı. ffmpeg GERÇEK varsayılan kararı.
@@ -96,6 +77,3 @@
 - 2026-06-12 — START PHASE 6: Trend Radar Backend inşa edildi (TrendProvider seam: Mock varsayılan + gerçek-ama-kapalı YouTube/Google; HttpClient get(); TrendService read-through cache+TTL+serve-stale; QuotaCounter; create-from-trend Engine pin; /trends UI; migration 0004). 3 reviewer 0 blocker, ucuz should-fix uygulandı.
 - 2026-06-12 — /next-phase: Faz 6 (Trend Radar Backend) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-6-plan.md`'e kaydedildi. Kullanıcı kararları: gerçek GoogleTrends+YouTube adapter'ları flag-KAPALI inşa (Faz 5 deseni); Creator Watch ERTELENDİ.
 - 2026-06-12 — FAZ 5 KABUL: kullanıcı kabul + commit onayı + 3 ek istedi (footer Phase 5; worker heartbeat → Dashboard/Queue "worker çalışmıyor" bandı; faz-kapanış smoke'larında [Terminal-2] etiketi → memory). 3 ek uygulandı, 337 test PASS, canlı doğrulandı. Faz 5 `d293145` commit'lendi; kullanıcının Faz 7 cockpit plan-düzenlemesi ayrı `b673b1c` docs commit'i. Sıra: /next-phase → START PHASE 6.
-- 2026-06-12 — START PHASE 5: Script & Caption Engine inşa edildi (TextProvider seam: Mock + gerçek-ama-kapalı OpenAI; HttpClient seam + sahte transport; PromptLibrary versiyonlu; VariationEngine tohumlu slop kontrolü; CostCalculator; ContentExecutor; cost-on-awaiting). 3 reviewer 0 blocker, tüm should-fix+NTH uygulandı.
-- 2026-06-12 — /next-phase: Faz 5 (Script & Caption Engine) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-5-plan.md`'e kaydedildi. Kararlar: engine-only UI, gerçek OpenAI yolu flag-kapalı, Claude ertelendi, migration yok.
-- 2026-06-12 — FAZ 4 KABUL: kullanıcı kabul + commit onayı verdi; Faz 4 `f56d4ab` olarak commit'lendi. Kullanıcının üç plan-doc düzenlemesi (Creator Watch, countdown, V2) ayrı `730456c` docs commit'iyle alındı.
