@@ -193,3 +193,51 @@ mock OAuth connect + forged-state reject, webhook CSRF-exempt/fail-closed) OK; s
 clean. security-auditor + compliance-reviewer (both MANDATORY) **GO / 0 blocker** (1 MEDIUM
 external_url scheme → fixed); ux-reviewer conditional → 2 fixes applied. **Deferred:**
 `.claude/docs/phase-10-followups.md`. Commit `c664604`.
+
+## ADR-017: Usage ledger, money-credit ledger & pre-flight budget gate (Phase 11, 2026-06-12)
+
+Cost moves from the minimal `SUM(jobs.cost_cents)` to a real **append-only usage ledger**;
+"credits" are a money-denominated **display layer over real cents** — **no prepaid economy,
+no auto-allowance, no Stripe** (grants are manual). The enforced control is **month-to-date
+spend vs `workspaces.budget_cap_cents`**, now a **pre-flight HARD block**. **migration 0009:**
+`usage_events` (workspace_id/run_id/job_id/provider/category[ai_text|tts|stock|publish|ai_video]/
+model/units/unit_type/cost_cents≥0, `UNIQUE(job_id)`, `idx (workspace_id, created_at)`) +
+`credit_transactions` (type[grant|spend|adjust], **signed** amount_cents so balance =
+`SUM(amount_cents)`; `idx (workspace_id, id DESC)`; **partial `UNIQUE(ref_job_id) WHERE
+type='spend'`**). `model`/`units` are **NULL in V1** (provider+category+cost captured truthfully;
+threading token/char counts through the executor seam is a Phase 13 follow-up). **`UsageRecorder`**
+is the **single write path**, called from `Engine::finalizeSuccess` and `finalizeAwaiting`
+**inside the finalize transaction** (plain `run()`, joins the open tx — never nests; the
+short-tx rule holds). **TRUTHFUL by design:** writes a row ONLY for a **real, non-null,
+positive** cost — mock providers and cache hits return null cost → **zero rows**; a sub-cent
+call rounded to $0 → **zero rows**; unmapped/free job types (trend/assembly/render/compliance/
+publish) → zero rows (`jobs.cost_cents` still holds the per-job rollup). **Idempotent:**
+`INSERT OR IGNORE` on `usage_events(job_id)`; the mirrored `credit_transactions` spend
+(amount = `-cost`) is written only when the usage row was **newly inserted**; recorder runs
+only on terminal-success/awaiting (never on failure/retry) so retries can't inflate spend.
+**Non-throwing by construction** (no UNIQUE violation, cost clamped to the ≥0 CHECK, category/
+unit_type from validated config) → it cannot roll back an otherwise-successful finalize.
+**`CostEstimator`** is deterministic + config-driven (`config/usage.php` estimate_cents +
+categories + unit_types): expands the run's node set via `Nodes::expand`, sums per-type cents
+grouped by category (full ≈ 10c, distribution ≈ 2c; `ai_video` = priced placeholder for Phase 12,
+never charged). **`PreflightGate`** (in `Engine::startRun`, **before** any row is created, after
+all validation): if `estimate > cap − MTD-spend` → emit `guardrail.preflight_block` + throw
+**`BudgetExceededException`** (a now-non-final `WorkflowException` subclass, so the existing
+startRun catch sites flash `run.budget_exceeded` unchanged) — **no half-started run**. No cap
+set → never blocks. **Single source of truth:** `AutoApprovalGate::monthToDateSpendCents`
+re-pointed from `jobs.cost_cents` to `usage_events` via injected `UsageRepository` (Phase 9
+approval-time budget guardrail behaviour preserved — a **discriminating** parity test seeds a
+different old-rollup total than the ledger and proves the gate reads the ledger). **MTD basis
+change on deploy** (no backfill) is a documented plan non-goal → followups. **UI:** `/usage`
+(nav between Logs/Digest and Settings; footer "Phase 11") — KPI strip (spent / cap / remaining /
+biggest-category-with-amount), budget bar (`role=progressbar`, tone ok/warn/err), 4-category
+breakdown, recent charges (truthful "real spend only" + "showing latest N of M" scope note),
+credit balance (granted/spent/adjusted; 0=neutral), ≥75% warn / ≥90%+over err banners with
+figures; empty/no-cap states; `Format::cents`. **`bin/grant-credits.php`** = manual grant
+(positive) / adjust (signed), CLI-only, validates ws + amount. Verification: **630 PASS / 0
+FAIL** (+43); DI (web+worker) OK; live smoke (login, /usage states, grant CLI, end-to-end
+pre-flight hard-block leaving no run + event in /logs, under-budget proceeds) OK; secret grep
+clean. **5-dimension review all GO** — security (MANDATORY) **0 blockers**, php-architect,
+compliance/truthfulness, ux, qa; 2 MEDIUM qa findings applied (discriminating parity test +
+finalizeAwaiting e2e test) + recorder non-positive-skip + ux polish. **Deferred:**
+`.claude/docs/phase-11-followups.md`. Commit `bd6b5a6`.
