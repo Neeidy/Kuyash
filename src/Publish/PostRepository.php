@@ -6,6 +6,7 @@ namespace Kuyash\Publish;
 
 use Kuyash\Core\Database;
 use Kuyash\Workspace\WorkspaceContext;
+use Throwable;
 
 /**
  * Per-target publish records (one row = one (run, account)). Worker-side writes
@@ -64,6 +65,13 @@ final class PostRepository
      * Insert a fresh in-flight target. The UNIQUE idempotency index is the
      * backstop against a double-insert race; the executor check-then-inserts on
      * a single-claimed job, so this is normally collision-free.
+     *
+     * Graceful UNIQUE backstop: if two publish attempts for the same
+     * (run, account) ever race past the executor's findByKey pre-check, the
+     * loser's INSERT trips the UNIQUE(idempotency_key) index. Rather than throw
+     * (which would fail the job and trigger a retry), we treat the existing row
+     * as the winner and return its id — the post already exists, so the work is
+     * done. Defensive: unreachable under the single-claimed-job invariant today.
      */
     public function insertPublishing(
         int $workspaceId,
@@ -76,15 +84,32 @@ final class PostRepository
         string $idempotencyKey,
         string $now,
     ): int {
-        $this->db->run(
-            "INSERT INTO posts (workspace_id, run_id, job_id, account_id, platform, status,
-                ai_label_applied, scheduled_for, idempotency_key, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'publishing', ?, ?, ?, ?, ?)",
-            [$workspaceId, $runId, $jobId, $accountId, $platform, $aiLabelApplied ? 1 : 0,
-                $scheduledFor, $idempotencyKey, $now, $now],
-        );
+        try {
+            $this->db->run(
+                "INSERT INTO posts (workspace_id, run_id, job_id, account_id, platform, status,
+                    ai_label_applied, scheduled_for, idempotency_key, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, 'publishing', ?, ?, ?, ?, ?)",
+                [$workspaceId, $runId, $jobId, $accountId, $platform, $aiLabelApplied ? 1 : 0,
+                    $scheduledFor, $idempotencyKey, $now, $now],
+            );
+        } catch (Throwable $e) {
+            if ($this->isUniqueViolation($e)) {
+                $existing = $this->findByKey($workspaceId, $idempotencyKey);
+                if ($existing !== null) {
+                    return (int) $existing['id']; // a concurrent attempt won — reuse its post
+                }
+            }
+            throw $e;
+        }
 
         return $this->db->lastInsertId();
+    }
+
+    /** SQLSTATE 23000 (integrity constraint) naming the UNIQUE index. */
+    private function isUniqueViolation(Throwable $e): bool
+    {
+        return ($e instanceof \PDOException && (string) $e->getCode() === '23000')
+            || str_contains($e->getMessage(), 'UNIQUE constraint');
     }
 
     /** Re-mark an existing post in-flight (a retry re-attempt of a rate-limited target). */

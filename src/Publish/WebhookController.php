@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kuyash\Publish;
 
+use Kuyash\Core\RateLimiter;
 use Kuyash\Core\Response;
 use Throwable;
 
@@ -22,30 +23,44 @@ final class WebhookController
 {
     public const SIGNATURE_HEADER = 'HTTP_X_ZERNIO_SIGNATURE';
 
+    /** Logical rate-limit bucket for this endpoint. */
+    private const RATE_BUCKET = 'webhook:zernio';
+
     /** Webhook payloads are small JSON status events — cap the body to bound abuse. */
     private const MAX_BODY_BYTES = 65536;
 
     public function __construct(
         private readonly WebhookInbox $inbox,
         private readonly string $secret,
+        private readonly ?RateLimiter $rateLimiter = null,
     ) {
     }
 
-    /** Route entrypoint: read the raw body + signature header, then verify. */
+    /** Route entrypoint: read the raw body + signature header + client IP, then verify. */
     public function receive(array $params = []): Response
     {
         $raw = file_get_contents('php://input');
         $signature = (string) ($_SERVER[self::SIGNATURE_HEADER] ?? '');
+        $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
 
-        return $this->handle(is_string($raw) ? $raw : '', $signature);
+        return $this->handle(is_string($raw) ? $raw : '', $signature, $ip);
     }
 
     /**
-     * Verify → persist raw → ack. Directly testable (no php://input): the route
-     * passes the captured body/signature here.
+     * Per-IP rate-limit → verify → persist raw → ack. Directly testable (no
+     * php://input): the route passes the captured body/signature/ip here.
      */
-    public function handle(string $rawBody, string $signature): Response
+    public function handle(string $rawBody, string $signature, string $ip = 'unknown'): Response
     {
+        // throttle FIRST (cheapest path): a flood of bogus deliveries from one IP
+        // is rejected before HMAC work. Generous cap — a real webhook never bursts
+        // near it (see RateLimiter). No limiter wired (tests) → no throttling.
+        if ($this->rateLimiter !== null && $this->rateLimiter->tooMany(self::RATE_BUCKET, $ip)) {
+            error_log('Kuyash: webhook rejected — per-IP rate limit exceeded');
+
+            return self::text('rate limit exceeded', 429);
+        }
+
         if (strlen($rawBody) > self::MAX_BODY_BYTES) {
             error_log('Kuyash: webhook rejected — body exceeds size cap');
 

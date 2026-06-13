@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kuyash\Media;
 
+use Kuyash\Core\PermanentFailureException;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpTransportException;
 
@@ -67,6 +68,10 @@ final class OpenAiTtsProvider implements TtsProvider
 
         if ($response->status === 429) {
             throw new TtsProviderException('OpenAI TTS rate limited (HTTP 429)');
+        }
+        if ($response->status === 401 || $response->status === 403) {
+            // credentials invalid/forbidden — retrying cannot fix it; dead-letter fast
+            throw new PermanentFailureException('OpenAI TTS rejected (HTTP ' . $response->status . ') — credentials invalid or forbidden');
         }
         if ($response->status < 200 || $response->status >= 300) {
             throw new TtsProviderException('OpenAI TTS request failed (HTTP ' . $response->status . ')');

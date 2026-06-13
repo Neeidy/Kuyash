@@ -6,6 +6,7 @@ namespace Kuyash\Workflow;
 
 use Closure;
 use Kuyash\Core\Database;
+use Kuyash\Core\PermanentFailure;
 use Throwable;
 
 /**
@@ -65,8 +66,14 @@ final class Worker
         try {
             $result = $this->executors->for((string) $job['type'])->execute($job, $prior);
         } catch (Throwable $e) {
-            // an executor throw is a failed ATTEMPT (retry/backoff), never a worker crash
-            $result = JobResult::failed($e::class . ': ' . $e->getMessage());
+            // an executor throw is a failed ATTEMPT (retry/backoff), never a worker
+            // crash — UNLESS it signals a permanent condition (PermanentFailure,
+            // e.g. an HTTP 401/403 auth error from a provider), which dead-letters
+            // immediately so the retry budget isn't burned on an unfixable error.
+            $message = $e::class . ': ' . $e->getMessage();
+            $result = $e instanceof PermanentFailure
+                ? JobResult::failedPermanent($message)
+                : JobResult::failed($message);
         }
 
         $this->engine->finalize($job, $result);

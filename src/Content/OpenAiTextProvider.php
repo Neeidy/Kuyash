@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kuyash\Content;
 
+use Kuyash\Core\PermanentFailureException;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpTransportException;
 use Throwable;
@@ -100,6 +101,11 @@ final class OpenAiTextProvider implements TextProvider
 
         if ($response->status === 429) {
             throw new TextProviderException('OpenAI rate limited (HTTP 429)');
+        }
+        if ($response->status === 401 || $response->status === 403) {
+            // credentials invalid/forbidden — retrying cannot fix it; dead-letter
+            // fast (PermanentFailure) instead of burning the backoff budget
+            throw new PermanentFailureException('OpenAI request rejected (HTTP ' . $response->status . ') — credentials invalid or forbidden');
         }
         if ($response->status < 200 || $response->status >= 300) {
             // status only — never echo the response body

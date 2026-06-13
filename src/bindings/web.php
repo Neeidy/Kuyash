@@ -35,6 +35,7 @@ use Kuyash\Core\Csrf;
 use Kuyash\Core\Database;
 use Kuyash\Core\ErrorHandler;
 use Kuyash\Core\Flash;
+use Kuyash\Core\RateLimiter;
 use Kuyash\Core\Router;
 use Kuyash\Core\Session;
 use Kuyash\Core\View;
@@ -222,6 +223,9 @@ return static function (Container $container, string $basePath): void {
     $container->bind(WebhookController::class, static fn (Container $c): WebhookController => new WebhookController(
         $c->get(WebhookInbox::class),
         (string) $c->get(Config::class)->get('zernio.webhook_secret', ''),
+        // per-IP throttle: 120 deliveries / 60s — generous (a real webhook never
+        // bursts near it); tune down once Zernio's live rate is known.
+        new RateLimiter($c->get(Database::class), 120, 60),
     ));
 
     $container->bind(TrendController::class, static fn (Container $c): TrendController => new TrendController(

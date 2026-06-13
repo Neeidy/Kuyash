@@ -222,7 +222,7 @@ final class Engine
                 JobResult::STATUS_PUBLISHED => $this->finalizeSuccess($job, $result, $now),
                 JobResult::STATUS_AWAITING_APPROVAL => $this->finalizeAwaiting($job, $result, $now),
                 JobResult::STATUS_DEFERRED => $this->finalizeDeferred($job, $result, $now),
-                default => $this->finalizeFailure($job, (string) $result->errorMessage, $now),
+                default => $this->finalizeFailure($job, (string) $result->errorMessage, $now, $result->retryable),
             };
         });
     }
@@ -584,14 +584,19 @@ final class Engine
      * Failed attempt: requeue with exponential backoff while retries remain
      * (run_after = now + 2^retry_count × 5s), otherwise dead-letter the job
      * and fail the run.
+     *
+     * $retryable=false (a PermanentFailure, e.g. HTTP 401/403 auth) skips the
+     * backoff entirely and dead-letters on the FIRST attempt — retrying an
+     * unfixable credential error would only waste the budget. The dead-lettered
+     * job is still manually retriable once the operator fixes the key.
      */
-    private function finalizeFailure(array $job, string $errorMessage, string $now): void
+    private function finalizeFailure(array $job, string $errorMessage, string $now, bool $retryable = true): void
     {
         $wsId = (int) $job['workspace_id'];
         $runId = (int) $job['run_id'];
         $newCount = (int) $job['retry_count'] + 1;
 
-        if ($newCount < (int) $job['max_retries']) {
+        if ($retryable && $newCount < (int) $job['max_retries']) {
             $delay = (2 ** $newCount) * self::BACKOFF_BASE_S;
             $updated = $this->db->run(
                 "UPDATE jobs SET status = 'queued', retry_count = ?, error_message = ?,
@@ -613,10 +618,14 @@ final class Engine
             return;
         }
 
+        // a non-retryable dead-letter is labelled so the queue UI explains why
+        // it never backed off (truthful: "this could not be retried")
+        $deadMessage = $retryable ? $errorMessage : 'non-retryable: ' . $errorMessage;
+
         $updated = $this->db->run(
             "UPDATE jobs SET status = 'failed', retry_count = ?, error_message = ?, finished_at = ?
              WHERE id = ? AND workspace_id = ? AND status = 'processing' AND worker_id = ?",
-            [$newCount, $errorMessage, $now, $job['id'], $wsId, $job['worker_id']],
+            [$newCount, $deadMessage, $now, $job['id'], $wsId, $job['worker_id']],
         );
         if ($updated->rowCount() === 0) {
             return;
@@ -624,7 +633,8 @@ final class Engine
 
         $this->events->record($wsId, 'error', 'transition', 'job.failed', [
             'type' => (string) $job['type'],
-            'error' => $errorMessage,
+            'error' => $deadMessage,
+            'retryable' => $retryable,
             'run' => $runId,
         ], $runId, (int) $job['id']);
 

@@ -1,16 +1,21 @@
-# Kuyash — Caddy config (written in Phase 1, NOT yet validated:
-# Caddy is intentionally not installed on this machine — see phase plan;
-# run `caddy validate` + a real `caddy run` during Phase 13 hardening).
+# Kuyash — Caddy config.
+#
+# Phase 13 review: headers + blocked paths confirmed below. Caddy is intentionally
+# NOT installed on this machine, so `caddy validate` / `caddy run` is an OPERATOR
+# enable-time step (see production-readiness.md) — this file is authored to the
+# documented production shape and reviewed by hand.
 #
 # Local dev today uses PHP's built-in server instead:
 #   /opt/homebrew/opt/php@8.3/bin/php -S 127.0.0.1:8080 -t public public/index.php
 #
-# Production shape: Caddy behind Cloudflare Tunnel (no exposed ports, TLS at
-# the edge). php_fastcgi expects php-fpm from the php@8.3 Homebrew keg.
+# Production shape: Caddy behind Cloudflare Tunnel (no exposed ports, TLS at the
+# edge). php_fastcgi expects php-fpm from the php@8.3 Homebrew keg.
 
-# explicit http:// — otherwise Caddy auto-provisions internal-CA HTTPS on :8080,
-# which would conflict with APP_URL=http://localhost:8080
-http://localhost:8080 {
+# Shared hardening — security headers + path blocklist + fastcgi. Imported by both
+# the dev and production site blocks so they never drift. HSTS is deliberately NOT
+# here: it is meaningless over plain http and is added only in the TLS-terminated
+# production block below.
+(app) {
 	# run caddy from the project root so this relative path resolves
 	root * ./public
 
@@ -29,10 +34,30 @@ http://localhost:8080 {
 		-X-Powered-By
 	}
 
-	# block dotfiles and anything that should never be served
-	@blocked path /.* /storage/* /src/* /config/* /templates/*
+	# never serve dotfiles or any non-public directory (defense in depth: the
+	# app already routes everything through public/index.php)
+	@blocked path /.* /storage/* /src/* /config/* /templates/* /database/* /bin/* /tests/*
 	respond @blocked 404
 
 	php_fastcgi 127.0.0.1:9000
 	file_server
 }
+
+# --- Local dev ---------------------------------------------------------------
+# explicit http:// — otherwise Caddy auto-provisions internal-CA HTTPS on :8080,
+# which would conflict with APP_URL=http://localhost:8080
+http://localhost:8080 {
+	import app
+}
+
+# --- Production (Caddy origin behind Cloudflare Tunnel; TLS at the edge) ------
+# Uncomment + set the real hostname at deploy. Cloudflare terminates TLS and the
+# tunnel forwards to this origin; HSTS is emitted so the browser (which sees https
+# via Cloudflare) pins TLS for a year. Keep the bucket/objects private — R2 is
+# served only via short-TTL signed redirects, never a public path here.
+#
+# kuyash.example.com {
+# 	root * /srv/kuyash/public
+# 	import app
+# 	header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+# }

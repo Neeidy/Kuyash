@@ -25,6 +25,9 @@ final class JobResult
         public readonly ?int $costCents = null,
         public readonly ?string $provider = null,
         public readonly int $deferSeconds = 0,
+        // false = a permanent failure (e.g. HTTP 401/403): dead-letter at once,
+        // skip the backoff/retry budget. Only meaningful when status = failed.
+        public readonly bool $retryable = true,
     ) {
     }
 
@@ -55,6 +58,16 @@ final class JobResult
     public static function failed(string $errorMessage, ?string $provider = null): self
     {
         return new self(self::STATUS_FAILED, [], $errorMessage, null, $provider);
+    }
+
+    /**
+     * A failed attempt that retrying CANNOT fix (HTTP 401/403 auth). The engine
+     * dead-letters it immediately — no exponential-backoff requeue — so the run
+     * fails fast and the operator can fix credentials, then manually retry.
+     */
+    public static function failedPermanent(string $errorMessage, ?string $provider = null): self
+    {
+        return new self(self::STATUS_FAILED, [], $errorMessage, null, $provider, 0, false);
     }
 
     /**

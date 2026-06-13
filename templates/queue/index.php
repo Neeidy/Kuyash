@@ -127,7 +127,7 @@ use Kuyash\Core\View;
           <span class="job-row__type mono"><?= View::e($job['type']) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
           <span class="job-row__entity">run #<?= (int) $job['run_id'] ?> · <?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
           <?php if ($job['status'] === 'failed' && $job['error_message'] !== null): ?>
-          <span class="job-row__error"><?= View::e((string) $job['error_message']) ?> (retry <?= $job['retry_count'] ?>/<?= $job['max_retries'] ?>)</span>
+          <span class="job-row__error"><?= View::e((string) $job['error_message']) ?><?php if (str_starts_with((string) $job['error_message'], 'non-retryable:')): ?> (no auto-retry)<?php else: ?> (retry <?= $job['retry_count'] ?>/<?= $job['max_retries'] ?>)<?php endif; ?></span>
           <?php elseif ($job['status'] === 'queued' && str_starts_with((string) $job['error_message'], 'deferred:')): ?>
           <span class="job-row__entity">held by guardrail — <?= View::e((string) $job['error_message']) ?> · retries at <?= View::e(Format::utcTime((string) $job['run_after'])) ?> UTC</span>
           <?php endif; ?>

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kuyash\Media;
 
+use Kuyash\Core\PermanentFailureException;
 use Kuyash\Http\BlobClient;
 use Kuyash\Http\HttpClient;
 use Kuyash\Http\HttpTransportException;
@@ -88,6 +89,10 @@ final class PexelsStockProvider implements StockProvider
 
         if ($response->status === 429) {
             throw new StockProviderException('Pexels rate limited (HTTP 429)');
+        }
+        if ($response->status === 401 || $response->status === 403) {
+            // API key invalid/forbidden — retrying cannot fix it; dead-letter fast
+            throw new PermanentFailureException('Pexels rejected (HTTP ' . $response->status . ') — API key invalid or forbidden');
         }
         if ($response->status < 200 || $response->status >= 300) {
             throw new StockProviderException('Pexels request failed (HTTP ' . $response->status . ')');

@@ -305,12 +305,42 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 10);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 11);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
+
+echo "== SqliteBackup: WAL-aware snapshot round-trip (Phase 13) ==\n";
+
+$bkDir = tempDir('backup');
+$bkSrcPath = $bkDir . '/live.sqlite';
+$bkSrc = new Database($bkSrcPath);
+(new Migrator($bkSrc, $basePath . '/database/migrations'))->migrate();
+[$bkU, $bkWs] = seedUser($bkSrc, 'bk@example.com', 'x', 'BK WS');
+// write a row AFTER connect so the latest committed state lives in the -wal sidecar
+// (a raw cp would miss it; VACUUM INTO must capture it)
+$bkSrc->run("INSERT INTO events (workspace_id, level, kind, key, params_json, created_at) VALUES (?, 'info', 'transition', 'backup.probe', '{}', ?)", [$bkWs, gmdate(NOW_ISO)]);
+$bkTarget = $bkDir . '/snap.sqlite';
+$bkIntegrity = (new \Kuyash\Core\SqliteBackup($bkSrc))->snapshotTo($bkTarget);
+check('backup: VACUUM INTO snapshot passes integrity_check', $bkIntegrity === 'ok' && is_file($bkTarget));
+check('backup: snapshot has row-count parity with the live source (WAL content captured)', (static function () use ($bkSrc, $bkTarget): bool {
+    $snap = new Database($bkTarget);
+    foreach (['users', 'workspaces', 'workspace_users', 'events', 'migrations'] as $t) {
+        if ((int) $bkSrc->one("SELECT COUNT(*) AS n FROM {$t}")['n'] !== (int) $snap->one("SELECT COUNT(*) AS n FROM {$t}")['n']) {
+            return false;
+        }
+    }
+
+    return (string) $snap->one("SELECT key FROM events WHERE key = 'backup.probe'")['key'] === 'backup.probe';
+})());
+check('backup: refuses to overwrite an existing target (no clobber)', throws(static fn () => (new \Kuyash\Core\SqliteBackup($bkSrc))->snapshotTo($bkTarget), RuntimeException::class));
+foreach (['', '-wal', '-shm'] as $sfx) {
+    @unlink($bkSrcPath . $sfx);
+}
+@unlink($bkTarget);
+@rmdir($bkDir);
 
 echo "== Schema constraints ==\n";
 
@@ -961,6 +991,24 @@ final class AlwaysThrowsExecutor implements JobExecutor
     public function execute(array $job, array $prior): JobResult
     {
         throw new RuntimeException('synthetic executor failure');
+    }
+}
+
+/** Executor that RETURNS a non-retryable failure — exercises fast-fail dead-letter (Phase 13). */
+final class PermanentlyFailsExecutor implements JobExecutor
+{
+    public function execute(array $job, array $prior): JobResult
+    {
+        return JobResult::failedPermanent('auth rejected (HTTP 401)', 'test');
+    }
+}
+
+/** Executor that THROWS a PermanentFailure — the Worker must classify it as non-retryable. */
+final class ThrowsPermanentExecutor implements JobExecutor
+{
+    public function execute(array $job, array $prior): JobResult
+    {
+        throw new \Kuyash\Core\PermanentFailureException('provider auth failed (HTTP 403)');
     }
 }
 
@@ -1728,6 +1776,87 @@ check('manual retry: healed run reaches render review', (static function () use 
         && $awaiting[0]['type'] === 'render_review';
 })());
 
+echo "== Retry: non-retryable failure dead-letters on first attempt (401/403 fast-fail) ==\n";
+
+// (a) an executor that RETURNS JobResult::failedPermanent → Engine dead-letters
+// at once, NO backoff requeue, even though retries remained.
+$nrDb = migratedDb($basePath);
+[$nrUser, $nrWs] = seedUser($nrDb, 'nr@example.com', $argonHash, 'NR WS');
+$_SESSION = [];
+$nrCtx = new WorkspaceContext($nrDb);
+$nrCtx->set($nrWs);
+$nrNow = '2026-06-13T14:00:00Z';
+[$nrEngine, $nrWorker, $nrEvents] = makeRig($nrDb, new PermanentlyFailsExecutor(), $nrNow);
+(new WorkflowRepository($nrDb, $validator4))->ensureDefaults($nrCtx);
+$nrWf = (new WorkflowRepository($nrDb, $validator4))->listFor($nrCtx)[1]; // distribution
+$nrAsset = seedReadyVideo($nrDb, $nrWs);
+$nrRunId = $nrEngine->startRun($nrCtx, $nrWf['id'], $nrAsset, $nrUser);
+$nrJobs = new JobRepository($nrDb);
+$nrRuns = new RunRepository($nrDb);
+
+$nrWorker->tick(); // ONE attempt → immediate dead-letter (no backoff)
+
+check('fast-fail: non-retryable job dead-letters on the FIRST attempt', (static function () use ($nrJobs, $nrCtx, $nrRunId): bool {
+    $job = $nrJobs->jobsForRun($nrCtx, $nrRunId)[0];
+
+    return $job['status'] === 'failed' && $job['retry_count'] === 1
+        && str_contains((string) $job['error_message'], 'non-retryable:');
+})());
+check('fast-fail: the run failed immediately', $nrRuns->find($nrCtx, $nrRunId)['status'] === 'failed');
+check('fast-fail: NO requeue/backoff event was emitted (budget not burned)', (static function () use ($nrEvents, $nrCtx, $nrRunId): bool {
+    $keys = array_column($nrEvents->timelineForRun($nrCtx, $nrRunId), 'key');
+
+    return !in_array('job.requeued', $keys, true) && in_array('job.failed', $keys, true);
+})());
+check('fast-fail: queue not claimable again (terminal)', $nrWorker->tick() === false);
+check('fast-fail: a dead-lettered non-retryable job is still manually retriable', (static function () use ($nrEngine, $nrJobs, $nrCtx, $nrRunId, $nrUser): bool {
+    $job = $nrJobs->jobsForRun($nrCtx, $nrRunId)[0];
+
+    return $nrEngine->retryJob($nrCtx, $job['id'], $nrUser, 'nr@example.com') === Decision::Ok;
+})());
+
+// (b) an executor that THROWS a PermanentFailure → the Worker classifies it as
+// non-retryable and the SAME fast-fail dead-letter applies.
+$nrtDb = migratedDb($basePath);
+[$nrtUser, $nrtWs] = seedUser($nrtDb, 'nrt@example.com', $argonHash, 'NRT WS');
+$_SESSION = [];
+$nrtCtx = new WorkspaceContext($nrtDb);
+$nrtCtx->set($nrtWs);
+$nrtNow = '2026-06-13T15:00:00Z';
+[$nrtEngine, $nrtWorker] = makeRig($nrtDb, new ThrowsPermanentExecutor(), $nrtNow);
+(new WorkflowRepository($nrtDb, $validator4))->ensureDefaults($nrtCtx);
+$nrtWf = (new WorkflowRepository($nrtDb, $validator4))->listFor($nrtCtx)[1];
+$nrtAsset = seedReadyVideo($nrtDb, $nrtWs);
+$nrtRunId = $nrtEngine->startRun($nrtCtx, $nrtWf['id'], $nrtAsset, $nrtUser);
+$nrtJobs = new JobRepository($nrtDb);
+$nrtWorker->tick();
+check('fast-fail: a thrown PermanentFailure also dead-letters on the first attempt', (static function () use ($nrtJobs, $nrtCtx, $nrtRunId): bool {
+    $job = $nrtJobs->jobsForRun($nrtCtx, $nrtRunId)[0];
+
+    return $job['status'] === 'failed' && $job['retry_count'] === 1
+        && str_contains((string) $job['error_message'], 'non-retryable:')
+        && str_contains((string) $job['error_message'], 'HTTP 403');
+})());
+
+// (c) a transient RuntimeException is STILL retryable (backoff path unchanged)
+check('fast-fail: an ordinary throw is still retryable (requeued, not dead-lettered)', (static function () use ($basePath, $argonHash, $validator4): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'tr@example.com', $argonHash, 'TR WS');
+    $_SESSION = [];
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $now = '2026-06-13T16:00:00Z';
+    [$engine, $worker] = makeRig($db, new AlwaysThrowsExecutor(), $now);
+    (new WorkflowRepository($db, $validator4))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, $validator4))->listFor($ctx)[1];
+    $asset = seedReadyVideo($db, $ws);
+    $runId = $engine->startRun($ctx, $wf['id'], $asset, $u);
+    $worker->tick();
+    $job = (new JobRepository($db))->jobsForRun($ctx, $runId)[0];
+
+    return $job['status'] === 'queued' && $job['retry_count'] === 1; // requeued with backoff
+})());
+
 echo "== Watchdog: stale processing jobs ==\n";
 
 $dogDb = migratedDb($basePath);
@@ -2245,6 +2374,22 @@ check('openai: transport throw → wrapped, sanitized', (static function () use 
     } catch (TextProviderException $e) {
         return str_contains($e->getMessage(), 'timed out');
     }
+})());
+check('openai: 401/403 → PermanentFailureException (non-retryable, status only, NOT the domain type)', (static function () use ($makeOpenAi): bool {
+    [$p401] = $makeOpenAi([new HttpResponse(401, '{"error":{"message":"sk-test-SECRET-DO-NOT-LEAK"}}')]);
+    $is401 = throws(static fn () => $p401->generate('idea', ['topic' => 't'], 1), \Kuyash\Core\PermanentFailureException::class);
+    // a PermanentFailureException is NOT a TextProviderException, so it slips past
+    // the executor's domain catch and reaches the Worker's non-retryable classifier
+    $notDomain = !throws(static fn () => $makeOpenAi([new HttpResponse(403, '{}')])[0]->generate('idea', ['topic' => 't'], 1), TextProviderException::class);
+    [$p403] = $makeOpenAi([new HttpResponse(403, '{"error":{"message":"sk-test-SECRET-DO-NOT-LEAK"}}')]);
+    $leak = false;
+    try {
+        $p403->generate('idea', ['topic' => 't'], 1);
+    } catch (\Kuyash\Core\PermanentFailureException $e) {
+        $leak = str_contains($e->getMessage(), 'sk-test-SECRET-DO-NOT-LEAK');
+    }
+
+    return $is401 && $notDomain && !$leak;
 })());
 check('openai: malformed top-level JSON → failed', (static function () use ($makeOpenAi): bool {
     [$p] = $makeOpenAi([new HttpResponse(200, 'not json at all')]);
@@ -4548,6 +4693,25 @@ check('executor: IDEMPOTENT — re-run never double-posts a published target', (
         && $db->one("SELECT external_post_id FROM posts WHERE run_id=?", [$job['run_id']])['external_post_id'] === $first;
 })());
 
+echo "== Publish: PostRepository UNIQUE backstop (graceful idempotency-key collision) ==\n";
+
+check('postrepo: a duplicate insertPublishing returns the existing post id (no throw)', (static function () use ($mkPublishJob, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'prbk@x.com', $argonHash, 'PRBK');
+    $now = '2026-06-13T10:00:00Z';
+    $acct = $connect($db, $ws, 'instagram', '@dup', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $repo = new PostRepository($db);
+    $key = "run:{$job['run_id']}:acct:{$acct}:publish";
+
+    $firstId = $repo->insertPublishing($ws, $job['run_id'], $job['id'], $acct, 'instagram', false, null, $key, $now);
+    // a racing second insert with the SAME key trips UNIQUE → backstop returns the winner's id
+    $secondId = $repo->insertPublishing($ws, $job['run_id'], $job['id'], $acct, 'instagram', false, null, $key, $now);
+
+    return $firstId === $secondId
+        && (int) $db->one('SELECT COUNT(*) AS n FROM posts WHERE idempotency_key = ?', [$key])['n'] === 1;
+})());
+
 echo "== Publish: webhook inbox + signature + idempotency ==\n";
 
 $whSecret = 'phase10-test-secret';
@@ -4630,6 +4794,48 @@ check('webhook inbox: unmatched post id → process_error recorded, no crash', (
     $row = $db->one("SELECT processed_at, process_error FROM webhook_events WHERE external_event_id='ev_orphan'");
 
     return $row['processed_at'] !== null && $row['process_error'] === 'post_not_found';
+})());
+
+echo "== Core: RateLimiter + webhook per-IP throttle (Phase 13) ==\n";
+
+check('rate_limits: table + lookup index exist', (static function () use ($basePath): bool {
+    $db = migratedDb($basePath);
+
+    return (int) $db->one("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='rate_limits'")['n'] === 1
+        && (int) $db->one("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='index' AND name='idx_rate_limits_lookup'")['n'] === 1;
+})());
+check('ratelimiter: blocks the (cap+1)th hit, isolates by ip + bucket', (static function () use ($basePath): bool {
+    $db = migratedDb($basePath);
+    $limiter = new \Kuyash\Core\RateLimiter($db, 2, 60, 86400, static fn (): int => 1_000_000);
+    $a1 = $limiter->tooMany('webhook:zernio', '1.2.3.4'); // count 0 → false
+    $a2 = $limiter->tooMany('webhook:zernio', '1.2.3.4'); // count 1 → false
+    $a3 = $limiter->tooMany('webhook:zernio', '1.2.3.4'); // count 2 → BLOCKED
+    $otherIp = $limiter->tooMany('webhook:zernio', '9.9.9.9'); // separate IP → false
+    $otherBucket = $limiter->tooMany('other:bucket', '1.2.3.4'); // separate bucket → false
+
+    return $a1 === false && $a2 === false && $a3 === true && $otherIp === false && $otherBucket === false;
+})());
+check('ratelimiter: a hit outside the trailing window no longer counts', (static function () use ($basePath): bool {
+    $db = migratedDb($basePath);
+    $t = 1_000_000;
+    $limiter = new \Kuyash\Core\RateLimiter($db, 1, 60, 86400, static function () use (&$t): int { return $t; });
+    $limiter->tooMany('b', 'ip'); // hit at t
+    $t += 120;                    // advance past the 60s window
+    $blocked = $limiter->tooMany('b', 'ip'); // prior hit aged out → false
+
+    return $blocked === false;
+})());
+check('webhook ctl: per-IP rate limit → 429 once the cap is exceeded (other IPs unaffected)', (static function () use ($basePath, $whSecret): bool {
+    $db = migratedDb($basePath);
+    $limiter = new \Kuyash\Core\RateLimiter($db, 2, 60); // 2 / minute
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret, $limiter);
+    $body = '{"event_id":"ev_rl","status":"published"}';
+    $s1 = $ctl->handle($body, 'badsig', '5.5.5.5')->status(); // counts a hit → 401 (bad sig)
+    $s2 = $ctl->handle($body, 'badsig', '5.5.5.5')->status(); // 401
+    $s3 = $ctl->handle($body, 'badsig', '5.5.5.5')->status(); // over cap → 429
+    $other = $ctl->handle($body, 'badsig', '6.6.6.6')->status(); // different IP → 401
+
+    return $s1 === 401 && $s2 === 401 && $s3 === 429 && $other === 401;
 })());
 
 echo "== Publish: reconciliation (lost-webhook recovery) ==\n";
@@ -5130,6 +5336,29 @@ check('finalize: awaiting (paused script) ledgers its already-incurred spend via
         && (int) $feDb->one("SELECT amount_cents AS a FROM credit_transactions WHERE ref_job_id = ? AND type = 'spend'", [$feJob3['id']])['a'] === -6;
 })());
 
+echo "== Usage: recorder never rolls back an otherwise-successful finalize (Phase 13 regression) ==\n";
+
+// pin Phase 11 follow-up #3: a ledger collision (a job_id already recorded) must
+// NOT roll back the finalize transaction it runs inside — the job still commits.
+$rbJob = $feSeedClaimed($feDb, $feWs, $feU, $feNow, 'caption_generation', 'w1');
+// pre-seed a usage_events row for this job_id so the recorder's INSERT OR IGNORE
+// is a no-op (the historical worry: this throwing/rolling back the finalize)
+$feDb->run(
+    "INSERT INTO usage_events (workspace_id, run_id, job_id, provider, category, unit_type, cost_cents, created_at)
+     VALUES (?, ?, ?, 'openai', 'ai_text', 'tokens', 99, ?)",
+    [$feWs, $rbJob['run_id'], $rbJob['id'], $feNow],
+);
+$feEngine->finalize($rbJob, JobResult::ready(['caption' => 'x'], 'openai', 4));
+check('recorder no-rollback: finalize still commits (job ready, cost_cents written) despite the ledger collision', (static function () use ($feDb, $rbJob): bool {
+    $row = $feDb->one('SELECT status, cost_cents FROM jobs WHERE id = ?', [$rbJob['id']]);
+
+    return (string) $row['status'] === 'ready' && (int) $row['cost_cents'] === 4;
+})());
+check('recorder no-rollback: the pre-existing usage row is preserved, no duplicate (INSERT OR IGNORE)', (static function () use ($feDb, $rbJob): bool {
+    return (int) $feDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$rbJob['id']])['n'] === 1
+        && (int) $feDb->one('SELECT cost_cents AS c FROM usage_events WHERE job_id = ?', [$rbJob['id']])['c'] === 99;
+})());
+
 echo "== Usage: UsageController (live page, states, isolation) ==\n";
 
 $ucDb = migratedDb($basePath);
@@ -5350,6 +5579,47 @@ if (!$mediaReady) {
 
         return $r->status === JobResult::STATUS_FAILED;
     })());
+
+    // real-cost passthrough (closes Phase 12 follow-up #4): a provider that reports
+    // a non-null cost on a MISS → the executor surfaces it on the JobResult, and
+    // Engine::finalize ledgers it (the recording side was proven separately at $700).
+    $axCostProv = new class ($vgFf) implements \Kuyash\Media\VideoGenProvider {
+        public function __construct(private readonly Ffmpeg $ff)
+        {
+        }
+
+        public function generateFromImage(string $imagePath, string $prompt, float $durationSeconds, string $targetPath): \Kuyash\Media\VideoResult
+        {
+            $r = (new \Kuyash\Media\MockVideoGenProvider($this->ff, 1080, 1920, 24))->generateFromImage($imagePath, $prompt, $durationSeconds, $targetPath);
+
+            return new \Kuyash\Media\VideoResult($r->width, $r->height, $r->durationSeconds, 350, 'stub-real', $r->meta);
+        }
+
+        public function clipExtension(): string
+        {
+            return 'mp4';
+        }
+
+        public function name(): string
+        {
+            return 'stub-real';
+        }
+    };
+    $axDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,reference_asset_id,nodes_json,status,current_node,created_by,created_at,updated_at) VALUES (?,?,'quick_create',?,?,'running','VISUALS',?,?,?)", [$axWs, $axWf, $axPhoto, json_encode($axNodes), $axU, $axNow, $axNow]);
+    $axCostRun = $axDb->lastInsertId();
+    $axDb->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,worker_id,run_after,created_at) VALUES (?,?,'VISUALS',1,'ai_video','processing','w1',?,?)", [$axWs, $axCostRun, $axNow, $axNow]);
+    $axCostJobId = $axDb->lastInsertId();
+    $axCostExec = new \Kuyash\Media\AiVideoExecutor($axDb, $axCostProv, $axCache, $axAssembly, $axPaths, $axDisks, ['width' => 540, 'height' => 960, 'preset' => 'ultrafast'], 16.0, 30.0);
+    $axCostRes = $axCostExec->execute(['id' => $axCostJobId, 'workspace_id' => $axWs, 'run_id' => $axCostRun], []);
+    check('ai_video exec: a REAL provider cost passes through on a MISS (surfaced, not cached)',
+        $axCostRes->status === 'ready' && $axCostRes->costCents === 350
+        && ($axCostRes->result['cached'] ?? null) === false && $axCostRes->provider === 'stub-real');
+    $axFinNow = '2026-06-13T09:30:00Z';
+    $axFinEngine = new Engine($axDb, new EventLog($axDb), new WorkflowValidator(), static fn (): string => $axFinNow, null, new UsageRecorder($axDb, require $basePath . '/config/usage.php'), null);
+    $axFinEngine->finalize($axDb->one('SELECT * FROM jobs WHERE id = ?', [$axCostJobId]), $axCostRes);
+    check('ai_video exec: Engine::finalize ledgers the passed-through spend (350c, ai_video category)',
+        (int) $axDb->one('SELECT cost_cents AS c FROM usage_events WHERE job_id = ?', [$axCostJobId])['c'] === 350
+        && (string) $axDb->one('SELECT category AS c FROM usage_events WHERE job_id = ?', [$axCostJobId])['c'] === 'ai_video');
 }
 
 echo "== Quick Create: Engine::startRun validation + prompt snapshot ==\n";
