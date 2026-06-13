@@ -145,3 +145,51 @@ users (auto rows have NULL decided_by by design). Verification: **541 PASS / 0 F
 (+74); compliance-reviewer (MANDATORY) + security-auditor both **GO / 0 blocker**;
 ux-reviewer conditional → 3 fixes applied. **Deferred:** `.claude/docs/phase-9-followups.md`.
 Commit `431e692`.
+
+## ADR-016: Zernio publishing — mock-first, doc-gated, per-account fan-out (Phase 10, 2026-06-12)
+
+PUBLISH becomes a real-but-**mock-first**, **doc-gated** subsystem behind a
+provider-agnostic `PublishProvider` seam (publish/status/name). `MockPublishProvider`
+(default) is deterministic — outcome is a pure function of the request; failure/async
+modes are provoked by a handle marker (reject/authfail/ratelimit/timeout/async), so one
+provider exercises all 8 doc-gate modes with ZERO network. `ZernioPublishProvider` is a
+real **flag-off stub**: built only when `ZERNIO_MOCK=false`, it still throws "doc-gated"
+on every call BEFORE touching the HttpClient (12 `zernio-notes.md` items unsupplied;
+integration rule). **migration 0008:** `accounts` (platform/handle/external_ref/status/
+health/default_reference_asset_id — **NO token/password column**; Zernio owns OAuth),
+`posts` (one row per (run,account); `UNIQUE idempotency_key` "run:{r}:acct:{a}:publish";
+`ai_label_applied`; `scheduled_for`), `webhook_events` (RAW pre-resolution inbox, `UNIQUE
+external_event_id` = dup-delivery no-op, no workspace_id — resolved from the matched post),
+`runs.publish_after`. **`ZernioPublishExecutor`** (inner publish executor, supersedes
+MockExecutor's branch) fans the run out to every connected account, writing/updating a
+`posts` row per target: PUBLISHED→post published; ACCEPTED→in-flight (webhook/reconcile
+confirms); REJECTED/AUTH_FAILED→post failed (auth also flags the account `reauth_needed`)
+— **terminal per-target, the JOB still completes 'published'** so a partial failure never
+fails the run; only RATE_LIMITED / transport-timeout return `JobResult::failed` so the
+queue backs off (idempotent re-attempt skips terminal targets). **AI-label is truthful:**
+`posts.ai_label_applied` = `prior.compliance_check.ai_label_required` exactly — never
+claimed otherwise. **`PublishGateExecutor`** now enforces the **per-account daily cap** via
+the unified `PublishCounter` (counts `posts`, the truthful source): an auto-approved publish
+defers the whole job to next UTC midnight if ANY connected account is at cap (safe — publish
+is idempotent per (run,account)); manual publishes pass through (guardrails constrain
+autonomy, not humans). `AutoApprovalGate.autoApprovalsToday` stays approval-table /
+workspace-wide by design (coarser upstream throttle; cannot cause an over-cap publish —
+followup S1). **Scheduling:** an optional time at the render_review approval sets
+`runs.publish_after`; `Engine::insertJob` gives the publish job that `run_after` (future →
+defers on the existing queue gate, fires when due); past/empty = immediate. **Webhook
+security:** `POST /webhooks/zernio` is **CSRF-EXEMPT** (narrow allowlist before the gate in
+public/index.php — exact path, same normalization as the router so it can't diverge) and
+NOT auth-protected; authenticated by **HMAC-SHA256** (`hash_equals`) verified BEFORE any
+persistence; empty secret = **fail-closed** (503), invalid sig = 401 (no body logged),
+oversized = 413 (64KB cap), payload url accepted only if `http(s)://`. **Mock OAuth** is a
+realistic two-leg flow guarded by a one-time session `state` nonce on the GET callback;
+stores reference + health only. **Worker loop:** `WebhookInbox::processPending` each tick +
+`Reconciler::sweep` (15-min staleness poll) on the 5-min cadence — no post stays pending
+forever. **UI:** `/accounts` (+ nav), runs/show "Published targets" card (per-target status,
+AI-label chip, external link w/ `rel=noopener noreferrer nofollow`), digest publish counts.
+All publish lifecycle events are `kind='transition'` (events.kind CHECK). Verification:
+**587 PASS / 0 FAIL** (+46); DI wiring (web+worker) OK; live smoke (login, /accounts render,
+mock OAuth connect + forged-state reject, webhook CSRF-exempt/fail-closed) OK; secret grep
+clean. security-auditor + compliance-reviewer (both MANDATORY) **GO / 0 blocker** (1 MEDIUM
+external_url scheme → fixed); ux-reviewer conditional → 2 fixes applied. **Deferred:**
+`.claude/docs/phase-10-followups.md`. Commit `c664604`.
