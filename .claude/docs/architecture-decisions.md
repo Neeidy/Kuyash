@@ -293,3 +293,41 @@ OK; smoke (real-DB 0010 rebuild + `VIDEO_MOCK=false` doc-gated + HTTP boot) OK; 
 **GO/0**, ux **CONDITIONAL→GO** (2 should-fix applied: ALL-CAPS hint→`field__hint`; non-photo-upload trap→
 delete row + distinct message; + radiogroup/focus-visible/.env.example nits). **Deferred:**
 `.claude/docs/phase-12-followups.md`. Commit `dd34bbb`.
+
+## ADR-019: Hardening — fast-fail, rate-limit, backup/restore, R2 gate, prod readiness (Phase 13, 2026-06-13)
+The FINAL phase (13/13): make the existing V1 safe to operate, no new product features. Seven hardening
+threads, all additive + mock-first preserved.
+**1. Non-retryable (401/403) fast-fail.** New `Core/PermanentFailure` (marker) + `PermanentFailureException`;
+`JobResult` gains a `retryable` flag + `failedPermanent()`; `Engine::finalizeFailure($…, $retryable)`
+dead-letters on the FIRST attempt (no backoff) when `!retryable` and labels the message `non-retryable: …`;
+`Worker::tick` classifies an uncaught `PermanentFailure` as such. The money-spending adapters (OpenAI text,
+OpenAI TTS, Pexels) throw `PermanentFailureException` on HTTP 401/403 — deliberately NOT their domain
+exception, so it slips past the executor's `catch (DomainException)` (the TTS/stock producer runs OUTSIDE
+`AssetCache::remember`'s try) and reaches the Worker classifier. 429/transport/5xx stay retryable. A
+dead-lettered permanent failure is still manually retriable (operator fixes the key). Trends left as-is
+(403=quota degrades gracefully); publish already terminal on AUTH_FAILED.
+**2. PostRepository UNIQUE backstop.** `insertPublishing` catches a UNIQUE(idempotency_key) collision →
+returns the existing post id (treat-as-existing), so a per-(run,account) race never fails the publish job or
+double-posts. Unreachable under the single-claimed-job invariant; defense-in-depth.
+**3. Webhook per-IP rate-limit.** Migration **0011** `rate_limits` (no workspace_id — pre-auth infra, like
+login_attempts/webhook_events) + `Core/RateLimiter` (trailing-window count, clock-injectable, opportunistic
+prune). `WebhookController` throttles per IP (120/60s, generous) BEFORE the HMAC/size/secret chain → 429;
+limiter nullable so existing tests skip it.
+**4. WAL-aware backup/restore.** `Core/SqliteBackup` = `wal_checkpoint(TRUNCATE)` + `VACUUM main INTO ?`
+(bound param) + `integrity_check` — never a raw cp of a WAL DB. `bin/backup.php` (DB snapshot + local media
+tree + manifest.json; `--db-only`/`--out=`) and `bin/restore.php` (DRY-RUN default; `--force` moves the live
+DB+`-wal`/`-shm` aside to `.pre-restore-<ts>` reversibly, never deletes; re-checks integrity). R2 objects
+have their own durability (not re-downloaded).
+**5. R2 enable-time HARD GATE.** `bin/r2-smoke.php` (operator-gated): put→presigned GET (200+body)→**anonymous
+GET must be 401/403 (PRIVATE confirmation; 200=PUBLIC=FAIL)**→delete. Exit 0=PASS/1=FAIL/2=not-configured.
+Realizes the ADR-014 enable-time gate. R2 staging/eviction CODE stays deferred (locked scope decision —
+no live bucket in V1).
+**6. Caddy/Tunnel.** `(app)` snippet shares headers + path-blocklist (extended: `/database`,`/bin`,`/tests`);
+production HTTPS block with HSTS (TLS-terminated only); `caddy validate` is an operator host step.
+**7. Docs.** `production-readiness.md` (go-live checklist, `[ ]` now vs `[OP]` enable-time), `release-test-
+checklist.md` (per-subsystem coverage map + smoke + failure-recovery drill).
+**Verification: 693 PASS / 0 FAIL** (+20); secret grep clean; DI + HTTP boot OK; backup/restore CLI round-trip
+OK; dev DB migrated to 0011 (WAL-safe backup). **3-dimension review:** security (MANDATORY) **GO/0**,
+compliance **GO/0**, ux **GO** (1 polish applied: queue `non-retryable:`→"(no auto-retry)"). **Deferred:**
+`.claude/docs/phase-13-followups.md` (CF-Connecting-IP per-IP behind tunnel, restore symlink containment,
+rate-limit write-amp). **V1 phase-plan (0–13) COMPLETE.** Commit `9b68a67`.
