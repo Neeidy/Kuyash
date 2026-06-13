@@ -121,6 +121,22 @@ final class AssetRepository
         ));
     }
 
+    /**
+     * Ready PHOTO assets — what Quick Create (Phase 12) animates into an AI clip.
+     * Newest first.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function readyPhotosFor(WorkspaceContext $ctx): array
+    {
+        return array_map(self::shape(...), $this->db->all(
+            "SELECT * FROM assets
+             WHERE workspace_id = ? AND kind = 'photo' AND status = 'ready'
+             ORDER BY created_at DESC, id DESC",
+            [$ctx->id()],
+        ));
+    }
+
     /** @return array<string, mixed>|null null = not found OR other tenant's asset */
     public function find(WorkspaceContext $ctx, int $id): ?array
     {

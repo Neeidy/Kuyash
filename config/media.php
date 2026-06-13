@@ -42,6 +42,21 @@ return [
         'price_cents_per_million_chars' => (float) Config::env('TTS_PRICE_PER_M_CHARS', 1500.0),
     ],
 
+    // AI image-to-video (Phase 12) — mock-first. Mock = ffmpeg zoompan clip from
+    // the reference photo (real files, $0 spend). The real fal.ai-class provider
+    // builds ONLY when VIDEO_MOCK=false + a key is set, and even then is a
+    // DOC-GATED stub that throws until .claude/docs/ai-video-notes.md is filled.
+    // default/max clip seconds are kept inside the 15–45s compliance band.
+    'image_video' => [
+        'mock' => Config::env('VIDEO_MOCK', true) !== false,
+        'api_key' => (string) Config::env('FAL_API_KEY', ''),
+        'model' => (string) Config::env('VIDEO_MODEL', 'image-to-video'),
+        'endpoint' => (string) Config::env('VIDEO_ENDPOINT', ''),
+        'timeout' => (int) Config::env('VIDEO_TIMEOUT', 120),
+        'default_seconds' => (float) Config::env('VIDEO_DEFAULT_SECONDS', 16.0),
+        'max_seconds' => (float) Config::env('VIDEO_MAX_SECONDS', 30.0),
+    ],
+
     // Stock visuals — mock-first. Mock = ffmpeg lavfi color clips (real files).
     // Real Pexels ONLY when STOCK_MOCK=false + key.
     'stock' => [

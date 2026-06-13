@@ -714,3 +714,31 @@
   .breakdown__row { grid-template-columns: 1fr 64px; }
   .breakdown__bar { display: none; }
 }
+
+/* ---- Quick Create (Phase 12): AI image-to-video ---- */
+.card__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+  flex-wrap: wrap; padding: var(--pad-card); border-top: 1px solid var(--border);
+}
+.card__foot .muted { font-size: 12.5px; }
+.photo-pick {
+  display: grid; gap: var(--s2);
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+.photo-pick__item {
+  position: relative; display: flex; flex-direction: column; gap: 4px;
+  cursor: pointer; border: 1px solid var(--border); border-radius: var(--r-ctl);
+  padding: 6px; background: var(--surface-2); transition: border-color 0.12s ease;
+}
+.photo-pick__item:hover { border-color: var(--accent); }
+.photo-pick__item input { position: absolute; top: 8px; left: 8px; accent-color: var(--accent); }
+.photo-pick__item:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* keyboard focus is visible while tabbing the radio cards (not just on check) */
+.photo-pick__item:has(input:focus-visible) { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+/* the pick group is a <fieldset> for a11y — strip its default chrome */
+fieldset.field { border: 0; padding: 0; margin: 0 0 var(--s3); min-inline-size: 0; }
+.photo-pick__thumb { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: var(--r-ctl); display: block; }
+.photo-pick__title {
+  font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}

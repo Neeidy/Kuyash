@@ -29,23 +29,27 @@ final class CostEstimator
      */
     public function estimateRun(string $template, array $nodes): array
     {
-        // accept either a decoded nodes_json ([{node,locked,settings}, …]) or a
-        // bare list of node ids; fall back to the template's canonical sequence
-        $nodeIds = array_values(array_filter(array_map(
-            static fn (mixed $n): string => is_array($n) ? (string) ($n['node'] ?? '') : (string) $n,
-            $nodes,
-        ), static fn (string $id): bool => $id !== ''));
-
-        if ($nodeIds === []) {
-            $nodeIds = Nodes::template($template);
+        // accept either decoded nodes_json entries ([{node,locked,settings}, …])
+        // or a bare list of node ids — passed STRAIGHT to the source-aware
+        // expander so a quick_create VISUALS(source=ai) is estimated as ai_video,
+        // not asset_fetch. Fall back to the template's canonical sequence when no
+        // usable node is present.
+        $hasNode = false;
+        foreach ($nodes as $n) {
+            $id = is_array($n) ? (string) ($n['node'] ?? '') : (string) $n;
+            if ($id !== '') {
+                $hasNode = true;
+                break;
+            }
         }
+        $entries = $hasNode ? $nodes : Nodes::template($template);
 
         $estimates = $this->config['estimate_cents'] ?? [];
         $categories = $this->config['categories'] ?? [];
 
         $total = 0;
         $byCategory = [];
-        foreach (Nodes::expand($nodeIds) as $entry) {
+        foreach (Nodes::expand($entries) as $entry) {
             $type = $entry['type'];
             $cents = (int) ($estimates[$type] ?? 0);
             if ($cents <= 0) {

@@ -37,6 +37,15 @@ final class Messages
         'run.asset_not_ready' => 'That asset is not a ready library video.',
         'run.reference_not_ready' => 'That reference asset is not available.',
         'run.budget_exceeded' => 'This run would exceed your monthly budget cap — it was not started. Raise the cap in Settings or grant more budget.',
+
+        // Quick Create — AI image-to-video (Phase 12)
+        'quick.started' => 'Quick Create started — your AI clip is generating. Approve it from the queue.',
+        'quick.prompt_required' => 'Describe the motion you want — the prompt cannot be empty.',
+        'quick.prompt_too_long' => 'Keep the prompt under 300 characters.',
+        'quick.photo_required' => 'Upload a photo or pick a ready one to animate.',
+        'quick.photo_invalid' => 'Pick a ready photo from your library.',
+        'quick.photo_not_image' => 'That upload is not a photo — Quick Create animates a still image (JPG/PNG/WebP).',
+        'quick.no_workflow' => 'No Quick Create workflow is set up for this workspace.',
         'avatar.updated' => 'Default avatar updated for this workspace.',
         'avatar.cleared' => 'Default avatar cleared.',
         'avatar.invalid' => 'Pick a ready library asset to use as the avatar.',

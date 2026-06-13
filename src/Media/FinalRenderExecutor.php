@@ -28,7 +28,10 @@ final class FinalRenderExecutor implements JobExecutor
 
     public function execute(array $job, array $prior): JobResult
     {
-        $visualRef = $prior['asset_fetch']['visual_ref'] ?? null;
+        // Quick Create (ai_video) hands forward the generated clip ref; every
+        // other template resolves the visual at asset_fetch. Either is a finished
+        // video normalized here to full-res 9:16 (no narration → distribution path).
+        $visualRef = $prior['ai_video']['visual_ref'] ?? $prior['asset_fetch']['visual_ref'] ?? null;
         if (!is_string($visualRef) || $visualRef === '') {
             return JobResult::failed('final_render: no visual to render', 'ffmpeg');
         }
@@ -66,7 +69,7 @@ final class FinalRenderExecutor implements JobExecutor
 
         return JobResult::ready($render + [
             'final' => true,
-            'ai_label_required' => (bool) ($prior['asset_fetch']['ai_label_required'] ?? false),
+            'ai_label_required' => (bool) ($prior['ai_video']['ai_label_required'] ?? $prior['asset_fetch']['ai_label_required'] ?? false),
         ], 'ffmpeg');
     }
 }

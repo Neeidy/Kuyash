@@ -24,6 +24,7 @@ use Kuyash\Controllers\LibraryController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\QuickCreateController;
 use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\UsageController;
@@ -51,6 +52,7 @@ use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\WebhookController;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Storage\StorageManager;
+use Kuyash\Usage\CostEstimator;
 use Kuyash\Usage\CreditLedger;
 use Kuyash\Usage\UsageRepository;
 use Kuyash\Workflow\Cockpit;
@@ -283,6 +285,20 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+    ));
+
+    $container->bind(QuickCreateController::class, static fn (Container $c): QuickCreateController => new QuickCreateController(
+        $c->get(View::class),
+        $c->get(AssetRepository::class),
+        $c->get(AssetIngest::class),
+        $c->get(WorkflowRepository::class),
+        $c->get(Engine::class),
+        $c->get(CostEstimator::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Auth::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
+        (array) $c->get(Config::class)->get('library'),
     ));
 
     $container->bind(Router::class, static function (Container $c): Router {

@@ -66,6 +66,9 @@ final class WorkflowController
         if ($workflow === null) {
             return $this->notFound();
         }
+        if ($workflow['template'] === Nodes::TEMPLATE_QUICK_CREATE) {
+            return Response::redirect('/quick', 303); // quick_create runs from its own page
+        }
 
         $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
 
@@ -88,6 +91,9 @@ final class WorkflowController
         $workflow = $this->findWorkflow($params);
         if ($workflow === null) {
             return $this->notFound();
+        }
+        if ($workflow['template'] === Nodes::TEMPLATE_QUICK_CREATE) {
+            return Response::redirect('/quick', 303); // quick_create runs from its own page
         }
 
         $assetRaw = (string) ($_POST['asset_id'] ?? '');

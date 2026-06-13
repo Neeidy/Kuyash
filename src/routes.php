@@ -13,6 +13,7 @@ use Kuyash\Controllers\LibraryController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
+use Kuyash\Controllers\QuickCreateController;
 use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\TrendController;
@@ -64,6 +65,10 @@ return static function (Router $router, Config $config, Container $container): v
     $router->get('/media/{id}', $protected([MediaController::class, 'serve']));
     $router->get('/render/{id}', $protected([RenderController::class, 'serve']));
     $router->get('/render/{id}/poster', $protected([RenderController::class, 'poster']));
+
+    // Quick Create (Phase 12): photo + prompt → AI image-to-video → distribute.
+    $router->get('/quick', $protected([QuickCreateController::class, 'index']));
+    $router->post('/quick', $protected([QuickCreateController::class, 'create']));
 
     $router->get('/workflows', $protected([WorkflowController::class, 'index']));
     $router->get('/workflows/{id}', $protected([WorkflowController::class, 'show']));

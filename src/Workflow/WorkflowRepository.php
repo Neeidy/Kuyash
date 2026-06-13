@@ -31,6 +31,7 @@ final class WorkflowRepository
         $defaults = [
             Nodes::TEMPLATE_FULL => 'Full pipeline',
             Nodes::TEMPLATE_DISTRIBUTION => 'Distribution',
+            Nodes::TEMPLATE_QUICK_CREATE => 'Quick Create',
         ];
 
         foreach ($defaults as $template => $name) {
@@ -65,13 +66,29 @@ final class WorkflowRepository
         }
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * The generic builder list — EXCLUDES quick_create, which has its own entry
+     * surface (/quick: photo + prompt), not the node-track builder/run trigger.
+     *
+     * @return list<array<string, mixed>>
+     */
     public function listFor(WorkspaceContext $ctx): array
     {
         return array_map(self::shape(...), $this->db->all(
-            'SELECT * FROM workflows WHERE workspace_id = ? ORDER BY id ASC',
+            "SELECT * FROM workflows WHERE workspace_id = ? AND template != 'quick_create' ORDER BY id ASC",
             [$ctx->id()],
         ));
+    }
+
+    /** The workspace's workflow for a given template (e.g. quick_create), or null. */
+    public function findByTemplate(WorkspaceContext $ctx, string $template): ?array
+    {
+        $row = $this->db->one(
+            'SELECT * FROM workflows WHERE workspace_id = ? AND template = ? ORDER BY id ASC LIMIT 1',
+            [$ctx->id(), $template],
+        );
+
+        return $row === null ? null : self::shape($row);
     }
 
     /** @return array<string, mixed>|null null = not found OR other tenant's workflow */

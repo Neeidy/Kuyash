@@ -35,21 +35,25 @@ use Kuyash\Publish\Reconciler;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Publish\ZernioPublishExecutor;
 use Kuyash\Publish\ZernioPublishProvider;
+use Kuyash\Media\AiVideoExecutor;
 use Kuyash\Media\AssemblyEngine;
 use Kuyash\Media\AssemblyExecutor;
 use Kuyash\Media\AssetCache;
 use Kuyash\Media\AssetFetchExecutor;
+use Kuyash\Media\FalVideoGenProvider;
 use Kuyash\Media\Ffmpeg;
 use Kuyash\Media\FinalRenderExecutor;
 use Kuyash\Media\MediaPaths;
 use Kuyash\Media\MockStockProvider;
 use Kuyash\Media\MockTtsProvider;
+use Kuyash\Media\MockVideoGenProvider;
 use Kuyash\Media\OpenAiTtsProvider;
 use Kuyash\Media\PexelsStockProvider;
 use Kuyash\Media\RenderRepository;
 use Kuyash\Media\StockProvider;
 use Kuyash\Media\TtsExecutor;
 use Kuyash\Media\TtsProvider;
+use Kuyash\Media\VideoGenProvider;
 use Kuyash\Storage\LocalStorageProvider;
 use Kuyash\Storage\R2StorageProvider;
 use Kuyash\Storage\SigV4Signer;
@@ -459,6 +463,45 @@ return static function (Container $container, string $basePath): void {
         (array) $c->get(Config::class)->get('media')['draft'],
     ));
 
+    // VideoGenProvider (Phase 12): real fal.ai-class aggregator ONLY when
+    // VIDEO_MOCK=false AND a key is present — and even then it is a DOC-GATED stub
+    // that throws "doc-gated" before any HTTP. Otherwise the offline ffmpeg
+    // zoompan mock (real 9:16 clip from the still). Swap = config only.
+    $container->bind(VideoGenProvider::class, static function (Container $c): VideoGenProvider {
+        $media = (array) $c->get(Config::class)->get('media');
+        $cfg = (array) ($media['image_video'] ?? []);
+        $useReal = ($cfg['mock'] ?? true) === false && ((string) ($cfg['api_key'] ?? '')) !== '';
+        $final = (array) $media['final'];
+
+        if ($useReal) {
+            return new FalVideoGenProvider(new CurlHttpClient(), $cfg); // flag-off, throws "doc-gated"
+        }
+
+        return new MockVideoGenProvider(
+            $c->get(Ffmpeg::class),
+            (int) $final['width'],
+            (int) $final['height'],
+            (int) $media['fps'],
+        );
+    });
+
+    $container->bind(AiVideoExecutor::class, static function (Container $c): AiVideoExecutor {
+        $media = (array) $c->get(Config::class)->get('media');
+        $iv = (array) ($media['image_video'] ?? []);
+
+        return new AiVideoExecutor(
+            $c->get(Database::class),
+            $c->get(VideoGenProvider::class),
+            $c->get(AssetCache::class),
+            $c->get(AssemblyEngine::class),
+            $c->get(MediaPaths::class),
+            $c->get(StorageManager::class),
+            (array) $media['draft'],
+            (float) ($iv['default_seconds'] ?? 16.0),
+            (float) ($iv['max_seconds'] ?? 30.0),
+        );
+    });
+
     $container->bind(FinalRenderExecutor::class, static fn (Container $c): FinalRenderExecutor => new FinalRenderExecutor(
         $c->get(AssemblyEngine::class),
         (array) $c->get(Config::class)->get('media')['final'],
@@ -479,6 +522,7 @@ return static function (Container $container, string $basePath): void {
         $registry->register('trend_fetch', $c->get(TrendExecutor::class));
         $registry->register('tts', $c->get(TtsExecutor::class));
         $registry->register('asset_fetch', $c->get(AssetFetchExecutor::class));
+        $registry->register('ai_video', $c->get(AiVideoExecutor::class)); // Phase 12: Quick Create image-to-video
         $registry->register('assembly', $c->get(AssemblyExecutor::class));
         $registry->register('final_render', $c->get(FinalRenderExecutor::class));
 

@@ -32,23 +32,25 @@ final class MockExecutor implements JobExecutor
                 'note' => 'preview is the in-pipeline checkpoint; the reviewable render is the draft',
             ], 'mock'),
 
-            // approval gate: carries the DRAFT render (full template) or the
-            // library asset (distribution) so the queue can show a real preview,
-            // plus the compliance verdict so the queue card explains the risk
+            // approval gate: carries the DRAFT render (full template + Quick
+            // Create ai_video) or the library asset (distribution) so the queue
+            // can show a real preview, plus the compliance verdict so the queue
+            // card explains the risk
             'render_review' => JobResult::awaitingApproval([
                 'summary' => 'Render review: compliance '
                     . ($prior['compliance_check']['status'] ?? 'unknown')
                     . ' (policy ' . ($prior['compliance_check']['policy'] ?? '?') . ')',
-                'draft_render_id' => $prior['assembly']['render_id'] ?? null,
-                'poster_ref' => $prior['assembly']['poster_ref'] ?? null,
+                'draft_render_id' => $prior['ai_video']['draft_render_id'] ?? $prior['assembly']['render_id'] ?? null,
+                'poster_ref' => $prior['ai_video']['poster_ref'] ?? $prior['assembly']['poster_ref'] ?? null,
                 'library_asset_id' => $prior['asset_fetch']['asset_id'] ?? null,
-                'duration_s' => $prior['assembly']['duration_s'] ?? ($prior['asset_fetch']['duration_s'] ?? null),
+                'duration_s' => $prior['ai_video']['duration_s'] ?? $prior['assembly']['duration_s'] ?? ($prior['asset_fetch']['duration_s'] ?? null),
                 'compliance' => [
                     'status' => $prior['compliance_check']['status'] ?? 'unknown',
                     'policy' => $prior['compliance_check']['policy'] ?? '?',
                     'slop_score' => $prior['compliance_check']['checks']['slop']['score'] ?? null,
                 ],
                 'ai_label_required' => (bool) ($prior['compliance_check']['ai_label_required']
+                    ?? $prior['ai_video']['ai_label_required']
                     ?? $prior['assembly']['ai_label_required']
                     ?? $prior['asset_fetch']['ai_label_required']
                     ?? false),

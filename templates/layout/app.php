@@ -6,7 +6,7 @@ use Kuyash\Core\View;
 
 /** @var string $content */
 /** @var string $title */
-/** @var string $active     'dashboard' | 'trends' | 'library' | 'workflows' | 'queue' | 'logs' */
+/** @var string $active     'dashboard' | 'quick' | 'trends' | 'library' | 'workflows' | 'queue' | 'accounts' | 'logs' | 'digest' | 'usage' | 'settings' */
 /** @var string $workspaceName */
 /** @var string $csrfField  trusted generated HTML (logout form) */
 /** @var list<array{type: string, text: string}>|null $flashes rendered once here for every app page */
@@ -32,6 +32,11 @@ use Kuyash\Core\View;
         <span class="nav-item__marker"></span>
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg></span>
         Dashboard
+      </a>
+      <a class="nav-item<?= ($active ?? '') === 'quick' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'quick' ? ' aria-current="page"' : '' ?> href="/quick">
+        <span class="nav-item__marker"></span>
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l1.8 4.2 4.7.4-3.6 3 1.1 4.6L8 11.3 3.9 13.7 5 9.1 1.5 6.1l4.7-.4z"/></svg></span>
+        Create
       </a>
       <a class="nav-item<?= ($active ?? '') === 'trends' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'trends' ? ' aria-current="page"' : '' ?> href="/trends">
         <span class="nav-item__marker"></span>
@@ -80,7 +85,7 @@ use Kuyash\Core\View;
       </a>
     </nav>
     <div class="sidebar__foot">
-      <p>Phase 11 · Usage &amp; Costs<br>Real usage ledger, money-denominated credits, pre-flight budget gate.</p>
+      <p>Phase 12 · Quick Create<br>Photo → AI image-to-video, credit-gated, AI-labeled, mock-first.</p>
     </div>
   </aside>
 

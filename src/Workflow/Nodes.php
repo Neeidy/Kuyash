@@ -19,7 +19,8 @@ final class Nodes
 {
     public const TEMPLATE_FULL = 'full';
     public const TEMPLATE_DISTRIBUTION = 'distribution';
-    public const TEMPLATES = [self::TEMPLATE_FULL, self::TEMPLATE_DISTRIBUTION];
+    public const TEMPLATE_QUICK_CREATE = 'quick_create';
+    public const TEMPLATES = [self::TEMPLATE_FULL, self::TEMPLATE_DISTRIBUTION, self::TEMPLATE_QUICK_CREATE];
 
     /** Nodes that can never be removed or unlocked (compliance-first rule). */
     public const LOCKED = ['COMPLIANCE'];
@@ -32,6 +33,18 @@ final class Nodes
 
     public const DISTRIBUTION = [
         'LIBRARY', 'CAPTION', 'HASHTAGS', 'MUSIC NOTE / STYLE', 'PREVIEW',
+        'COMPLIANCE', 'PUBLISH',
+    ];
+
+    /**
+     * Quick Create (Phase 12): a photo + prompt → AI image-to-video → distribute.
+     * VISUALS uses the 'ai' source (→ ai_video job); there is NO ASSEMBLE — the
+     * finished AI clip is normalized at final_render exactly like a distribution
+     * library video (no narrated draft assembly). Brief-faithful: no
+     * TREND/IDEA/SCRIPT/VOICE — the prompt is the only creative input.
+     */
+    public const QUICK_CREATE = [
+        'VISUALS', 'CAPTION', 'HASHTAGS', 'MUSIC NOTE / STYLE', 'PREVIEW',
         'COMPLIANCE', 'PUBLISH',
     ];
 
@@ -75,6 +88,9 @@ final class Nodes
         'script_draft' => ['timeout' => 120, 'max_retries' => 3],
         'tts' => ['timeout' => 300, 'max_retries' => 3],
         'asset_fetch' => ['timeout' => 300, 'max_retries' => 3],
+        // AI image-to-video (Phase 12): slow + paid. max_retries 1 — never blindly
+        // re-issue an expensive generation; a real failure dead-letters fast.
+        'ai_video' => ['timeout' => 600, 'max_retries' => 1],
         'assembly' => ['timeout' => 900, 'max_retries' => 3],
         'caption_generation' => ['timeout' => 120, 'max_retries' => 3],
         'hashtag_generation' => ['timeout' => 120, 'max_retries' => 3],
@@ -101,46 +117,84 @@ final class Nodes
         return match ($template) {
             self::TEMPLATE_FULL => self::FULL,
             self::TEMPLATE_DISTRIBUTION => self::DISTRIBUTION,
+            self::TEMPLATE_QUICK_CREATE => self::QUICK_CREATE,
             default => throw new InvalidArgumentException("Unknown workflow template: {$template}"),
         };
     }
 
     /**
      * Default nodes_json structure for a template: every node unlocked except
-     * the locked set, VISUALS defaulting to the stock source. Settings stay
-     * minimal — editing them is a Phase 5+ feature and mocks ignore them.
+     * the locked set, VISUALS defaulting to the stock source (quick_create uses
+     * the 'ai' source + an empty prompt the run fills in). Settings stay minimal
+     * — editing them is a Phase 5+ feature and mocks ignore them.
      *
      * @return list<array{node: string, locked: bool, settings: array<string, mixed>}>
      */
     public static function defaultNodes(string $template): array
     {
-        return array_map(static fn (string $node): array => [
-            'node' => $node,
-            'locked' => in_array($node, self::LOCKED, true),
-            'settings' => $node === 'VISUALS' ? ['source' => 'stock'] : [],
-        ], self::template($template));
+        return array_map(static function (string $node) use ($template): array {
+            $settings = [];
+            if ($node === 'VISUALS') {
+                $settings = $template === self::TEMPLATE_QUICK_CREATE
+                    ? ['source' => 'ai', 'prompt' => '']
+                    : ['source' => 'stock'];
+            }
+
+            return [
+                'node' => $node,
+                'locked' => in_array($node, self::LOCKED, true),
+                'settings' => $settings,
+            ];
+        }, self::template($template));
     }
 
     /**
      * Expand a node sequence into the ordered job chain. Steps are 1-based;
      * the chain is what a run executes, one job at a time.
      *
-     * @param list<string> $nodeIds
+     * Polymorphic input: a bare list of node ids (legacy callers) OR decoded
+     * nodes_json entries ({node, settings, …}). Only the entry form carries the
+     * VISUALS source, so source-aware expansion (an 'ai' VISUALS → ai_video)
+     * requires entries — Engine and CostEstimator pass them; a bare id keeps the
+     * default VISUALS → asset_fetch mapping.
+     *
+     * @param list<string|array<string, mixed>> $nodes
      *
      * @return list<array{step: int, node: string, type: string}>
      */
-    public static function expand(array $nodeIds): array
+    public static function expand(array $nodes): array
     {
         $chain = [];
         $step = 1;
-        foreach ($nodeIds as $node) {
-            foreach (self::NODE_JOBS[$node] ?? [] as $type) {
+        foreach ($nodes as $entry) {
+            $node = is_array($entry) ? (string) ($entry['node'] ?? '') : (string) $entry;
+            $settings = is_array($entry) && is_array($entry['settings'] ?? null) ? $entry['settings'] : [];
+            foreach (self::jobsFor($node, $settings) as $type) {
                 $chain[] = ['step' => $step, 'node' => $node, 'type' => $type];
                 $step++;
             }
         }
 
         return $chain;
+    }
+
+    /**
+     * The job type(s) a node expands to. SOURCE-AWARE for VISUALS: an 'ai' source
+     * produces an ai_video job (Quick Create, image-to-video); any other source
+     * resolves the visual through asset_fetch (library/stock/reference). Every
+     * other node maps 1:1 via NODE_JOBS.
+     *
+     * @param array<string, mixed> $settings
+     *
+     * @return list<string>
+     */
+    private static function jobsFor(string $node, array $settings): array
+    {
+        if ($node === 'VISUALS' && ($settings['source'] ?? null) === 'ai') {
+            return ['ai_video'];
+        }
+
+        return self::NODE_JOBS[$node] ?? [];
     }
 
     public static function timeoutFor(string $type): int

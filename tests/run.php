@@ -305,9 +305,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 9);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 10);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -999,8 +999,10 @@ final class StubMediaExecutor implements JobExecutor
         return match ((string) $job['type']) {
             'tts' => JobResult::ready(['provider' => 'mock', 'voice' => 'alloy', 'audio_ref' => 'cache:' . $job['workspace_id'] . ':stub', 'duration_s' => 20.0, 'cached' => false], 'mock'),
             'asset_fetch' => $this->assetFetch($job),
+            // Phase 12: Quick Create AI clip (no ffmpeg) — always AI-labeled, in-band duration
+            'ai_video' => JobResult::ready(['source' => 'ai', 'provider' => 'mock', 'visual_kind' => 'video', 'visual_ref' => 'cache:' . $job['workspace_id'] . ':stub', 'draft_render_id' => null, 'duration_s' => 16.0, 'ai_label_required' => true, 'cached' => false], 'mock'),
             'assembly' => JobResult::ready(['draft' => true, 'render_id' => null, 'ai_label_required' => (bool) ($prior['asset_fetch']['ai_label_required'] ?? false)], 'mock'),
-            'final_render' => JobResult::ready(['final' => true, 'render_id' => null], 'mock'),
+            'final_render' => JobResult::ready(['final' => true, 'render_id' => null, 'ai_label_required' => (bool) ($prior['ai_video']['ai_label_required'] ?? $prior['asset_fetch']['ai_label_required'] ?? false)], 'mock'),
             default => JobResult::failed('stub media: ' . $job['type'], 'mock'),
         };
     }
@@ -1036,6 +1038,8 @@ function makeMediaExecutors(Database $db): array
     return [
         'tts' => new TtsExecutor(new MockTtsProvider(2.5), $cache, 'alloy'),
         'asset_fetch' => new AssetFetchExecutor($db, new MockStockProvider($ff, 1080, 1920, 24), $ff, $paths, $cache, $disks, new QuotaCounter($db), $finalGeo, 1, 24),
+        // Phase 12: Quick Create image-to-video over the mock provider (real ffmpeg zoompan)
+        'ai_video' => new \Kuyash\Media\AiVideoExecutor($db, new \Kuyash\Media\MockVideoGenProvider($ff, 1080, 1920, 24), $cache, $engine, $paths, $disks, $draftGeo, 16.0, 30.0),
         'assembly' => new AssemblyExecutor($engine, $draftGeo),
         'final_render' => new FinalRenderExecutor($engine, $finalGeo),
         'paths' => $paths, 'renders' => $renders, 'cache' => $cache, 'ffmpeg' => $ff, 'engine' => $engine,
@@ -1139,12 +1143,12 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
         global $mediaReady;
         if ($mediaReady) {
             $media = makeMediaExecutors($db);
-            foreach (['tts', 'asset_fetch', 'assembly', 'final_render'] as $t) {
+            foreach (['tts', 'asset_fetch', 'ai_video', 'assembly', 'final_render'] as $t) {
                 $registry->register($t, $media[$t]);
             }
         } else {
             $stub = new StubMediaExecutor($db);
-            foreach (['tts', 'asset_fetch', 'assembly', 'final_render'] as $t) {
+            foreach (['tts', 'asset_fetch', 'ai_video', 'assembly', 'final_render'] as $t) {
                 $registry->register($t, $stub);
             }
         }
@@ -5158,6 +5162,365 @@ check('usage ctl: tenant-scoped — another workspace sees none of this spend', 
 
     return str_contains($body, 'No spend recorded this month') && !str_contains($body, '$2.50');
 })());
+$_SESSION = [];
+
+/* ===================== PHASE 12: Quick Create AI video ===================== */
+
+/** Seed a ready PHOTO asset (with a real png on disk when ffmpeg is present). */
+$seedReadyPhoto = static function (Database $db, int $ws, string $title = 'ref photo') use ($ffmpegBin, $TEST_MEDIA_ROOT, $mediaReady): int {
+    $stored = bin2hex(random_bytes(16)) . '.png';
+    $now = gmdate(NOW_ISO);
+    $db->run(
+        "INSERT INTO assets (workspace_id,kind,type,title,original_filename,stored_name,mime,size_bytes,sha256,width,height,aspect,tags,status,created_at,updated_at)
+         VALUES (?, 'photo', 'own', ?, 'p.png', ?, 'image/png', 100, 'h', 400, 600, '2:3', '[]', 'ready', ?, ?)",
+        [$ws, $title, $stored, $now, $now],
+    );
+    $id = $db->lastInsertId();
+    if ($mediaReady) {
+        $dir = "$TEST_MEDIA_ROOT/assets/$ws";
+        if (!is_dir($dir)) { mkdir($dir, 0750, true); }
+        $p = proc_open([$ffmpegBin, '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=teal:s=400x600:d=1', '-frames:v', '1', "$dir/$stored"], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pp);
+        if (is_resource($p)) { stream_get_contents($pp[1]); stream_get_contents($pp[2]); fclose($pp[1]); fclose($pp[2]); proc_close($p); }
+    }
+
+    return $id;
+};
+
+echo "== 0010 schema: quick_create template + workflows parent-table rebuild ==\n";
+
+$qcDb = migratedDb($basePath);
+[$qcUser, $qcWs] = seedUser($qcDb, 'qc@example.com', $argonHash, 'QC WS');
+$qcNow = '2026-06-13T09:00:00Z';
+$qcDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'F','full','[]',?,?)", [$qcWs, $qcNow, $qcNow]);
+$qcWfId = $qcDb->lastInsertId();
+$qcDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'trend','[]','running',?,?,?)", [$qcWs, $qcWfId, $qcUser, $qcNow, $qcNow]);
+check('0010: workflows.template now accepts quick_create', (static function () use ($qcDb, $qcWs, $qcNow): bool {
+    $qcDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'Q','quick_create','[]',?,?)", [$qcWs, $qcNow, $qcNow]);
+
+    return true;
+})());
+check('0010: a bogus template is still rejected', throws(static fn () => $qcDb->run(
+    "INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'X','bogus','[]',?,?)",
+    [$qcWs, $qcNow, $qcNow],
+), PDOException::class));
+check('0010: rebuilt workflows keeps the runs FK intact (foreign_key_check clean + run resolves)',
+    $qcDb->all('PRAGMA foreign_key_check') === []
+    && (int) ($qcDb->one('SELECT w.id AS i FROM runs r JOIN workflows w ON w.id = r.workflow_id WHERE r.workflow_id = ?', [$qcWfId])['i'] ?? 0) === $qcWfId);
+
+echo "== Migrator: FK-safe rebuild of a PARENT table that has child rows ==\n";
+// the generic proof of the workflows trap: dropping a parent with child rows
+// throws "FOREIGN KEY constraint failed" unless enforcement is OFF for the rewrite.
+$fkDir = sys_get_temp_dir() . '/kuyash_mig_' . bin2hex(random_bytes(4));
+@mkdir($fkDir, 0750, true);
+file_put_contents("$fkDir/0001_seed.sql",
+    "CREATE TABLE parent (id INTEGER PRIMARY KEY, label TEXT NOT NULL CHECK (label IN ('a','b')));\n"
+    . "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));\n"
+    . "INSERT INTO parent (id,label) VALUES (1,'a');\nINSERT INTO child (id,parent_id) VALUES (10,1);\n");
+$fkDb = new Database(':memory:');
+(new Migrator($fkDb, $fkDir))->migrate();
+file_put_contents("$fkDir/0002_widen.sql",
+    "CREATE TABLE parent_new (id INTEGER PRIMARY KEY, label TEXT NOT NULL CHECK (label IN ('a','b','c')));\n"
+    . "INSERT INTO parent_new SELECT id,label FROM parent;\nDROP TABLE parent;\nALTER TABLE parent_new RENAME TO parent;\n");
+$fkApplied = (new Migrator($fkDb, $fkDir))->migrate();
+check('migrator: rebuilds a parent table with child rows + the FK survives',
+    $fkApplied === ['0002_widen.sql']
+    && $fkDb->all('PRAGMA foreign_key_check') === []
+    && (int) ($fkDb->one('SELECT parent_id AS p FROM child WHERE id = 10')['p'] ?? 0) === 1);
+check('migrator: enforcement is restored after the rebuild (orphan child rejected)',
+    throws(static fn () => $fkDb->run('INSERT INTO child (id,parent_id) VALUES (11, 999)'), PDOException::class));
+@unlink("$fkDir/0001_seed.sql"); @unlink("$fkDir/0002_widen.sql"); @rmdir($fkDir);
+
+// the post-file foreign_key_check gate: a migration that orphans a row is a hard failure
+$fkDir2 = sys_get_temp_dir() . '/kuyash_mig_' . bin2hex(random_bytes(4));
+@mkdir($fkDir2, 0750, true);
+file_put_contents("$fkDir2/0001_seed.sql",
+    "CREATE TABLE parent (id INTEGER PRIMARY KEY);\nCREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));\nINSERT INTO parent (id) VALUES (1);\n");
+$fkDb2 = new Database(':memory:');
+(new Migrator($fkDb2, $fkDir2))->migrate();
+file_put_contents("$fkDir2/0002_orphan.sql", "INSERT INTO child (id,parent_id) VALUES (9, 999);\n");
+check('migrator: foreign_key_check gate rejects an orphaning migration', throws(static fn () => (new Migrator($fkDb2, $fkDir2))->migrate(), RuntimeException::class));
+@unlink("$fkDir2/0001_seed.sql"); @unlink("$fkDir2/0002_orphan.sql"); @rmdir($fkDir2);
+
+echo "== Nodes: quick_create template + source-aware expand ==\n";
+
+$qcTypes = ['ai_video', 'caption_generation', 'hashtag_generation', 'music_note', 'preview', 'compliance_check', 'render_review', 'final_render', 'publish'];
+check('nodes: quick_create template resolves to QUICK_CREATE', Nodes::template('quick_create') === Nodes::QUICK_CREATE);
+check('nodes: defaultNodes(quick_create) expands VISUALS(ai) → ai_video chain', array_column(Nodes::expand(Nodes::defaultNodes('quick_create')), 'type') === $qcTypes);
+check('nodes: bare QUICK_CREATE (no settings) keeps VISUALS → asset_fetch (back-compat)',
+    array_column(Nodes::expand(Nodes::QUICK_CREATE), 'type')[0] === 'asset_fetch');
+check('nodes: expand is source-aware (stock → asset_fetch, ai → ai_video)', (static function (): bool {
+    $stock = array_column(Nodes::expand([['node' => 'VISUALS', 'settings' => ['source' => 'stock']]]), 'type');
+    $ai = array_column(Nodes::expand([['node' => 'VISUALS', 'settings' => ['source' => 'ai']]]), 'type');
+
+    return $stock === ['asset_fetch'] && $ai === ['ai_video'];
+})());
+check('nodes: defaultNodes(quick_create) sets VISUALS source=ai + empty prompt', (static function (): bool {
+    $n = Nodes::defaultNodes('quick_create');
+
+    return ($n[0]['node'] ?? '') === 'VISUALS' && ($n[0]['settings']['source'] ?? '') === 'ai' && ($n[0]['settings']['prompt'] ?? null) === '';
+})());
+check('nodes: full/distribution chains unchanged by the source-aware expander',
+    array_column(Nodes::expand(Nodes::defaultNodes('full')), 'type') === FULL_TYPES
+    && array_column(Nodes::expand(Nodes::defaultNodes('distribution')), 'type') === DIST_TYPES);
+check('nodes: ai_video defaults (timeout 600, no blind retry)', Nodes::timeoutFor('ai_video') === 600 && Nodes::maxRetriesFor('ai_video') === 1);
+check('validator: default quick_create template passes', (new WorkflowValidator())->validate('quick_create', Nodes::defaultNodes('quick_create')) === []);
+
+echo "== Usage: estimator + ai_video category (Quick Create) ==\n";
+check('estimator: quick_create total = ai_video 700 + caption 1 + hashtag 1 = 702c', (static function () use ($basePath): bool {
+    $est = (new CostEstimator(require $basePath . '/config/usage.php'))->estimateRun('quick_create', Nodes::defaultNodes('quick_create'));
+
+    return $est['total_cents'] === 702 && ($est['by_category']['ai_video'] ?? 0) === 700 && ($est['by_category']['ai_text'] ?? 0) === 2;
+})());
+// a real ai_video cost records one ai_video usage_event via Engine::finalize (mock = none)
+$qfDb = migratedDb($basePath);
+[$qfU, $qfWs] = seedUser($qfDb, 'qf@example.com', $argonHash, 'QF WS');
+$qfNow = '2026-06-13T09:00:00Z';
+$qfEngine = new Engine($qfDb, new EventLog($qfDb), new WorkflowValidator(), static fn (): string => $qfNow, null, new UsageRecorder($qfDb, require $basePath . '/config/usage.php'), null);
+$qfDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'Q','quick_create','[]',?,?)", [$qfWs, $qfNow, $qfNow]);
+$qfWf = $qfDb->lastInsertId();
+$qfDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'quick_create','[]','running',?,?,?)", [$qfWs, $qfWf, $qfU, $qfNow, $qfNow]);
+$qfRun = $qfDb->lastInsertId();
+$qfDb->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,worker_id,run_after,created_at) VALUES (?,?,'VISUALS',1,'ai_video','processing','w1',?,?)", [$qfWs, $qfRun, $qfNow, $qfNow]);
+$qfJob = $qfDb->one('SELECT * FROM jobs WHERE id = ?', [$qfDb->lastInsertId()]);
+$qfEngine->finalize($qfJob, JobResult::ready(['visual_ref' => 'cache:x', 'ai_label_required' => true], 'fal', 700));
+check('finalize: a real ai_video cost records ONE ai_video usage_event (700c) + a -700c spend', (static function () use ($qfDb, $qfJob): bool {
+    $ev = $qfDb->one('SELECT category, cost_cents FROM usage_events WHERE job_id = ?', [$qfJob['id']]);
+    $spend = (int) ($qfDb->one("SELECT amount_cents AS a FROM credit_transactions WHERE ref_job_id = ? AND type = 'spend'", [$qfJob['id']])['a'] ?? 0);
+
+    return $ev !== null && (string) $ev['category'] === 'ai_video' && (int) $ev['cost_cents'] === 700 && $spend === -700;
+})());
+
+echo "== Quick Create: VideoGenProvider (mock clip, sentinel, doc-gated real) ==\n";
+check('videogen: real fal provider is DOC-GATED — throws before any HTTP',
+    throws(static fn () => (new \Kuyash\Media\FalVideoGenProvider(new CurlHttpClient(), []))->generateFromImage('/x.png', 'p', 16.0, '/y.mp4'), \Kuyash\Media\VideoGenProviderException::class));
+if (!$mediaReady) {
+    echo "  (skipped ffmpeg-backed videogen/executor tests — ffmpeg unavailable)\n";
+} else {
+    $vgFf = new Ffmpeg($ffmpegBin, $ffprobeBin, 60);
+    $vgDir = "$TEST_MEDIA_ROOT/vg";
+    if (!is_dir($vgDir)) { mkdir($vgDir, 0750, true); }
+    $vgPhoto = "$vgDir/p.png";
+    $vgFf->run(['-f', 'lavfi', '-i', 'color=c=teal:s=400x600:d=1', '-frames:v', '1', $vgPhoto]);
+    $vgProv = new \Kuyash\Media\MockVideoGenProvider($vgFf, 1080, 1920, 24);
+    $vgOut = "$vgDir/clip.mp4";
+    $vgRes = $vgProv->generateFromImage($vgPhoto, 'slow cinematic push-in', 16.0, $vgOut);
+    check('videogen: mock produces a real 9:16 clip with null cost', is_file($vgOut) && filesize($vgOut) > 0
+        && $vgRes->width === 1080 && $vgRes->height === 1920 && abs($vgRes->durationSeconds - 16.0) < 0.6
+        && $vgRes->costCents === null && $vgRes->model === 'mock');
+    check('videogen: the fail sentinel throws (testable failure path)',
+        throws(static fn () => $vgProv->generateFromImage($vgPhoto, \Kuyash\Media\MockVideoGenProvider::FAIL_SENTINEL, 16.0, "$vgDir/x.mp4"), \Kuyash\Media\VideoGenProviderException::class));
+
+    echo "== Quick Create: AiVideoExecutor (ai-label, draft render, cache reuse) ==\n";
+    $axDb = migratedDb($basePath);
+    [$axU, $axWs] = seedUser($axDb, 'ax@example.com', $argonHash, 'AX WS');
+    $axNow = '2026-06-13T09:00:00Z';
+    $axPhoto = $seedReadyPhoto($axDb, $axWs, 'ax face');
+    $axNodes = Nodes::defaultNodes('quick_create');
+    $axNodes[0]['settings']['prompt'] = 'gentle parallax zoom';
+    $axDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'Q','quick_create',?,?,?)", [$axWs, json_encode($axNodes), $axNow, $axNow]);
+    $axWf = $axDb->lastInsertId();
+    $axDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,reference_asset_id,nodes_json,status,current_node,created_by,created_at,updated_at) VALUES (?,?,'quick_create',?,?,'running','VISUALS',?,?,?)", [$axWs, $axWf, $axPhoto, json_encode($axNodes), $axU, $axNow, $axNow]);
+    $axRun = $axDb->lastInsertId();
+    $axDb->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'VISUALS',1,'ai_video','processing',?,?)", [$axWs, $axRun, $axNow, $axNow]);
+    $axJobId = $axDb->lastInsertId();
+
+    $axPaths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/assets", 'cache' => "$TEST_MEDIA_ROOT/cache", 'render' => "$TEST_MEDIA_ROOT/renders", 'work' => "$TEST_MEDIA_ROOT/work"]);
+    $axCache = new AssetCache($axDb, $axPaths);
+    $axDisks = localStorageManager("$TEST_MEDIA_ROOT/assets", "$TEST_MEDIA_ROOT/cache", "$TEST_MEDIA_ROOT/renders");
+    $axAssembly = new AssemblyEngine($vgFf, $axPaths, new RenderRepository($axDb), $axDisks->default(), 24, ['burn_subtitles' => false], 'local');
+    $axExec = new \Kuyash\Media\AiVideoExecutor($axDb, new \Kuyash\Media\MockVideoGenProvider($vgFf, 1080, 1920, 24), $axCache, $axAssembly, $axPaths, $axDisks, ['width' => 540, 'height' => 960, 'preset' => 'ultrafast'], 16.0, 30.0);
+    $axJob = ['id' => $axJobId, 'workspace_id' => $axWs, 'run_id' => $axRun];
+    $axRes = $axExec->execute($axJob, []);
+    check('ai_video exec: ready, AI-label required, visual_ref + draft render produced',
+        $axRes->status === 'ready' && ($axRes->result['ai_label_required'] ?? null) === true
+        && is_string($axRes->result['visual_ref'] ?? null) && str_starts_with((string) $axRes->result['visual_ref'], 'cache:')
+        && ($axRes->result['draft_render_id'] ?? null) !== null && ($axRes->result['title'] ?? '') === 'gentle parallax zoom');
+    check('ai_video exec: mock provider records NO spend (cost null, truthful)', $axRes->costCents === null && ($axRes->result['cached'] ?? null) === false);
+    check('ai_video exec: a 9:16 draft render row exists for the run', (static function () use ($axDb, $axWs, $axRun): bool {
+        $r = (new RenderRepository($axDb))->latestForRun($axWs, $axRun, 'draft');
+
+        return $r !== null && (int) $r['width'] === 540 && (int) $r['height'] === 960;
+    })());
+    $axRes2 = $axExec->execute($axJob, []);
+    check('ai_video exec: same photo+prompt reuses the cached generation (cached=true, null cost)',
+        ($axRes2->result['cached'] ?? null) === true && $axRes2->costCents === null);
+    check('ai_video exec: a missing reference photo fails honestly', (static function () use ($axDb, $axWs, $axRun, $axJobId, $axExec): bool {
+        $axDb->run('UPDATE runs SET reference_asset_id = NULL WHERE id = ?', [$axRun]);
+        $r = $axExec->execute(['id' => $axJobId, 'workspace_id' => $axWs, 'run_id' => $axRun], []);
+
+        return $r->status === JobResult::STATUS_FAILED;
+    })());
+}
+
+echo "== Quick Create: Engine::startRun validation + prompt snapshot ==\n";
+$qvDb = migratedDb($basePath);
+[$qvUser, $qvWs] = seedUser($qvDb, 'qv@example.com', $argonHash, 'QV WS');
+$_SESSION = [];
+$qvCtx = new WorkspaceContext($qvDb); $qvCtx->set($qvWs);
+$qvNow = '2026-06-13T11:00:00Z';
+$qvEngine = new Engine($qvDb, new EventLog($qvDb), new WorkflowValidator(), static fn (): string => $qvNow);
+$qvWfRepo = new WorkflowRepository($qvDb, new WorkflowValidator());
+$qvWfRepo->ensureDefaults($qvCtx);
+$qvWf = $qvWfRepo->findByTemplate($qvCtx, 'quick_create');
+$qvVideo = seedReadyVideo($qvDb, $qvWs, 'a video');
+$qvPhoto = $seedReadyPhoto($qvDb, $qvWs, 'a photo');
+check('workflows: quick_create is seeded but EXCLUDED from the builder list',
+    array_column($qvWfRepo->listFor($qvCtx), 'template') === ['full', 'distribution'] && $qvWf !== null);
+check('quick startRun: no reference photo → rejected', throws(static fn () => $qvEngine->startRun($qvCtx, (int) $qvWf['id'], null, $qvUser, null, null, 'zoom'), WorkflowException::class));
+check('quick startRun: a VIDEO reference is rejected (photo required)', throws(static fn () => $qvEngine->startRun($qvCtx, (int) $qvWf['id'], null, $qvUser, null, $qvVideo, 'zoom'), WorkflowException::class));
+check('quick startRun: an empty/blank prompt → rejected', throws(static fn () => $qvEngine->startRun($qvCtx, (int) $qvWf['id'], null, $qvUser, null, $qvPhoto, '   '), WorkflowException::class));
+check('quick startRun: valid photo + prompt → quick_create run with prompt snapshot', (static function () use ($qvEngine, $qvCtx, $qvWf, $qvUser, $qvPhoto, $qvDb): bool {
+    $rid = $qvEngine->startRun($qvCtx, (int) $qvWf['id'], null, $qvUser, null, $qvPhoto, 'cinematic slow push-in');
+    $run = $qvDb->one('SELECT entity_type, reference_asset_id, nodes_json FROM runs WHERE id = ?', [$rid]);
+    $nodes = json_decode((string) $run['nodes_json'], true);
+
+    return (string) $run['entity_type'] === 'quick_create' && (int) $run['reference_asset_id'] === $qvPhoto
+        && ($nodes[0]['settings']['prompt'] ?? '') === 'cinematic slow push-in';
+})());
+
+echo "== Quick Create: pre-flight budget gate blocks an over-budget run ==\n";
+$qbDb = migratedDb($basePath);
+[$qbUser, $qbWs] = seedUser($qbDb, 'qb@example.com', $argonHash, 'QB WS');
+$_SESSION = [];
+$qbCtx = new WorkspaceContext($qbDb); $qbCtx->set($qbWs);
+$qbNow = '2026-06-13T11:00:00Z';
+(new WorkspaceSettings($qbDb))->setBudgetCapCents($qbWs, 100); // $1 cap — far below the ~$7 ai_video estimate
+$qbWfRepo = new WorkflowRepository($qbDb, new WorkflowValidator());
+$qbWfRepo->ensureDefaults($qbCtx);
+$qbWf = $qbWfRepo->findByTemplate($qbCtx, 'quick_create');
+$qbPhoto = $seedReadyPhoto($qbDb, $qbWs, 'qb photo');
+$qbPreflight = new PreflightGate(new CostEstimator(require $basePath . '/config/usage.php'), new UsageRepository($qbDb), new WorkspaceSettings($qbDb), new EventLog($qbDb));
+$qbEngine = new Engine($qbDb, new EventLog($qbDb), new WorkflowValidator(), static fn (): string => $qbNow, null, null, $qbPreflight);
+check('quick preflight: over-budget quick_create is hard-blocked (BudgetExceededException)',
+    throws(static fn () => $qbEngine->startRun($qbCtx, (int) $qbWf['id'], null, $qbUser, null, $qbPhoto, 'zoom'), BudgetExceededException::class));
+check('quick preflight: blocked run leaves NO run row + writes one preflight_block event',
+    (int) $qbDb->one('SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ?', [$qbWs])['n'] === 0
+    && (int) $qbDb->one("SELECT COUNT(*) AS n FROM events WHERE workspace_id = ? AND key = 'guardrail.preflight_block'", [$qbWs])['n'] === 1);
+
+echo "== E2E: Quick Create run (photo + prompt → AI clip → compliance → publish) ==\n";
+$qeDb = migratedDb($basePath);
+[$qeUser, $qeWs] = seedUser($qeDb, 'qe@example.com', $argonHash, 'QE WS');
+$_SESSION = [];
+$qeCtx = new WorkspaceContext($qeDb); $qeCtx->set($qeWs);
+$qeNow = '2026-06-13T11:00:00Z';
+[$qeEngine, $qeWorker] = makeRig($qeDb, new MockExecutor(), $qeNow);
+$qeWfRepo = new WorkflowRepository($qeDb, new WorkflowValidator());
+$qeWfRepo->ensureDefaults($qeCtx);
+$qeWf = $qeWfRepo->findByTemplate($qeCtx, 'quick_create');
+$connect($qeDb, $qeWs, 'instagram', '@qe', $qeNow); // a connected account so publish fans out
+$qePhoto = $seedReadyPhoto($qeDb, $qeWs, 'qe face');
+$qeRun = $qeEngine->startRun($qeCtx, (int) $qeWf['id'], null, $qeUser, null, $qePhoto, 'cinematic slow zoom');
+while ($qeWorker->tick()) {
+}
+$qeReview = (new JobRepository($qeDb))->awaitingApproval($qeCtx)[0] ?? null;
+check('quick e2e: pauses at render_review, AI-label flagged' . ($mediaReady ? ' + AI clip preview' : ''),
+    $qeReview !== null && (string) $qeReview['type'] === 'render_review'
+    && ($qeReview['result']['ai_label_required'] ?? null) === true
+    && ($mediaReady ? ($qeReview['result']['draft_render_id'] ?? null) !== null : true));
+$qeEngine->approve($qeCtx, (int) $qeReview['id'], $qeUser, 'qe@example.com');
+while ($qeWorker->tick()) {
+}
+check('quick e2e: completes — chain runs ai_video…publish in order, run completed', (static function () use ($qeDb, $qeCtx, $qeRun, $qcTypes): bool {
+    $run = (new RunRepository($qeDb))->find($qeCtx, $qeRun);
+    $types = array_column((new JobRepository($qeDb))->jobsForRun($qeCtx, $qeRun), 'type');
+
+    return $run['status'] === 'completed' && $types === $qcTypes;
+})());
+check('quick e2e: compliance pass_with_ai_label + published post carries the AI label', (static function () use ($qeDb, $qeRun): bool {
+    $post = $qeDb->one('SELECT * FROM posts WHERE run_id = ?', [$qeRun]);
+    $cc = $qeDb->one("SELECT result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$qeRun]);
+    $ccStatus = json_decode((string) ($cc['result_json'] ?? ''), true)['status'] ?? '';
+
+    return $post !== null && (string) $post['status'] === 'published' && (int) $post['ai_label_applied'] === 1
+        && $ccStatus === 'pass_with_ai_label';
+})());
+check('quick e2e: mock generation recorded $0 real spend (truthful)',
+    (int) $qeDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE workspace_id = ?', [$qeWs])['n'] === 0);
+check('quick e2e: run + post are tenant-scoped (another workspace sees neither)', (static function () use ($qeDb, $qeRun, $argonHash): bool {
+    $_SESSION = [];
+    [, $oWs] = seedUser($qeDb, 'qeother@example.com', $argonHash, 'QE OTHER');
+    $octx = new WorkspaceContext($qeDb);
+    $octx->set($oWs);
+
+    return (new RunRepository($qeDb))->find($octx, $qeRun) === null && (new PostRepository($qeDb))->forRun($octx, $qeRun) === [];
+})());
+
+echo "== Quick Create: controller (page states, estimate, AI-label notice) ==\n";
+$qkDb = migratedDb($basePath);
+[$qkU, $qkWs] = seedUser($qkDb, 'qk@example.com', $argonHash, 'QK WS');
+$_SESSION = ['auth_user_id' => $qkU, 'workspace_id' => $qkWs];
+$qkCtx = new WorkspaceContext($qkDb); $qkCtx->set($qkWs);
+$qkLib = require $basePath . '/config/library.php';
+$qkAssets = new AssetRepository($qkDb);
+$qkIngest = new AssetIngest(
+    new AssetValidator((array) $qkLib['allowed'], (int) $qkLib['max_video_bytes'], (int) $qkLib['max_photo_bytes']),
+    new MediaProbe(),
+    new AssetStorage((string) $qkLib['storage_root']),
+    $qkAssets,
+    localStorageManager((string) $qkLib['storage_root']),
+    (int) $qkLib['max_tags'],
+    (int) $qkLib['max_tag_length'],
+);
+$qkCtl = new \Kuyash\Controllers\QuickCreateController(
+    new View($basePath . '/templates'),
+    $qkAssets,
+    $qkIngest,
+    new WorkflowRepository($qkDb, new WorkflowValidator()),
+    new Engine($qkDb, new EventLog($qkDb), new WorkflowValidator()),
+    new CostEstimator(require $basePath . '/config/usage.php'),
+    $qkCtx,
+    new Auth($qkDb, new LoginThrottle($qkDb), $qkCtx),
+    new Csrf(),
+    new Flash(),
+    (array) $qkLib,
+);
+check('quick ctl: empty-library page shows the AI-label notice + ~$7.02 estimate + empty hint', (static function () use ($qkCtl): bool {
+    $body = $qkCtl->index()->body();
+
+    return str_contains($body, 'Quick Create') && str_contains($body, 'AI label')
+        && str_contains($body, '$7.02') && str_contains($body, 'No photos in your library yet');
+})());
+$qkPhoto = $seedReadyPhoto($qkDb, $qkWs, 'mug shot');
+check('quick ctl: a ready photo appears in the pick grid', (static function () use ($qkCtl): bool {
+    $body = $qkCtl->index()->body();
+
+    return str_contains($body, 'photo-pick') && str_contains($body, 'mug shot');
+})());
+
+// POST validation + happy path (CSRF is enforced centrally in public/index.php; the
+// controller itself does not double-check, so create() is callable directly here).
+$qkVidForPost = seedReadyVideo($qkDb, $qkWs, 'not a photo');
+$qkFlash = new Flash();
+$qkCtlP = new \Kuyash\Controllers\QuickCreateController(
+    new View($basePath . '/templates'),
+    $qkAssets,
+    $qkIngest,
+    new WorkflowRepository($qkDb, new WorkflowValidator()),
+    new Engine($qkDb, new EventLog($qkDb), new WorkflowValidator(), static fn (): string => '2026-06-13T11:00:00Z'),
+    new CostEstimator(require $basePath . '/config/usage.php'),
+    $qkCtx,
+    new Auth($qkDb, new LoginThrottle($qkDb), $qkCtx),
+    new Csrf(),
+    $qkFlash,
+    (array) $qkLib,
+);
+$qkDrive = static function (array $post) use ($qkCtlP, $qkFlash): array {
+    $_FILES = [];
+    $_POST = $post;
+    $r = $qkCtlP->create([]);
+    $flash = $qkFlash->pull();
+    $_POST = [];
+
+    return ['status' => $r->status(), 'loc' => $r->headers()['Location'] ?? '', 'key' => $flash[0]['key'] ?? ''];
+};
+$qkR1 = $qkDrive(['prompt' => '   ']);
+check('quick ctl POST: empty prompt → quick.prompt_required, back to /quick', $qkR1['status'] === 303 && $qkR1['loc'] === '/quick' && $qkR1['key'] === 'quick.prompt_required');
+check('quick ctl POST: over-long prompt → quick.prompt_too_long', $qkDrive(['prompt' => str_repeat('x', 301)])['key'] === 'quick.prompt_too_long');
+check('quick ctl POST: valid prompt + no photo → quick.photo_required', $qkDrive(['prompt' => 'a good motion prompt'])['key'] === 'quick.photo_required');
+check('quick ctl POST: picked a VIDEO id → quick.photo_invalid', $qkDrive(['prompt' => 'zoom', 'photo_id' => (string) $qkVidForPost])['key'] === 'quick.photo_invalid');
+$qkR5 = $qkDrive(['prompt' => 'cinematic push in', 'photo_id' => (string) $qkPhoto]);
+check('quick ctl POST: valid prompt + picked photo → run started, redirect /queue', $qkR5['status'] === 303 && $qkR5['loc'] === '/queue' && $qkR5['key'] === 'quick.started'
+    && (int) $qkDb->one("SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ? AND entity_type = 'quick_create'", [$qkWs])['n'] === 1);
 $_SESSION = [];
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)

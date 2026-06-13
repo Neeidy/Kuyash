@@ -85,7 +85,9 @@ final class ComplianceCheckExecutor implements JobExecutor
     private function aiLabelCheck(array $prior): array
     {
         $reasons = [];
-        if ((bool) ($prior['assembly']['ai_label_required'] ?? $prior['asset_fetch']['ai_label_required'] ?? false)) {
+        // ai_video (Quick Create) ALWAYS flags AI visuals; full/distribution read
+        // the assembly draft / resolved asset. AI media must carry the platform label.
+        if ((bool) ($prior['ai_video']['ai_label_required'] ?? $prior['assembly']['ai_label_required'] ?? $prior['asset_fetch']['ai_label_required'] ?? false)) {
             $reasons[] = 'ai_visuals';
         }
         // ANY narration produced by the tts step is a synthetic voice — the

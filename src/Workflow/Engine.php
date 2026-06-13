@@ -64,6 +64,7 @@ final class Engine
         int $userId,
         ?int $trendId = null,
         ?int $referenceAssetId = null,
+        ?string $prompt = null,
     ): int {
         $wsId = $ctx->id();
 
@@ -81,6 +82,10 @@ final class Engine
             throw new WorkflowException('run.invalid_workflow', implode('; ', $errors));
         }
 
+        // the run snapshots nodes_json verbatim by default; quick_create rewrites
+        // it to carry the prompt (below) before the snapshot is taken
+        $runNodesJson = (string) $workflow['nodes_json'];
+
         if ($workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION) {
             if ($assetId === null) {
                 throw new WorkflowException('run.asset_required');
@@ -95,6 +100,34 @@ final class Engine
             $entityType = 'library';
             $entityId = $assetId;
             $referenceAssetId = null; // distribution uses the library entity itself
+        } elseif ($workflow['template'] === Nodes::TEMPLATE_QUICK_CREATE) {
+            // Quick Create (Phase 12): a ready PHOTO reference is REQUIRED; the
+            // prompt is the creative input and rides in the run's VISUALS settings
+            // snapshot (no new column). entity_type = 'quick_create'.
+            if ($referenceAssetId === null) {
+                throw new WorkflowException('run.reference_not_ready');
+            }
+            $reference = $this->db->one(
+                "SELECT id FROM assets WHERE id = ? AND workspace_id = ? AND kind = 'photo' AND status = 'ready'",
+                [$referenceAssetId, $wsId],
+            );
+            if ($reference === null) {
+                throw new WorkflowException('run.reference_not_ready');
+            }
+            $cleanPrompt = mb_substr(trim((string) $prompt), 0, 300);
+            if ($cleanPrompt === '') {
+                throw new WorkflowException('quick.prompt_required');
+            }
+            $entityType = 'quick_create';
+            $entityId = null;
+            $nodes = $this->injectVisualsPrompt(is_array($nodes) ? $nodes : [], $cleanPrompt);
+            // re-validate the rewritten snapshot (defense: a drifted prompt must
+            // never start a run); then snapshot the prompted nodes for this run
+            $errors = $this->validator->validate(Nodes::TEMPLATE_QUICK_CREATE, $nodes);
+            if ($errors !== []) {
+                throw new WorkflowException('run.invalid_workflow', implode('; ', $errors));
+            }
+            $runNodesJson = json_encode($nodes, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
         } else {
             $entityType = 'trend';
             $entityId = null;
@@ -123,7 +156,10 @@ final class Engine
             }
         }
 
-        $chain = Nodes::expand(array_column($nodes, 'node'));
+        // pass full node ENTRIES (not bare ids) so expansion is source-aware: a
+        // quick_create VISUALS(source=ai) becomes an ai_video job, every other
+        // VISUALS source resolves through asset_fetch.
+        $chain = Nodes::expand(is_array($nodes) ? $nodes : []);
         $first = $chain[0];
         $now = ($this->clock)();
 
@@ -135,7 +171,7 @@ final class Engine
         $this->preflight?->check($wsId, (string) $workflow['template'], is_array($nodes) ? $nodes : [], $now);
 
         return $this->db->transaction(function () use (
-            $workflow, $wsId, $entityType, $entityId, $referenceAssetId, $first, $now, $userId
+            $workflow, $wsId, $entityType, $entityId, $referenceAssetId, $runNodesJson, $first, $now, $userId
         ): int {
             $this->db->run(
                 'INSERT INTO runs (workspace_id, workflow_id, entity_type, entity_id, reference_asset_id,
@@ -147,7 +183,7 @@ final class Engine
                     $entityType,
                     $entityId,
                     $referenceAssetId,
-                    $workflow['nodes_json'],
+                    $runNodesJson,
                     $first['node'],
                     $userId,
                     $now,
@@ -625,7 +661,8 @@ final class Engine
         }
 
         $nodes = json_decode((string) $run['nodes_json'], true);
-        $chain = Nodes::expand(array_column(is_array($nodes) ? $nodes : [], 'node'));
+        // full node entries → source-aware expansion (quick_create VISUALS=ai → ai_video)
+        $chain = Nodes::expand(is_array($nodes) ? $nodes : []);
         $next = null;
         foreach ($chain as $entry) {
             if ($entry['step'] === (int) $finishedJob['step'] + 1) {
@@ -754,6 +791,28 @@ final class Engine
         }
 
         return gmdate(self::ISO, $ts);
+    }
+
+    /**
+     * Write the Quick Create prompt into the VISUALS node's settings (the run's
+     * immutable snapshot is where the AI executor reads it). Length is already
+     * clamped to 300 by the caller (validator MAX_STRING_LENGTH).
+     *
+     * @param list<array<string, mixed>> $nodes
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function injectVisualsPrompt(array $nodes, string $prompt): array
+    {
+        foreach ($nodes as $i => $entry) {
+            if (is_array($entry) && ($entry['node'] ?? null) === 'VISUALS') {
+                $settings = is_array($entry['settings'] ?? null) ? $entry['settings'] : [];
+                $settings['prompt'] = $prompt;
+                $nodes[$i]['settings'] = $settings;
+            }
+        }
+
+        return $nodes;
     }
 
     private function later(string $nowIso, int $seconds): string

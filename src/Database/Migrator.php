@@ -57,6 +57,16 @@ final class Migrator
                 throw new RuntimeException("Migration unreadable: {$name}");
             }
 
+            // SQLite's supported "change a CHECK / rebuild a table" recipe needs
+            // foreign-key enforcement OFF, and that pragma is a NO-OP inside a
+            // transaction — so it must be toggled here, around the per-file tx,
+            // never from within the .sql. Migrations are trusted, reviewed DDL;
+            // disabling enforcement during the rewrite lets a parent table be
+            // dropped+renamed (e.g. widening workflows.template) without tripping
+            // child FKs on the implicit row-delete. Integrity is NOT taken on
+            // faith: foreign_key_check runs after every file and any dangling
+            // reference a migration leaves behind is a hard failure.
+            $pdo->exec('PRAGMA foreign_keys=OFF');
             $pdo->beginTransaction();
             try {
                 // raw exec is sanctioned here only: trusted, reviewed .sql files
@@ -71,7 +81,19 @@ final class Migrator
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
+                $pdo->exec('PRAGMA foreign_keys=ON'); // restore before bailing out
                 throw new RuntimeException("Migration failed in {$name}: {$e->getMessage()}", 0, $e);
+            }
+
+            // verify the file introduced no orphaned references, THEN restore
+            // enforcement for the next file / normal request handling
+            $violations = $this->db->all('PRAGMA foreign_key_check');
+            $pdo->exec('PRAGMA foreign_keys=ON');
+            if ($violations !== []) {
+                throw new RuntimeException(
+                    "Migration {$name} left {$violations[0]['table']} foreign-key violations — "
+                    . 'aborting (the DB has already committed this file; restore from the pre-migrate copy).',
+                );
             }
 
             $newlyApplied[] = $name;

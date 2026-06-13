@@ -6,18 +6,25 @@
 
 ## Son güncelleme
 
-- Tarih: 2026-06-12
-- Güncelleyen: Claude (**FAZ 11 KABUL + commit `bd6b5a6` + auto-push edildi**. Detay → ADR-017.
-  630 PASS/0 FAIL. Sıra: **/next-phase → Faz 12 (Quick Create AI video, credit-gated)**)
+- Tarih: 2026-06-13
+- Güncelleyen: Claude (**FAZ 12 (Quick Create AI video) İNŞA EDİLDİ + 5 reviewer GO/0 blocker**,
+  673 PASS/0 FAIL. **Commit YAPILMADI — kullanıcı kabulü bekliyor.** Önceki: Faz 11 KABUL `bd6b5a6` + push.)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 11 (Usage/Costs/Credit Ledger) KABUL EDİLDİ, commit + push edildi** (2026-06-12).
-  **Faz 11 feat `bd6b5a6`** (F10 `c664604`, F9 `431e692`, F8 `ddc5cf9`, F7 `b90cb8e`). origin/main = HEAD.
-- Faz 11 özeti: gerçek **usage_events** spend ledger (MTD tek doğruluk kaynağı) + para-cinsi **credit_transactions**
-  (balance=SUM); UsageRecorder truthful+idempotent (mock/cache 0 satır), PreflightGate over-budget run HARD-BLOCK;
-  AutoApprovalGate MTD→usage_events. /usage sayfası + bin/grant-credits.php (Stripe yok). **Tam detay → ADR-017.**
-- Doğrulama: **630 PASS, 0 FAIL**; 5 reviewer GO (security ZORUNLU/0 blocker). **Ertelenenler → `phase-11-followups.md`.**
+- Aşama: **FAZ 12 (Quick Create AI image-to-video) İNŞA EDİLDİ, KABUL BEKLİYOR** (2026-06-13).
+  origin/main = `bd6b5a6` (Faz 11). Faz 12 commit'lenmedi. Plan: `.claude/docs/phase-12-plan.md`.
+- Faz 12 özeti: kısa zincir **VISUALS(ai)→CAPTION→HASHTAGS→MUSIC→PREVIEW→COMPLIANCE→PUBLISH**
+  (ASSEMBLE YOK; AI klip final_render'da distribution gibi normalize). migration 0010 (workflows.template
+  rebuild → 'quick_create'). **Migrator FK-off+foreign_key_check kapısı** (parent-tablo rebuild güvenli;
+  gerçek dev DB'de 12 run / 0 ihlal doğrulandı). **VideoGenProvider seam** (Mock=ffmpeg zoompan/$0 +
+  Fal doc-gated flag-off stub). **AiVideoExecutor** (AssetCache içerik-adresli, cache-hit=null cost,
+  draft render, **ai_label_required=true HEP**). Nodes source-aware expand (VISUALS source=ai→ai_video).
+  Engine quick_create branch (prompt nodes_json snapshot + re-validate). PreflightGate ~$7'yi hard-block'lar.
+  Yeni **/quick** sayfası (foto upload/pick + prompt + tahmini kredi + zorunlu AI-label uyarısı).
+- Doğrulama: **673 PASS, 0 FAIL** (+43). 5 reviewer: compliance **GO/0 (ZORUNLU)**, security GO/0,
+  php GO/0, qa GO/0, ux KOŞULLU→2 should-fix + nitler UYGULANDI. Canlı smoke OK (real-DB 0010 rebuild +
+  VIDEO_MOCK=false doc-gated + HTTP boot). **Ertelenenler → `phase-12-followups.md`.**
 - KURAL (kullanıcı, 2026-06-11): tüm run/test komutları `cd ~/Desktop/Kuyash &&` önekiyle.
 - Test: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
   Smoke (iki terminal): **[Terminal-1]** sunucu (8080 dolu → 8082)
@@ -47,14 +54,18 @@
 
 ## Sıradaki adım
 
-1. **`/next-phase` → Faz 12 (Quick Create AI video, credit-gated).** Faz 12 bu ledger'a dayanır:
-   `ai_video` kategorisi estimator'da fiyatlı placeholder olarak hazır (config/usage.php); usage_events +
-   credit gate yerinde. **compliance-reviewer ZORUNLU** Faz 12 kapanışında (AI-label + credit-gate).
-2. Faz 11 ertelenenler: `.claude/docs/phase-11-followups.md` (MTD basis-change deploy notu, model/units
+1. **Faz 12 KABUL bekliyor.** Kullanıcı "kabul + commit + push onayı" verince: güvenlik kapısı
+   (secret grep) → commit (feat) → `git push origin main` (auto-push) → Faz 12 detayını ADR-018'e taşı +
+   "Mevcut durum"u ~4 satıra indir. Sonra `/next-phase` → **Faz 13 (Hardening)**.
+   Not: gerçek dev DB'ye migration 0010 ZATEN uygulandı (yedek: `storage/database/kuyash.pre-0010.bak.sqlite`).
+2. Faz 12 ertelenenler: `.claude/docs/phase-12-followups.md` (localSourcePath dedup, startRun branch
+   stratejisi, ai_video units=seconds gerçek-fiyatla, executor real-cost passthrough testi, async/poll
+   gerçek-entegrasyon → ai-video-notes.md 7 madde).
+3. Faz 11 ertelenenler: `.claude/docs/phase-11-followups.md` (MTD basis-change deploy notu, model/units
    executor seam'inden surface etme, OpenAI/Pexels quota /usage'da, 401/403 non-retryable fast-fail).
-3. Açık HARD GATE'ler (Faz 8'den): STORAGE_DRIVER=r2 enable-time canlı-bucket SigV4 smoke + PRIVATE/no-ACL
+4. Açık HARD GATE'ler (Faz 8'den): STORAGE_DRIVER=r2 enable-time canlı-bucket SigV4 smoke + PRIVATE/no-ACL
    teyidi; Faz 13'e ertelenen assembly-side staging + render/cache eviction. Detay: ADR-014.
-4. Faz 10 ertelenenler: `.claude/docs/phase-10-followups.md` (cockpit countdown, account-subset UI, webhook
+5. Faz 10 ertelenenler: `.claude/docs/phase-10-followups.md` (cockpit countdown, account-subset UI, webhook
    rate-limit, cap-unification asymmetry [S1]).
 
 ## Açık konular / bekleyenler
@@ -68,6 +79,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-06-13 — START PHASE 12: Quick Create AI image-to-video İNŞA EDİLDİ. migration 0010 (workflows.template rebuild → 'quick_create'); **Migrator FK-off+foreign_key_check kapısı** (parent-tablo rebuild güvenli; gerçek dev DB 12 run/0 ihlal). VideoGenProvider seam (Mock ffmpeg-zoompan/$0 + Fal doc-gated flag-off stub + VideoResult/Exception); AiVideoExecutor (AssetCache içerik-adresli cache-hit=null cost, draft render, **ai_label_required=true HEP**); Nodes source-aware expand (VISUALS source=ai→ai_video, polymorphic back-compat); Engine quick_create branch (prompt nodes_json snapshot + re-validate); CostEstimator source-aware; FinalRender/Compliance/MockExecutor ai_video okur; WorkflowRepository seed+exclude+findByTemplate; /quick sayfası (QuickCreateController + template + nav "Create" + CSS). 673 PASS (+43). 5 reviewer: compliance GO/0 (ZORUNLU), security GO/0, php GO/0, qa GO/0, ux KOŞULLU→2 should-fix (caps hint→field__hint, upload-trap→delete+ayrı mesaj) + nitler (radiogroup, focus-visible, .env.example) UYGULANDI. Smoke OK (real-DB 0010 + VIDEO_MOCK=false doc-gated + HTTP boot). Commit YAPILMADI — kabul bekliyor.
+- 2026-06-13 — /next-phase: Faz 12 (Quick Create AI video, credit-gated) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-12-plan.md`'e kaydedildi. Kullanıcı 3 kilitli karar: (1) kısa brief-faithful zincir (no trend/idea/script/voice); (2) mock-first + doc-gated flag-off real stub (async submit/poll YOK V1); (3) özel /quick sayfası. Mühendislik incelemesi: ASSEMBLE atlandı — AI klip final_render'da distribution gibi normalize edilir (AssemblyExecutor tts+asset_fetch zorunlu kılıyor). migration 0010 workflows.template rebuild ('quick_create'); VideoGenProvider seam + Mock (ffmpeg zoompan) + Fal flag-off stub + AiVideoExecutor; Nodes source-aware expand (VISUALS source=ai→ai_video). Kod YAZILMADI — START PHASE 12 bekleniyor.
 - 2026-06-12 — FAZ 11 KABUL: kullanıcı kabul + commit + push onayı verdi. Faz 11 feat `bd6b5a6` commit'lendi, güvenlik kapısı (secret grep temiz) + `git push origin main` (auto-push). Faz 11 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-017), "Mevcut durum" ~4 satıra indirildi (~1 sayfa kuralı). Sıra: /next-phase → Faz 12 (Quick Create AI video, credit-gated).
 - 2026-06-12 — START PHASE 11: Usage/Costs/Credit Ledger İNŞA EDİLDİ. migration 0009 (usage_events append-only UNIQUE(job_id) + credit_transactions grant/spend/adjust); src/Usage/ 6 sınıf (UsageRecorder [Engine::finalize tx içinde tek yazım yolu, yalnız gerçek non-null+pozitif maliyet → mock/cache 0 satır=truthful, idempotent], CostEstimator [config-driven det.], PreflightGate [startRun HARD-BLOCK + guardrail.preflight_block], UsageRepository [MTD tek doğruluk kaynağı], CreditLedger, BudgetExceededException); AutoApprovalGate MTD→usage_events (parity); /usage + nav + footer; bin/grant-credits.php; config/usage.php; Format::cents; WorkflowException un-final. 630 PASS (+43). 5 reviewer GO (security ZORUNLU GO/0). 2 MED qa fix (ayrıştırıcı parity testi + finalizeAwaiting e2e) + ux polish + recorder non-positive-skip uygulandı. Canlı smoke (preflight block uçtan-uca) OK. Commit YAPILMADI — kabul bekliyor.
 - 2026-06-12 — /next-phase: Faz 11 (Usage, Costs & Credit Ledger) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-11-plan.md`'e kaydedildi. Kullanıcı 2 kilitli karar: (1) ledger **cents-cinsinden + budget-cap geçidi** (prepaid kredi ekonomisi reddedildi — krediler cents üzerine görüntü katmanı, grant manuel/bin script, Stripe yok); (2) preflight **hard-block** (over-budget run reddedilir). `usage_events` = MTD tek doğruluk kaynağı (AutoApprovalGate repoint). Kod YAZILMADI — START PHASE 11 bekleniyor.
@@ -76,5 +89,3 @@
 - 2026-06-12 — /next-phase: Faz 10 (Zernio Publishing) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-10-plan.md`'e kaydedildi. Kararlar: trim cockpit/metrics (followups), gerçekçi iki-bacaklı mock OAuth (token YOK), schedule + immediate (run_after defer), doc-gate SIKI (flag-off stub). Kod YAZILMADI — START PHASE 10 bekleniyor.
 - 2026-06-12 — START PHASE 9: Compliance Agent + Approval Modes İNŞA EDİLDİ (model hatası → Fable'dan Opus'a geçişle tamamlandı). migration 0007 (truthful-record CHECK + workspaces compliance kolonları); src/Compliance/ 8 sınıf (Policy/Slop/Executor/Quality/Gate/GateDecision/PublishGate/Digest); Engine compliance+auto-approve+defer branch'leri; /settings+/digest UI; truthful badge'ler. 541 PASS (+74), 0 uyarı. 3 reviewer GO (compliance ZORUNLU=GO/0 blocker, security GO/0 blocker, ux KOŞULLU→3 düzeltme uygulandı). Canlı smoke OK. Commit YAPILMADI — kabul bekliyor.
 - 2026-06-12 — /next-phase: Faz 9 (Compliance Agent + Approval Modes) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-9-plan.md`'e kaydedildi. Kullanıcı kararı: Auto onay kapsamı = pass + pass_with_ai_label (yalnızca-pass reddedildi; warn/block asla auto). Kilitli: truthful-record şema CHECK'i, settings = workspaces kolonları, block = cancel, kuyash-v1 policy sabitleri, PublishGate + deferred. Kod YAZILMADI — START PHASE 9 bekleniyor.
-- 2026-06-12 — FAZ 8 KABUL: kullanıcı kabul + commit + push onayı verdi. Faz 8 `ddc5cf9` commit'lendi, origin/main'e push edildi (auto-push). Ardından checkpoint temizliği: Faz 7 + Faz 8 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-013 Media Production, ADR-014 Storage abstraction), "Mevcut durum" 4 satıra indirildi (~1 sayfa kuralı). Sıra: /next-phase → Faz 9.
-- 2026-06-12 — START PHASE 8: Cloudflare R2 storage abstraction İNŞA EDİLDİ. StorageProvider seam (Local varsayılan + real R2 flag-OFF) + el yazımı SigV4 (AWS ListUsers KAT'a karşı doğrulandı) + yeni Http/BlobClient streaming seam + StorageManager/StorageKey/StorageBackfill + migration 0006 (`storage_disk`). Serving per-object → R2 302 presigned (tenant-check önce) / local stream. Write seam put()+storage_disk; Pexels download stream+cap (Faz 7 HARD GATE temizlendi). bin/migrate-storage.php backfill. 467 PASS, 3 reviewer GO/0 blocker, ucuz should-fix (CURLPROTO_HTTPS pin vb.). Commit YAPILMADI — kabul bekliyor.
