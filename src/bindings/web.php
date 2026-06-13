@@ -13,6 +13,7 @@ use Kuyash\Auth\LoginThrottle;
 use Kuyash\Compliance\AutoApprovalGate;
 use Kuyash\Compliance\DigestReport;
 use Kuyash\Compliance\QualityScore;
+use Kuyash\Controllers\AccountsController;
 use Kuyash\Controllers\AuthController;
 use Kuyash\Controllers\DashboardController;
 use Kuyash\Controllers\DigestController;
@@ -43,6 +44,11 @@ use Kuyash\Library\MediaProbe;
 use Kuyash\Media\AssetCache;
 use Kuyash\Media\MediaPaths;
 use Kuyash\Media\RenderRepository;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\PostRepository;
+use Kuyash\Publish\PublishCounter;
+use Kuyash\Publish\WebhookController;
+use Kuyash\Publish\WebhookInbox;
 use Kuyash\Storage\StorageManager;
 use Kuyash\Workflow\Cockpit;
 use Kuyash\Trend\QuotaCounter;
@@ -189,10 +195,28 @@ return static function (Container $container, string $basePath): void {
         $c->get(EventLog::class),
         $c->get(Engine::class),
         $c->get(AssetRepository::class),
+        $c->get(PostRepository::class),
         $c->get(WorkspaceContext::class),
         $c->get(Auth::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+    ));
+
+    $container->bind(AccountsController::class, static fn (Container $c): AccountsController => new AccountsController(
+        $c->get(View::class),
+        $c->get(AccountRepository::class),
+        $c->get(PostRepository::class),
+        $c->get(AssetRepository::class),
+        $c->get(PublishCounter::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
+    ));
+
+    $container->bind(WebhookController::class, static fn (Container $c): WebhookController => new WebhookController(
+        $c->get(WebhookInbox::class),
+        (string) $c->get(Config::class)->get('zernio.webhook_secret', ''),
     ));
 
     $container->bind(TrendController::class, static fn (Container $c): TrendController => new TrendController(

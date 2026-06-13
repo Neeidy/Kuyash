@@ -101,7 +101,7 @@ final class QueueController
         $email = (string) ($user['email'] ?? '');
 
         $decision = $action === 'approve'
-            ? $this->engine->approve($this->workspace, (int) $id, $userId, $email)
+            ? $this->engine->approve($this->workspace, (int) $id, $userId, $email, $this->scheduledFor())
             : $this->engine->reject($this->workspace, (int) $id, $userId, $email);
 
         return match ($decision) {
@@ -112,6 +112,28 @@ final class QueueController
                 $action === 'approve' ? 'approval.approved' : 'approval.rejected',
             ),
         };
+    }
+
+    /**
+     * Optional "schedule for" from the approval form: a datetime-local value
+     * (YYYY-MM-DDTHH:MM, interpreted UTC — the app is UTC throughout) normalized
+     * to ISO. The Engine ignores a past/empty value (publishes immediately), so
+     * this only shapes the string; it never decides "is it in the future".
+     */
+    private function scheduledFor(): ?string
+    {
+        $raw = trim((string) ($_POST['scheduled_for'] ?? ''));
+        if ($raw === '') {
+            return null;
+        }
+        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/', $raw) === 1) {
+            return $raw . ':00Z';
+        }
+        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $raw) === 1) {
+            return $raw;
+        }
+
+        return null;
     }
 
     private function backToQueue(string $type, string $messageKey): Response

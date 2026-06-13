@@ -26,6 +26,15 @@ use Kuyash\Core\Database;
 use Kuyash\Http\CurlBlobClient;
 use Kuyash\Http\CurlHttpClient;
 use Kuyash\Library\AssetRepository;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\MockPublishProvider;
+use Kuyash\Publish\PostRepository;
+use Kuyash\Publish\PublishCounter;
+use Kuyash\Publish\PublishProvider;
+use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\WebhookInbox;
+use Kuyash\Publish\ZernioPublishExecutor;
+use Kuyash\Publish\ZernioPublishProvider;
 use Kuyash\Media\AssemblyEngine;
 use Kuyash\Media\AssemblyExecutor;
 use Kuyash\Media\AssetCache;
@@ -124,6 +133,52 @@ return static function (Container $container, string $basePath): void {
     $container->bind(DigestReport::class, static fn (Container $c): DigestReport => new DigestReport(
         $c->get(Database::class),
         $c->get(QualityScore::class),
+    ));
+
+    /* -------- Publishing (Phase 10): accounts, posts, Zernio seam ----------- */
+
+    $container->bind(AccountRepository::class, static fn (Container $c): AccountRepository => new AccountRepository(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(PostRepository::class, static fn (Container $c): PostRepository => new PostRepository(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(PublishCounter::class, static fn (Container $c): PublishCounter => new PublishCounter(
+        $c->get(Database::class),
+    ));
+
+    // PublishProvider (Phase 10): the deterministic mock by default. Setting
+    // ZERNIO_MOCK=false builds the real client — a DOC-GATED stub that throws on
+    // any call (no docs/creds; integration rule). Swap = one config line.
+    $container->bind(PublishProvider::class, static function (Container $c): PublishProvider {
+        $cfg = (array) $c->get(Config::class)->get('zernio');
+        if (($cfg['mock'] ?? true) === false) {
+            return new ZernioPublishProvider(new CurlHttpClient(), $cfg); // flag-off, throws "doc-gated"
+        }
+
+        return new MockPublishProvider();
+    });
+
+    $container->bind(ZernioPublishExecutor::class, static fn (Container $c): ZernioPublishExecutor => new ZernioPublishExecutor(
+        $c->get(Database::class),
+        $c->get(PublishProvider::class),
+        $c->get(AccountRepository::class),
+        $c->get(PostRepository::class),
+        $c->get(EventLog::class),
+    ));
+
+    $container->bind(WebhookInbox::class, static fn (Container $c): WebhookInbox => new WebhookInbox(
+        $c->get(Database::class),
+        $c->get(PostRepository::class),
+        $c->get(EventLog::class),
+    ));
+
+    $container->bind(Reconciler::class, static fn (Container $c): Reconciler => new Reconciler(
+        $c->get(PostRepository::class),
+        $c->get(PublishProvider::class),
+        $c->get(EventLog::class),
     ));
 
     $container->bind(Engine::class, static fn (Container $c): Engine => new Engine(
@@ -390,10 +445,17 @@ return static function (Container $container, string $basePath): void {
         $registry->register('assembly', $c->get(AssemblyExecutor::class));
         $registry->register('final_render', $c->get(FinalRenderExecutor::class));
 
-        // Phase 9: real compliance scoring + the guardrail gate around the
-        // (still mock) publish — Phase 10 swaps only the inner executor.
+        // Phase 9: real compliance scoring + the guardrail gate around publish.
+        // Phase 10: the inner executor is now ZernioPublishExecutor (real per-
+        // account fan-out, mock-first provider). The gate (kill-switch +
+        // per-account daily cap) is unchanged and survives the swap.
         $registry->register('compliance_check', $c->get(ComplianceCheckExecutor::class));
-        $registry->register('publish', new PublishGateExecutor($c->get(Database::class), $mock));
+        $registry->register('publish', new PublishGateExecutor(
+            $c->get(Database::class),
+            $c->get(ZernioPublishExecutor::class),
+            $c->get(PublishCounter::class),
+            $c->get(AccountRepository::class),
+        ));
 
         return $registry;
     });

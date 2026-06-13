@@ -180,8 +180,14 @@ final class Engine
         });
     }
 
-    /** Approve an awaiting job: truthful record + resume the chain. */
-    public function approve(WorkspaceContext $ctx, int $jobId, int $userId, string $userEmail): Decision
+    /**
+     * Approve an awaiting job: truthful record + resume the chain. A render_review
+     * approval may carry an optional $scheduledFor (ISO-8601 UTC): a future time
+     * is stored on runs.publish_after so the publish job (inserted two steps
+     * later, after final_render) defers via run_after and fires when due. Past /
+     * malformed / null = publish immediately.
+     */
+    public function approve(WorkspaceContext $ctx, int $jobId, int $userId, string $userEmail, ?string $scheduledFor = null): Decision
     {
         $wsId = $ctx->id();
         $job = $this->db->one('SELECT * FROM jobs WHERE id = ? AND workspace_id = ?', [$jobId, $wsId]);
@@ -191,7 +197,7 @@ final class Engine
 
         $now = ($this->clock)();
 
-        return $this->db->transaction(function () use ($wsId, $job, $userId, $userEmail, $now): Decision {
+        return $this->db->transaction(function () use ($wsId, $job, $userId, $userEmail, $now, $scheduledFor): Decision {
             $claimed = $this->db->run(
                 "UPDATE jobs SET status = 'ready', finished_at = ?
                  WHERE id = ? AND workspace_id = ? AND status = 'awaiting_approval'",
@@ -199,6 +205,16 @@ final class Engine
             );
             if ($claimed->rowCount() === 0) {
                 return Decision::AlreadyDecided;
+            }
+
+            $publishAfter = (string) $job['type'] === 'render_review'
+                ? $this->futureOrNull($scheduledFor, $now)
+                : null;
+            if ($publishAfter !== null) {
+                $this->db->run(
+                    "UPDATE runs SET publish_after = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+                    [$publishAfter, $now, $job['run_id'], $wsId],
+                );
             }
 
             $this->recordApproval($wsId, $job, 'approved', $userId, $now);
@@ -626,6 +642,7 @@ final class Engine
             $run['entity_id'] === null ? null : (int) $run['entity_id'],
             $finishedJob['user_id'] === null ? null : (int) $finishedJob['user_id'],
             $now,
+            ($run['publish_after'] ?? null) === null ? null : (string) $run['publish_after'],
         );
     }
 
@@ -638,10 +655,18 @@ final class Engine
         ?int $entityId,
         ?int $userId,
         string $now,
+        ?string $publishAfter = null,
     ): void {
         // duplicates are dangerous for publish (double-post); the partial
         // unique index enforces at-most-one publish job per run
         $idempotencyKey = $chainEntry['type'] === 'publish' ? "run:{$runId}:publish" : null;
+
+        // a scheduled publish defers on the queue's run_after gate (set at the
+        // render_review approval); every other job runs as soon as it is enqueued
+        $runAfter = $now;
+        if ($chainEntry['type'] === 'publish' && $publishAfter !== null) {
+            $runAfter = $this->futureOrNull($publishAfter, $now) ?? $now;
+        }
 
         $this->db->run(
             'INSERT INTO jobs (workspace_id, run_id, node, step, type, user_id, entity_type,
@@ -659,7 +684,7 @@ final class Engine
                 $entityId,
                 Nodes::maxRetriesFor($chainEntry['type']),
                 $idempotencyKey,
-                $now,
+                $runAfter,
                 $now,
             ],
         );
@@ -692,6 +717,24 @@ final class Engine
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [$wsId, $job['run_id'], $job['id'], $job['node'], $decision, $mode, $userId, $now, $policyVersion, $scoreJson],
         );
+    }
+
+    /**
+     * Normalize a caller-supplied schedule time: returns the ISO-8601 UTC string
+     * only when it parses AND is strictly in the future relative to $now; null
+     * otherwise (past / malformed / empty → publish immediately).
+     */
+    private function futureOrNull(?string $scheduledFor, string $now): ?string
+    {
+        if ($scheduledFor === null || $scheduledFor === '') {
+            return null;
+        }
+        $ts = strtotime($scheduledFor);
+        if ($ts === false || $ts <= (int) strtotime($now)) {
+            return null;
+        }
+
+        return gmdate(self::ISO, $ts);
     }
 
     private function later(string $nowIso, int $seconds): string

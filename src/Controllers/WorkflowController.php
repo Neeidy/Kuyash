@@ -11,6 +11,7 @@ use Kuyash\Core\Response;
 use Kuyash\Core\View;
 use Kuyash\Auth\Auth;
 use Kuyash\Library\AssetRepository;
+use Kuyash\Publish\PostRepository;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\JobRepository;
@@ -35,6 +36,7 @@ final class WorkflowController
         private readonly EventLog $events,
         private readonly Engine $engine,
         private readonly AssetRepository $assets,
+        private readonly PostRepository $posts,
         private readonly WorkspaceContext $workspace,
         private readonly Auth $auth,
         private readonly Csrf $csrf,
@@ -126,6 +128,7 @@ final class WorkflowController
             'jobs' => $this->jobs->jobsForRun($this->workspace, $run['id']),
             'timeline' => $this->events->timelineForRun($this->workspace, $run['id']),
             'approvals' => $this->runs->approvalsForRun($this->workspace, $run['id']),
+            'posts' => $this->posts->forRun($this->workspace, $run['id']),
         ], 'layout/app'));
     }
 

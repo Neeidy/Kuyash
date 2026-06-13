@@ -6,21 +6,30 @@ namespace Kuyash\Compliance;
 
 use Closure;
 use Kuyash\Core\Database;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\PublishCounter;
 use Kuyash\Workflow\JobExecutor;
 use Kuyash\Workflow\JobResult;
 
 /**
- * Guardrail enforcement point B: wraps the publish executor (mock in Phase 9;
- * Phase 10 swaps the INNER executor for Zernio — this gate survives the swap).
+ * Guardrail enforcement point B: wraps the publish executor (Phase 10's
+ * ZernioPublishExecutor; the gate survives the inner swap). Only AUTO-APPROVED
+ * runs are gated — guardrails constrain autonomy, never a human decision (a
+ * manually approved publish always passes straight through):
+ *   - kill switch ON          → defer (short re-check; flipping it off releases
+ *                               the queue within minutes)
+ *   - per-account daily cap    → defer to the next UTC midnight when ANY connected
+ *                               target account already hit its cap. A run
+ *                               distributes to all targets as a unit; deferring
+ *                               the whole job is safe because the publish
+ *                               executor is idempotent per (run,account) — when
+ *                               the job later runs, already-published targets are
+ *                               skipped. (Per-account subset scheduling = follow-up.)
  *
- * Only AUTO-APPROVED runs are gated — guardrails constrain autonomy, never a
- * human decision (a manually approved publish always passes through):
- *   - kill switch ON          → defer (short re-check; flipping it back off
- *                               releases the queue within minutes)
- *   - daily post cap reached  → defer to the next UTC midnight
- *
- * A deferral is a HALT, not a failure: JobResult::deferred() sends the job
- * back to 'queued' with a future run_after and NO retry_count increment.
+ * The per-account count comes from the unified PublishCounter (the `posts`
+ * table) — the single source of truth shared with the publish site. A deferral
+ * is a HALT, not a failure: JobResult::deferred() returns the job to 'queued'
+ * with a future run_after and NO retry_count increment.
  */
 final class PublishGateExecutor implements JobExecutor
 {
@@ -31,6 +40,8 @@ final class PublishGateExecutor implements JobExecutor
     public function __construct(
         private readonly Database $db,
         private readonly JobExecutor $inner,
+        private readonly PublishCounter $counter,
+        private readonly AccountRepository $accounts,
         ?Closure $clock = null,
     ) {
         $this->clock = $clock ?? static fn (): string => gmdate('Y-m-d\TH:i:s\Z');
@@ -60,9 +71,11 @@ final class PublishGateExecutor implements JobExecutor
         }
 
         $now = ($this->clock)();
-        $published = $this->publishedToday($wsId, $now);
-        if ($published >= (int) $ws['daily_post_cap']) {
-            return JobResult::deferred('daily_cap', $this->secondsToNextUtcMidnight($now));
+        $cap = (int) $ws['daily_post_cap'];
+        foreach ($this->accounts->connectedFor($wsId) as $account) {
+            if ($this->counter->publishedToday($wsId, $now, (int) $account['id']) >= $cap) {
+                return JobResult::deferred('daily_cap', $this->secondsToNextUtcMidnight($now));
+            }
         }
 
         return $this->inner->execute($job, $prior);
@@ -75,21 +88,6 @@ final class PublishGateExecutor implements JobExecutor
              WHERE workspace_id = ? AND run_id = ? AND mode = 'auto' AND decision = 'approved'",
             [$wsId, $runId],
         ) !== null;
-    }
-
-    /** Posts that actually went out today (UTC). $accountId = Phase 10 seam. */
-    public function publishedToday(int $workspaceId, string $now, ?int $accountId = null): int
-    {
-        $dayStart = substr($now, 0, 10) . 'T00:00:00Z';
-        $nextDay = gmdate('Y-m-d\TH:i:s\Z', (int) strtotime($dayStart) + 86400);
-        $row = $this->db->one(
-            "SELECT COUNT(*) AS n FROM jobs
-             WHERE workspace_id = ? AND type = 'publish' AND status = 'published'
-               AND finished_at >= ? AND finished_at < ?",
-            [$workspaceId, $dayStart, $nextDay],
-        );
-
-        return (int) ($row['n'] ?? 0);
     }
 
     private function secondsToNextUtcMidnight(string $now): int

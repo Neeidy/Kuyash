@@ -19,6 +19,8 @@ declare(strict_types=1);
  */
 
 use Kuyash\Core\ErrorHandler;
+use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\WebhookInbox;
 use Kuyash\Workflow\Maintenance;
 use Kuyash\Workflow\Worker;
 
@@ -60,10 +62,18 @@ if (extension_loaded('pcntl')) {
 $worker = $container->get(Worker::class);
 /** @var Maintenance $maintenance */
 $maintenance = $container->get(Maintenance::class);
+/** @var WebhookInbox $webhookInbox */
+$webhookInbox = $container->get(WebhookInbox::class);
+/** @var Reconciler $reconciler */
+$reconciler = $container->get(Reconciler::class);
 /** @var Kuyash\Workflow\WorkerHeartbeat $heartbeat */
 $heartbeat = $container->get(Kuyash\Workflow\WorkerHeartbeat::class);
 
 $chores = $maintenance->run(gmdate('Y-m-d\TH:i:s\Z'));
+// publish maintenance once on start too, so a `--once` drain also processes any
+// pending webhooks and reconciles stale in-flight posts
+$webhookInbox->processPending(gmdate('Y-m-d\TH:i:s\Z'));
+$reconciler->sweep(gmdate('Y-m-d\TH:i:s\Z'));
 $heartbeat->beat(gmdate('Y-m-d\TH:i:s\Z')); // mark alive immediately on start
 fwrite(STDOUT, sprintf(
     "worker: started (maintenance: %d login rows pruned, %d orphan files swept)\n",
@@ -86,8 +96,14 @@ while (!$stop) {
     // idle ticks would starve maintenance under a continuously full queue
     if (time() - $lastChores >= 300) {
         $maintenance->run(gmdate('Y-m-d\TH:i:s\Z'));
+        // reconcile in-flight publishes whose webhook never arrived (15-min
+        // staleness threshold, so a 5-min sweep cadence is ample)
+        $reconciler->sweep(gmdate('Y-m-d\TH:i:s\Z'));
         $lastChores = time();
     }
+
+    // process any verified webhook deliveries promptly (cheap indexed query)
+    $webhookInbox->processPending(gmdate('Y-m-d\TH:i:s\Z'));
 
     $didWork = $worker->tick();
 

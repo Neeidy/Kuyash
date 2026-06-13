@@ -58,6 +58,15 @@ final class Messages
         'settings.invalid' => 'Check the settings values — mode, daily cap (1-10) or budget is invalid.',
         'killswitch.on' => 'Kill switch is ON — auto-approvals stopped, queued auto publishes will hold.',
         'killswitch.off' => 'Kill switch is OFF — autonomy resumes under the usual guardrails.',
+
+        // accounts / publishing (Phase 10)
+        'account.connected' => 'Account connected — it can now receive published renders.',
+        'account.disconnected' => 'Account disconnected — it will stop receiving renders.',
+        'account.connect_failed' => 'Could not complete the connection — please try again.',
+        'account.invalid_platform' => 'Pick a supported platform (Instagram, TikTok or YouTube).',
+        'account.not_found' => 'That account does not exist.',
+        'account.reference_updated' => 'Default reference updated for this account.',
+        'account.reference_invalid' => 'Pick a ready library asset as the reference.',
     ];
 
     /**
@@ -73,7 +82,7 @@ final class Messages
         'job.created' => '{type} queued (run #{run})',
         'job.claimed' => '{type} claimed by {worker} (run #{run})',
         'job.finished' => '{type} finished (run #{run})',
-        'job.published' => '{type} done — mock publish, nothing went live (run #{run})',
+        'job.published' => '{type} complete — per-account results recorded (run #{run})',
         'job.awaiting_approval' => '{type} awaiting your approval (run #{run})',
         'job.failed' => '{type} failed: {error} (run #{run})',
         'job.requeued' => '{type} requeued, retry {retry}/{max} (run #{run})',
@@ -95,6 +104,15 @@ final class Messages
         'guardrail.fallback_to_manual' => 'quality score {score} dropped below {threshold} — workspace fell back to Manual mode (run #{run})',
         'guardrail.publish_deferred' => 'publish deferred: {reason} (run #{run})',
         'guardrail.approval_mode_changed' => 'approval mode set to {mode} by {user}',
+
+        // publishing lifecycle (Phase 10) — per-account targets
+        'publish.success' => 'published to {platform} (AI label {ai_label}) (run #{run})',
+        'publish.attempt' => 'publish to {platform}: {result} (run #{run})',
+        'publish.failed' => 'publish to {platform} failed: {reason} (run #{run})',
+        'publish.account_reauth' => '{platform} account needs re-authorization — flagged (run #{run})',
+        'publish.no_accounts' => 'no connected accounts — nothing to publish (run #{run})',
+        'publish.webhook_received' => 'webhook: {platform} {result} (run #{run})',
+        'publish.reconciled' => 'reconciled {platform}: {result} — lost webhook recovered by poll (run #{run})',
     ];
 
     /**

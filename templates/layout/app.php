@@ -53,6 +53,11 @@ use Kuyash\Core\View;
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l6 3-6 3-6-3z"/><path d="M2 8l6 3 6-3M2 11l6 3 6-3"/></svg></span>
         Queue
       </a>
+      <a class="nav-item<?= ($active ?? '') === 'accounts' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'accounts' ? ' aria-current="page"' : '' ?> href="/accounts">
+        <span class="nav-item__marker"></span>
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5.2" r="2.6"/><path d="M3 13.5c0-2.6 2.2-4.3 5-4.3s5 1.7 5 4.3"/></svg></span>
+        Accounts
+      </a>
       <a class="nav-item<?= ($active ?? '') === 'logs' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'logs' ? ' aria-current="page"' : '' ?> href="/logs">
         <span class="nav-item__marker"></span>
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2 2-2 2M8.5 10h3"/></svg></span>
@@ -70,7 +75,7 @@ use Kuyash\Core\View;
       </a>
     </nav>
     <div class="sidebar__foot">
-      <p>Phase 9 · Compliance Agent<br>Real policy checks (kuyash-v1); Manual approval is the default mode.</p>
+      <p>Phase 10 · Publishing<br>Mock-first Zernio (doc-gated); per-account targets, AI labels, truthful records.</p>
     </div>
   </aside>
 

@@ -89,7 +89,8 @@ $next = gmdate('Y-m-d', (int) strtotime($date . 'T00:00:00Z') + 86400);
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type mono">publish #<?= (int) $item['id'] ?> · run #<?= (int) $item['run_id'] ?></span>
-          <span class="job-row__entity"><?= View::e((string) (($item['result']['mode'] ?? '') === 'mock' ? 'mock publish — nothing went live (real publishing is Phase 10)' : 'published')) ?>
+          <span class="job-row__entity">published to <?= (int) ($item['result']['published'] ?? 0) ?> of <?= (int) ($item['result']['posts'] ?? 0) ?> account(s)
+            <?php if ((int) ($item['result']['failed'] ?? 0) > 0): ?> · <?= (int) $item['result']['failed'] ?> failed<?php endif; ?>
             · <?= View::e(Format::utcTime((string) $item['finished_at'])) ?></span>
         </div>
         <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $item['run_id'] ?>">View run</a>

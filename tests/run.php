@@ -46,6 +46,18 @@ use Kuyash\Library\AssetValidator;
 use Kuyash\Library\InvalidUploadException;
 use Kuyash\Library\MediaProbe;
 use Kuyash\Library\UploadedFile;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\MockPublishProvider;
+use Kuyash\Publish\PostRepository;
+use Kuyash\Publish\PublishCounter;
+use Kuyash\Publish\PublishOutcome;
+use Kuyash\Publish\PublishRequest;
+use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\WebhookController;
+use Kuyash\Publish\WebhookInbox;
+use Kuyash\Publish\ZernioPublishExecutor;
+use Kuyash\Publish\ZernioPublishProvider;
+use Kuyash\Controllers\AccountsController;
 use Kuyash\Workspace\WorkspaceContext;
 
 $basePath = dirname(__DIR__);
@@ -286,9 +298,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 7);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 8);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -1129,11 +1141,18 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
             }
         }
 
-        // Phase 9: the guardrail gate wraps the (still mock) publish — only
-        // auto-approved runs are gated; manual publishes pass straight through.
-        if ($autoCompliance) {
-            $registry->register('publish', new \Kuyash\Compliance\PublishGateExecutor($db, new MockExecutor(), $clock));
-        }
+        // Phase 10: real per-account publish (mock-first provider) wrapped by the
+        // Phase-9 guardrail gate — registered for EVERY MockExecutor rig so e2e
+        // exercises the real publish path. Manual runs pass the gate straight
+        // through; auto runs are kill-switch + per-account-cap gated.
+        $pubAccounts = new \Kuyash\Publish\AccountRepository($db);
+        $pubPosts = new \Kuyash\Publish\PostRepository($db);
+        $pubExec = new \Kuyash\Publish\ZernioPublishExecutor(
+            $db, new \Kuyash\Publish\MockPublishProvider(), $pubAccounts, $pubPosts, $events, $clock,
+        );
+        $registry->register('publish', new \Kuyash\Compliance\PublishGateExecutor(
+            $db, $pubExec, new \Kuyash\Publish\PublishCounter($db), $pubAccounts, $clock,
+        ));
     }
 
     $watchdog = new Watchdog($db, $events);
@@ -1894,7 +1913,7 @@ $deadHeartbeat = new WorkerHeartbeat(tempDir('hb') . '/none.heartbeat'); // neve
 $queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat);
 $wfCtl = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
-    new AssetRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
+    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
 );
 $logsCtl = new LogsController($view, $p4events, $p4ctx, new Csrf(), new Flash());
 
@@ -1964,7 +1983,7 @@ $authB = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
 $queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat);
 $wfCtlB = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
-    new AssetRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
+    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
 );
 
 check('isolation ctl: B approving A\'s job → 404', $queueCtlB->approve(['id' => (string) $scriptJob['id']])->status() === 404);
@@ -4021,7 +4040,9 @@ $pgDb = migratedDb($basePath);
 $pgNow = '2026-06-12T12:00:00Z';
 $pgClock = static fn (): string => $pgNow;
 $pgMock = new MockExecutor();
-$pgGate = new PublishGateExecutor($pgDb, $pgMock, $pgClock);
+$pgGate = new PublishGateExecutor(
+    $pgDb, $pgMock, new \Kuyash\Publish\PublishCounter($pgDb), new \Kuyash\Publish\AccountRepository($pgDb), $pgClock,
+);
 
 $seedPublishRun = static function (Database $db, int $ws, int $userId, string $mode) use ($pgNow): array {
     $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','full','[]',?,?)", [$ws, $pgNow, $pgNow]);
@@ -4053,14 +4074,18 @@ check('publish gate: auto run with kill switch ON → deferred', (static functio
 
     return $r->status === 'deferred' && $r->errorMessage === 'kill_switch' && $r->deferSeconds > 0;
 })());
-check('publish gate: auto run over daily published cap → deferred to midnight', (static function () use ($pgGate, $seedPublishRun, $pgDb, $pgWs, $pgUser, $pgNow): bool {
+check('publish gate: auto run, a connected account at its per-account cap → deferred to midnight', (static function () use ($pgGate, $seedPublishRun, $pgDb, $pgWs, $pgUser, $pgNow): bool {
     $pgDb->run('UPDATE workspaces SET daily_post_cap = 1 WHERE id = ?', [$pgWs]);
-    // one already published today (a real run satisfies the jobs.run_id FK)
-    $already = $seedPublishRun($pgDb, $pgWs, $pgUser, 'auto');
-    $pgDb->run("UPDATE jobs SET status = 'published', finished_at = ? WHERE id = ?", [$pgNow, $already['id']]);
+    // a connected account that has already published its 1 post today (posts =
+    // the unified per-account counter source)
+    $pgDb->run("INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at) VALUES (?,'instagram','@cap','zacct_cap','connected','ok',?,?)", [$pgWs, $pgNow, $pgNow]);
+    $acct = $pgDb->lastInsertId();
+    $capRun = $seedPublishRun($pgDb, $pgWs, $pgUser, 'auto');
+    $pgDb->run("INSERT INTO posts (workspace_id,run_id,account_id,platform,status,ai_label_applied,idempotency_key,posted_at,created_at,updated_at) VALUES (?,?,?,'instagram','published',0,?,?,?,?)", [$pgWs, $capRun['run_id'], $acct, 'cap:' . $acct, $pgNow, $pgNow, $pgNow]);
     $job = $seedPublishRun($pgDb, $pgWs, $pgUser, 'auto');
     $r = $pgGate->execute($job, []);
     $pgDb->run('UPDATE workspaces SET daily_post_cap = 2 WHERE id = ?', [$pgWs]);
+    $pgDb->run("UPDATE accounts SET status = 'disconnected' WHERE id = ?", [$acct]); // isolate later tests
 
     return $r->status === 'deferred' && $r->errorMessage === 'daily_cap' && $r->deferSeconds > 0;
 })());
@@ -4289,6 +4314,521 @@ check('digest ctl: a malformed date falls back to today (no error)', (static fun
 
     return $status === 200;
 })());
+
+/* ================== Phase 10: Zernio Publishing ================== */
+
+echo "== 0008 schema: accounts / posts / webhook_events ==\n";
+
+$p10db = migratedDb($basePath);
+[$p10User, $p10Ws] = seedUser($p10db, 'p10@example.com', $argonHash, 'P10 WS');
+$p10Now = '2026-06-13T10:00:00Z';
+
+check('schema 0008: three tables + runs.publish_after column', count($p10db->all(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('accounts','posts','webhook_events')"
+)) === 3 && in_array('publish_after', array_column($p10db->all('PRAGMA table_info(runs)'), 'name'), true));
+check('schema 0008: accounts carries NO token/password column', (static function () use ($p10db): bool {
+    $cols = array_map('strtolower', array_column($p10db->all('PRAGMA table_info(accounts)'), 'name'));
+    foreach ($cols as $c) {
+        if (str_contains($c, 'token') || str_contains($c, 'password') || str_contains($c, 'secret')) {
+            return false;
+        }
+    }
+
+    return in_array('external_ref', $cols, true) && in_array('health', $cols, true);
+})());
+check('schema 0008: bad platform rejected', throws(static fn () => $p10db->run(
+    "INSERT INTO accounts (workspace_id,platform,handle,status,health,created_at,updated_at) VALUES (?, 'facebook','@x','connected','ok',?,?)",
+    [$p10Ws, $p10Now, $p10Now],
+), PDOException::class));
+check('schema 0008: bad post status rejected', throws(static function () use ($p10db, $p10Ws, $p10Now): void {
+    $p10db->run("INSERT INTO accounts (workspace_id,platform,handle,status,health,created_at,updated_at) VALUES (?, 'tiktok','@y','connected','ok',?,?)", [$p10Ws, $p10Now, $p10Now]);
+    $acc = $p10db->lastInsertId();
+    $p10db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$p10Ws, $p10Now, $p10Now]);
+    $wf = $p10db->lastInsertId();
+    $p10db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',?,?,?)", [$p10Ws, $wf, $GLOBALS['p10User'] ?? 1, $p10Now, $p10Now]);
+    $run = $p10db->lastInsertId();
+    $p10db->run("INSERT INTO posts (workspace_id,run_id,account_id,platform,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,'tiktok','levitating','k1',?,?)", [$p10Ws, $run, $acc, $p10Now, $p10Now]);
+}, PDOException::class));
+check('schema 0008: posts idempotency_key is UNIQUE', (static function () use ($p10db, $p10Ws, $p10Now): bool {
+    $p10db->run("INSERT INTO accounts (workspace_id,platform,handle,status,health,created_at,updated_at) VALUES (?, 'youtube','@z','connected','ok',?,?)", [$p10Ws, $p10Now, $p10Now]);
+    $acc = $p10db->lastInsertId();
+    $p10db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$p10Ws, $p10Now, $p10Now]);
+    $wf = $p10db->lastInsertId();
+    $p10db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',?,?,?)", [$p10Ws, $wf, 1, $p10Now, $p10Now]);
+    $run = $p10db->lastInsertId();
+    $p10db->run("INSERT INTO posts (workspace_id,run_id,account_id,platform,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,'youtube','publishing','dupkey',?,?)", [$p10Ws, $run, $acc, $p10Now, $p10Now]);
+
+    return throws(static fn () => $p10db->run(
+        "INSERT INTO posts (workspace_id,run_id,account_id,platform,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,'youtube','publishing','dupkey',?,?)",
+        [$p10Ws, $run, $acc, $p10Now, $p10Now],
+    ), PDOException::class);
+})());
+check('schema 0008: webhook_events external_event_id is UNIQUE', (static function () use ($p10db, $p10Now): bool {
+    $p10db->run("INSERT INTO webhook_events (source,external_event_id,payload_json,received_at) VALUES ('zernio','ev1','{}',?)", [$p10Now]);
+
+    return throws(static fn () => $p10db->run(
+        "INSERT INTO webhook_events (source,external_event_id,payload_json,received_at) VALUES ('zernio','ev1','{}',?)",
+        [$p10Now],
+    ), PDOException::class);
+})());
+
+echo "== Publish: MockPublishProvider (deterministic, all modes) ==\n";
+
+$mock = new MockPublishProvider();
+$mkReq = static fn (string $handle): PublishRequest => new PublishRequest('instagram', $handle, 'zacct_1', 'run:1:acct:1:publish');
+check('mock provider: default handle → published with stable external id', (static function () use ($mock, $mkReq): bool {
+    $o = $mock->publish($mkReq('@normal'));
+    $o2 = $mock->publish($mkReq('@normal'));
+
+    return $o->status === PublishOutcome::PUBLISHED && $o->externalPostId === $o2->externalPostId
+        && str_contains((string) $o->externalUrl, 'instagram.example');
+})());
+check('mock provider: reject marker → rejected (terminal)', $mock->publish($mkReq('@reject_acct'))->status === PublishOutcome::REJECTED);
+check('mock provider: authfail marker → auth_failed', $mock->publish($mkReq('@authfail'))->status === PublishOutcome::AUTH_FAILED);
+check('mock provider: ratelimit marker → rate_limited', $mock->publish($mkReq('@ratelimit'))->status === PublishOutcome::RATE_LIMITED);
+check('mock provider: async marker → accepted (webhook/reconcile later)', $mock->publish($mkReq('@async'))->status === PublishOutcome::ACCEPTED);
+check('mock provider: timeout marker → throws PublishProviderException', throws(
+    static fn () => $mock->publish($mkReq('@timeout')),
+    \Kuyash\Publish\PublishProviderException::class,
+));
+check('mock provider: status() converges an accepted post to published', $mock->status('zp_abc')->status === PublishOutcome::PUBLISHED);
+check('zernio stub: flag-off real client throws "doc-gated", never calls out', (static function (): bool {
+    $stub = new ZernioPublishProvider(new FakeHttpClient([]), ['endpoint' => 'x', 'timeout' => 5]);
+
+    return throws(static fn () => $stub->publish(new PublishRequest('tiktok', '@h', 'r', 'k')), \Kuyash\Publish\PublishProviderException::class)
+        && throws(static fn () => $stub->status('zp_x'), \Kuyash\Publish\PublishProviderException::class);
+})());
+
+echo "== Publish: ZernioPublishExecutor (per-account fan-out) ==\n";
+
+$mkPublishJob = static function (Database $db, int $ws, int $userId, string $now): array {
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',?,?,?)", [$ws, $wf, $userId, $now, $now]);
+    $run = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'PUBLISH',14,'publish','processing',?,?)", [$ws, $run, $now, $now]);
+
+    return ['workspace_id' => $ws, 'run_id' => $run, 'id' => $db->lastInsertId(), 'step' => 14, 'type' => 'publish'];
+};
+$connect = static function (Database $db, int $ws, string $platform, string $handle, string $now): int {
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at) VALUES (?,?,?,?,'connected','ok',?,?)",
+        [$ws, $platform, $handle, 'zacct_' . bin2hex(random_bytes(3)), $now, $now],
+    );
+
+    return $db->lastInsertId();
+};
+$mkExec = static fn (Database $db, string $now): ZernioPublishExecutor => new ZernioPublishExecutor(
+    $db, new MockPublishProvider(), new AccountRepository($db), new PostRepository($db), new \Kuyash\Workflow\EventLog($db), static fn (): string => $now,
+);
+
+check('executor: no connected accounts → published, 0 posts, no_accounts event', (static function () use ($mkPublishJob, $mkExec, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex0@x.com', $argonHash, 'EX0');
+    $now = '2026-06-13T10:00:00Z';
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, []);
+    $ev = (int) $db->one("SELECT COUNT(*) AS n FROM events WHERE key='publish.no_accounts'")['n'];
+
+    return $r->status === 'published' && (int) ($r->result['posts'] ?? -1) === 0 && $ev === 1;
+})());
+check('executor: success → post published, provider tag mock, publish.success event', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex1@x.com', $argonHash, 'EX1');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@happy', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, []);
+    $post = $db->one("SELECT * FROM posts WHERE run_id = ?", [$job['run_id']]);
+
+    return $r->status === 'published' && $r->provider === 'mock'
+        && $post['status'] === 'published' && $post['external_post_id'] !== null && $post['posted_at'] !== null
+        && (int) $db->one("SELECT COUNT(*) AS n FROM events WHERE key='publish.success'")['n'] === 1;
+})());
+check('executor: AI label truthful — NOT applied when compliance did not require it', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex2@x.com', $argonHash, 'EX2');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@noai', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $mkExec($db, $now)->execute($job, ['compliance_check' => ['ai_label_required' => false]]);
+
+    return (int) $db->one("SELECT ai_label_applied FROM posts WHERE run_id = ?", [$job['run_id']])['ai_label_applied'] === 0;
+})());
+check('executor: AI label set per platform exactly when compliance required it', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex3@x.com', $argonHash, 'EX3');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'tiktok', '@ai', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, ['compliance_check' => ['ai_label_required' => true]]);
+
+    return (int) $db->one("SELECT ai_label_applied FROM posts WHERE run_id = ?", [$job['run_id']])['ai_label_applied'] === 1
+        && ($r->result['ai_label_applied'] ?? false) === true;
+})());
+check('executor: partial multi-platform (2 ok + 1 reject) → job published, per-target truthful', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex4@x.com', $argonHash, 'EX4');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@ok1', $now);
+    $connect($db, $ws, 'tiktok', '@ok2', $now);
+    $connect($db, $ws, 'youtube', '@reject_one', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, []);
+    $pub = (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id=? AND status='published'", [$job['run_id']])['n'];
+    $fail = (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id=? AND status='failed'", [$job['run_id']])['n'];
+
+    return $r->status === 'published' && $pub === 2 && $fail === 1
+        && (int) ($r->result['published'] ?? 0) === 2 && (int) ($r->result['failed'] ?? 0) === 1;
+})());
+check('executor: auth failure → post failed + account flagged reauth_needed', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex5@x.com', $argonHash, 'EX5');
+    $now = '2026-06-13T10:00:00Z';
+    $acc = $connect($db, $ws, 'instagram', '@authfail', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, []);
+
+    return $r->status === 'published'
+        && $db->one("SELECT status FROM posts WHERE run_id=?", [$job['run_id']])['status'] === 'failed'
+        && $db->one("SELECT status FROM accounts WHERE id=?", [$acc])['status'] === 'reauth_needed'
+        && (int) $db->one("SELECT COUNT(*) AS n FROM events WHERE key='publish.account_reauth'")['n'] === 1;
+})());
+check('executor: rate-limit → job FAILED (retryable backoff), post stays in-flight', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex6@x.com', $argonHash, 'EX6');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@ratelimit', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, []);
+
+    return $r->status === 'failed' && str_contains((string) $r->errorMessage, 'retry')
+        && $db->one("SELECT status FROM posts WHERE run_id=?", [$job['run_id']])['status'] === 'publishing';
+})());
+check('executor: transport timeout → job FAILED (retryable), post stays in-flight', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex7@x.com', $argonHash, 'EX7');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@timeout', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $r = $mkExec($db, $now)->execute($job, []);
+
+    return $r->status === 'failed' && $db->one("SELECT status FROM posts WHERE run_id=?", [$job['run_id']])['status'] === 'publishing';
+})());
+check('executor: IDEMPOTENT — re-run never double-posts a published target', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'ex8@x.com', $argonHash, 'EX8');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@once', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $exec = $mkExec($db, $now);
+    $exec->execute($job, []);
+    $first = $db->one("SELECT external_post_id FROM posts WHERE run_id=?", [$job['run_id']])['external_post_id'];
+    $r2 = $exec->execute($job, []); // re-enqueue / retry
+
+    return $r2->status === 'published'
+        && (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id=?", [$job['run_id']])['n'] === 1
+        && $db->one("SELECT external_post_id FROM posts WHERE run_id=?", [$job['run_id']])['external_post_id'] === $first;
+})());
+
+echo "== Publish: webhook inbox + signature + idempotency ==\n";
+
+$whSecret = 'phase10-test-secret';
+$sign = static fn (string $body): string => hash_hmac('sha256', $body, $whSecret);
+
+check('webhook ctl: empty secret → fail-closed 503', (new WebhookController(new WebhookInbox(migratedDb($basePath), new PostRepository(migratedDb($basePath)), new \Kuyash\Workflow\EventLog(migratedDb($basePath))), ''))->handle('{}', 'x')->status() === 503);
+check('webhook ctl: invalid signature → 401, nothing persisted', (static function () use ($basePath, $whSecret): bool {
+    $db = migratedDb($basePath);
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $body = '{"event_id":"ev_bad","post_id":"zp_1","status":"published"}';
+    $r = $ctl->handle($body, 'deadbeef');
+
+    return $r->status() === 401 && (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events")['n'] === 0;
+})());
+check('webhook ctl: valid signature → 200, raw persisted; missing event_id → 400', (static function () use ($basePath, $whSecret, $sign): bool {
+    $db = migratedDb($basePath);
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $body = '{"event_id":"ev_ok","post_id":"zp_1","status":"published"}';
+    $ok = $ctl->handle($body, $sign($body))->status();
+    $stored = (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events WHERE external_event_id='ev_ok'")['n'];
+    $noId = $ctl->handle('{"post_id":"zp_2"}', $sign('{"post_id":"zp_2"}'))->status();
+
+    return $ok === 200 && $stored === 1 && $noId === 400;
+})());
+check('webhook ctl: duplicate event_id → 200 ack, single stored row (idempotent inbox)', (static function () use ($basePath, $whSecret, $sign): bool {
+    $db = migratedDb($basePath);
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $body = '{"event_id":"ev_dup","post_id":"zp_9","status":"published"}';
+    $ctl->handle($body, $sign($body));
+    $second = $ctl->handle($body, $sign($body))->status();
+
+    return $second === 200 && (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events WHERE external_event_id='ev_dup'")['n'] === 1;
+})());
+check('webhook inbox: processing converges the post + records publish.webhook_received', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath, $whSecret, $sign): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'wh1@x.com', $argonHash, 'WH1');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@async', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $mkExec($db, $now)->execute($job, []); // accepted → post in-flight with external id
+    $ext = $db->one("SELECT external_post_id FROM posts WHERE run_id=?", [$job['run_id']])['external_post_id'];
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $body = json_encode(['event_id' => 'ev_p', 'post_id' => $ext, 'status' => 'published', 'url' => 'https://x/y']);
+    $ctl->handle($body, $sign($body));
+    $inbox = new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db));
+    $n = $inbox->processPending('2026-06-13T10:05:00Z');
+    $n2 = $inbox->processPending('2026-06-13T10:06:00Z'); // already processed → 0
+
+    return $n === 1 && $n2 === 0
+        && $db->one("SELECT status FROM posts WHERE run_id=?", [$job['run_id']])['status'] === 'published'
+        && (int) $db->one("SELECT COUNT(*) AS n FROM events WHERE key='publish.webhook_received'")['n'] === 1;
+})());
+check('webhook inbox: a javascript: url is rejected → safe https fallback stored', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'whx@x.com', $argonHash, 'WHX');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@async', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $mkExec($db, $now)->execute($job, []);
+    $ext = $db->one("SELECT external_post_id FROM posts WHERE run_id=?", [$job['run_id']])['external_post_id'];
+    // a verified-but-hostile sender tries a javascript: scheme in the url field
+    $db->run("INSERT INTO webhook_events (source,external_event_id,payload_json,received_at) VALUES ('zernio','ev_xss',?,?)", [json_encode(['post_id' => $ext, 'status' => 'published', 'url' => 'javascript:alert(1)']), $now]);
+    (new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)))->processPending('2026-06-13T10:05:00Z');
+    $url = (string) $db->one("SELECT external_url FROM posts WHERE run_id=?", [$job['run_id']])['external_url'];
+
+    return !str_contains($url, 'javascript:') && str_starts_with($url, 'https://');
+})());
+check('webhook ctl: oversized body → 413, nothing persisted', (static function () use ($basePath, $whSecret): bool {
+    $db = migratedDb($basePath);
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $big = str_repeat('x', 70000);
+
+    return $ctl->handle($big, 'sig')->status() === 413 && (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events")['n'] === 0;
+})());
+check('webhook inbox: unmatched post id → process_error recorded, no crash', (static function () use ($basePath): bool {
+    $db = migratedDb($basePath);
+    $db->run("INSERT INTO webhook_events (source,external_event_id,payload_json,received_at) VALUES ('zernio','ev_orphan',?,?)", ['{"post_id":"zp_missing","status":"published"}', '2026-06-13T10:00:00Z']);
+    $inbox = new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db));
+    $inbox->processPending('2026-06-13T10:01:00Z');
+    $row = $db->one("SELECT processed_at, process_error FROM webhook_events WHERE external_event_id='ev_orphan'");
+
+    return $row['processed_at'] !== null && $row['process_error'] === 'post_not_found';
+})());
+
+echo "== Publish: reconciliation (lost-webhook recovery) ==\n";
+
+check('reconciler: stale in-flight post polled → converges to published', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'rc1@x.com', $argonHash, 'RC1');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@async', $now);
+    $job = $mkPublishJob($db, $ws, $u, $now);
+    $mkExec($db, $now)->execute($job, []); // accepted, updated_at = now
+    $rec = new Reconciler(new PostRepository($db), new MockPublishProvider(), new \Kuyash\Workflow\EventLog($db));
+    $fresh = $rec->sweep($now); // post is fresh → not swept
+    $converged = $rec->sweep('2026-06-13T10:30:00Z'); // 30 min later → stale → polled
+
+    return $fresh === 0 && $converged === 1
+        && $db->one("SELECT status FROM posts WHERE run_id=?", [$job['run_id']])['status'] === 'published'
+        && (int) $db->one("SELECT COUNT(*) AS n FROM events WHERE key='publish.reconciled'")['n'] === 1;
+})());
+
+echo "== Publish: PublishCounter (unified per-account cap source) ==\n";
+
+check('counter: per-account vs workspace-wide published-today', (static function () use ($connect, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'cnt@x.com', $argonHash, 'CNT');
+    $now = '2026-06-13T10:00:00Z';
+    $a1 = $connect($db, $ws, 'instagram', '@a1', $now);
+    $a2 = $connect($db, $ws, 'tiktok', '@a2', $now);
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',?,?,?)", [$ws, $wf, $u, $now, $now]);
+    $run = $db->lastInsertId();
+    $ins = static fn (int $acc, string $k) => $db->run("INSERT INTO posts (workspace_id,run_id,account_id,platform,status,idempotency_key,posted_at,created_at,updated_at) VALUES (?,?,?,'instagram','published',?,?,?,?)", [$ws, $run, $acc, $k, $now, $now, $now]);
+    $ins($a1, 'k1');
+    $ins($a1, 'k2');
+    $ins($a2, 'k3');
+    $c = new PublishCounter($db);
+
+    return $c->publishedToday($ws, $now, $a1) === 2 && $c->publishedToday($ws, $now, $a2) === 1
+        && $c->publishedToday($ws, $now) === 3 && $c->publishedToday($ws, '2026-06-14T10:00:00Z', $a1) === 0;
+})());
+
+echo "== Publish: scheduling (defer publish via run_after) ==\n";
+
+$schDb = migratedDb($basePath);
+[$schUser, $schWs] = seedUser($schDb, 'sch@x.com', $argonHash, 'SCH WS');
+$schNow = '2026-06-13T10:00:00Z';
+$_SESSION = [];
+$schCtx = new WorkspaceContext($schDb);
+$schCtx->set($schWs);
+$schWfRepo = new \Kuyash\Workflow\WorkflowRepository($schDb, new WorkflowValidator());
+$schWfRepo->ensureDefaults($schCtx);
+$schDistWf = $schWfRepo->listFor($schCtx)[1]['id'];
+[$schEngine, $schWorker] = makeRig($schDb, new MockExecutor(), $schNow);
+$connect($schDb, $schWs, 'instagram', '@sched', $schNow);
+$schAsset = seedReadyVideo($schDb, $schWs, 'sched clip');
+$schRun = $schEngine->startRun($schCtx, $schDistWf, $schAsset, $schUser);
+while ($schWorker->tick()) {
+}
+$schReview = (new JobRepository($schDb))->awaitingApproval($schCtx)[0]['id'];
+$schEngine->approve($schCtx, $schReview, $schUser, 'sch@x.com', '2026-06-13T11:00:00Z'); // 1h future
+while ($schWorker->tick()) {
+}
+check('schedule: approval stores runs.publish_after', $schDb->one("SELECT publish_after FROM runs WHERE id=?", [$schRun])['publish_after'] === '2026-06-13T11:00:00Z');
+check('schedule: publish job is queued in the future, NOT yet claimed', (static function () use ($schDb, $schRun, $schNow): bool {
+    $j = $schDb->one("SELECT status, run_after FROM jobs WHERE run_id=? AND type='publish'", [$schRun]);
+
+    return $j !== null && $j['status'] === 'queued' && $j['run_after'] === '2026-06-13T11:00:00Z' && $j['run_after'] > $schNow
+        && (int) $schDb->one("SELECT COUNT(*) AS n FROM posts WHERE run_id=?", [$schRun])['n'] === 0;
+})());
+$schNow = '2026-06-13T12:00:00Z'; // advance past the scheduled time
+while ($schWorker->tick()) {
+}
+check('schedule: once due, the publish fires and the post records scheduled_for', (static function () use ($schDb, $schRun): bool {
+    $post = $schDb->one("SELECT status, scheduled_for FROM posts WHERE run_id=?", [$schRun]);
+
+    return $post !== null && $post['status'] === 'published' && $post['scheduled_for'] === '2026-06-13T11:00:00Z'
+        && $schDb->one("SELECT status FROM runs WHERE id=?", [$schRun])['status'] === 'completed';
+})());
+check('schedule: a PAST scheduled time is ignored (publish immediate)', (static function () use ($schDb, $schWs, $schUser, $basePath, $argonHash, $connect): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'sch2@x.com', $argonHash, 'SCH2');
+    $now = '2026-06-13T10:00:00Z';
+    $_SESSION = [];
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $wfRepo = new \Kuyash\Workflow\WorkflowRepository($db, new WorkflowValidator());
+    $wfRepo->ensureDefaults($ctx);
+    $distWf = $wfRepo->listFor($ctx)[1]['id'];
+    [$eng, $wrk] = makeRig($db, new MockExecutor(), $now);
+    $connect($db, $ws, 'instagram', '@imm', $now);
+    $asset = seedReadyVideo($db, $ws, 'imm clip');
+    $run = $eng->startRun($ctx, $distWf, $asset, $u);
+    while ($wrk->tick()) {
+    }
+    $review = (new JobRepository($db))->awaitingApproval($ctx)[0]['id'];
+    $eng->approve($ctx, $review, $u, 'sch2@x.com', '2020-01-01T00:00:00Z'); // past → ignored
+    while ($wrk->tick()) {
+    }
+
+    return $db->one("SELECT publish_after FROM runs WHERE id=?", [$run])['publish_after'] === null
+        && $db->one("SELECT status FROM posts WHERE run_id=?", [$run])['status'] === 'published';
+})());
+$_SESSION = [];
+
+echo "== Publish: end-to-end auto run publishes to a connected account ==\n";
+
+$peDb = migratedDb($basePath);
+[$peUser, $peWs] = seedUser($peDb, 'pe@x.com', $argonHash, 'PE WS');
+$_SESSION = [];
+$peCtx = new WorkspaceContext($peDb);
+$peCtx->set($peWs);
+$peWfRepo = new \Kuyash\Workflow\WorkflowRepository($peDb, new WorkflowValidator());
+$peWfRepo->ensureDefaults($peCtx);
+$peDistWf = $peWfRepo->listFor($peCtx)[1]['id'];
+(new WorkspaceSettings($peDb))->setApprovalMode($peWs, 'auto');
+$peNow = '2026-06-13T10:00:00Z';
+[$peEngine, $peWorker] = makeRig($peDb, new MockExecutor(), $peNow, null, true);
+$connect($peDb, $peWs, 'instagram', '@e2e', $peNow);
+$peAsset = seedReadyVideo($peDb, $peWs, 'PE clip');
+$peRun = $peEngine->startRun($peCtx, $peDistWf, $peAsset, $peUser);
+while ($peWorker->tick()) {
+}
+check('publish e2e: auto distribution run creates a published post for the connected account', (static function () use ($peDb, $peRun): bool {
+    $post = $peDb->one("SELECT * FROM posts WHERE run_id=?", [$peRun]);
+    $run = $peDb->one("SELECT status FROM runs WHERE id=?", [$peRun]);
+
+    return $post !== null && $post['status'] === 'published' && $post['external_post_id'] !== null
+        && $run['status'] === 'completed';
+})());
+check('publish e2e: post is tenant-scoped — another workspace sees none of it', (static function () use ($peDb, $peRun, $argonHash): bool {
+    $_SESSION = [];
+    [$oU, $oWs] = seedUser($peDb, 'other@x.com', $argonHash, 'OTHER WS');
+    $ctx = new WorkspaceContext($peDb);
+    $ctx->set($oWs);
+
+    return (new PostRepository($peDb))->forRun($ctx, $peRun) === [];
+})());
+$_SESSION = [];
+
+echo "== Publish: AccountRepository + AccountsController ==\n";
+
+$acDb = migratedDb($basePath);
+[$acUser, $acWs] = seedUser($acDb, 'ac@x.com', $argonHash, 'AC WS');
+[$acUserB, $acWsB] = seedUser($acDb, 'acb@x.com', $argonHash, 'AC WS B');
+$_SESSION = [];
+$acCtx = new WorkspaceContext($acDb);
+$acCtx->set($acWs);
+$acRepo = new AccountRepository($acDb);
+$acNow = '2026-06-13T10:00:00Z';
+
+check('account repo: connect stores reference + ok health, NO token', (static function () use ($acRepo, $acCtx, $acDb, $acWs, $acNow): bool {
+    $id = $acRepo->connect($acCtx, 'instagram', '@me', 'zacct_ref', $acNow);
+    $row = $acDb->one("SELECT * FROM accounts WHERE id=?", [$id]);
+
+    return $row['status'] === 'connected' && $row['health'] === 'ok' && $row['external_ref'] === 'zacct_ref'
+        && $row['connected_at'] === $acNow && (int) $row['workspace_id'] === $acWs;
+})());
+check('account repo: setDefaultReference rejects a cross-tenant asset', (static function () use ($acRepo, $acCtx, $acDb, $acWsB): bool {
+    $id = $acRepo->connectedFor($acDb->one("SELECT workspace_id FROM accounts LIMIT 1")['workspace_id'])[0]['id'];
+    $foreign = seedReadyVideo($acDb, $acWsB, 'foreign');
+
+    return $acRepo->setDefaultReference($acCtx, (int) $id, $foreign) === false;
+})());
+
+$acAuthAsset = seedReadyVideo($acDb, $acWs, 'my ref');
+$acCtl = new AccountsController(
+    $view, $acRepo, new PostRepository($acDb), new AssetRepository($acDb), new PublishCounter($acDb),
+    new WorkspaceSettings($acDb), $acCtx, new Csrf(), new Flash(),
+);
+check('accounts ctl: index lists accounts + connect buttons + next-scheduled line', (static function () use ($acCtl): bool {
+    $body = $acCtl->index()->body();
+
+    return str_contains($body, '@me') && str_contains($body, 'Connect instagram') && str_contains($body, 'Next scheduled');
+})());
+check('accounts ctl: connectStart renders authorize screen + sets state nonce', (static function () use ($acCtl): bool {
+    $_SESSION = ['workspace_id' => $GLOBALS['acWs']];
+    $body = $acCtl->connectStart(['platform' => 'tiktok'])->body();
+
+    return str_contains($body, 'Authorize') && ($_SESSION['oauth_state'] ?? '') !== '' && str_contains($body, 'state');
+})());
+check('accounts ctl: callback with VALID state creates the account', (static function () use ($acCtl, $acDb, $acWs): bool {
+    $_SESSION = ['workspace_id' => $acWs, 'oauth_state' => 'STATE123'];
+    $_GET = ['platform' => 'youtube', 'state' => 'STATE123', 'handle' => '@chan', 'code' => 'mock'];
+    $before = (int) $acDb->one("SELECT COUNT(*) AS n FROM accounts WHERE platform='youtube'")['n'];
+    $r = $acCtl->connectCallback();
+    $_GET = [];
+
+    return $r->status() === 303 && (int) $acDb->one("SELECT COUNT(*) AS n FROM accounts WHERE platform='youtube'")['n'] === $before + 1;
+})());
+check('accounts ctl: callback with BAD state is rejected (no account, error flash)', (static function () use ($acCtl, $acDb): bool {
+    $_SESSION = ['workspace_id' => $GLOBALS['acWs'], 'oauth_state' => 'GOOD'];
+    $_GET = ['platform' => 'tiktok', 'state' => 'FORGED', 'code' => 'mock'];
+    $before = (int) $acDb->one("SELECT COUNT(*) AS n FROM accounts WHERE platform='tiktok'")['n'];
+    $r = $acCtl->connectCallback();
+    $_GET = [];
+
+    return $r->status() === 303 && (int) $acDb->one("SELECT COUNT(*) AS n FROM accounts WHERE platform='tiktok'")['n'] === $before;
+})());
+check('accounts ctl: disconnect flips status; cross-tenant disconnect is denied', (static function () use ($acCtl, $acRepo, $acCtx, $acDb, $acWsB, $argonHash, $acNow): bool {
+    $_SESSION = ['workspace_id' => $GLOBALS['acWs']];
+    $mine = $acRepo->connect($acCtx, 'instagram', '@todrop', 'zacct_d', $acNow);
+    $acCtl->disconnect(['id' => (string) $mine]);
+    $dropped = $acDb->one("SELECT status FROM accounts WHERE id=?", [$mine])['status'] === 'disconnected';
+
+    // an account owned by workspace B must be untouched by A's controller
+    $bCtx = new WorkspaceContext($acDb);
+    $_SESSION = ['workspace_id' => $acWsB];
+    $bCtx->set($acWsB);
+    $bId = (new AccountRepository($acDb))->connect($bCtx, 'tiktok', '@bacct', 'zacct_b', $acNow);
+    $_SESSION = ['workspace_id' => $GLOBALS['acWs']];
+    $acCtl->disconnect(['id' => (string) $bId]);
+
+    return $dropped && $acDb->one("SELECT status FROM accounts WHERE id=?", [$bId])['status'] === 'connected';
+})());
+$_SESSION = [];
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {

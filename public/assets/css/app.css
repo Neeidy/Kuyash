@@ -678,3 +678,13 @@
   width: 36px; aspect-ratio: 9 / 16; object-fit: cover; flex: none;
   border-radius: 6px; border: 1px solid var(--border); background: #000;
 }
+
+/* Phase 10 — Accounts + publish targets */
+.job-row--stack { flex-wrap: wrap; align-items: flex-start; }
+.job-row__side { margin-left: auto; display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.job-row__chips { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.account-ref-form { display: flex; gap: var(--s2); align-items: flex-end; flex-wrap: wrap; margin-top: var(--s2); }
+.field--inline { flex-direction: column; gap: 4px; }
+.field--inline select { min-width: 200px; }
+.approve-card__schedule { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--s2); font-size: 12px; }
+.approve-card__schedule input { max-width: 240px; }

@@ -84,7 +84,13 @@ use Kuyash\Core\View;
         <div class="approve-card__actions">
           <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve">
             <?= $csrfField ?>
-            <button type="submit" class="btn btn--primary btn--sm">Approve</button>
+            <?php if ($job['type'] === 'render_review'): ?>
+            <label class="approve-card__schedule">
+              <span class="muted">Schedule (UTC, optional)</span>
+              <input type="datetime-local" name="scheduled_for">
+            </label>
+            <?php endif; ?>
+            <button type="submit" class="btn btn--primary btn--sm">Approve<?= $job['type'] === 'render_review' ? ' &amp; publish' : '' ?></button>
           </form>
           <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/reject"
                 data-confirm="Reject this and cancel the whole run? This cannot be undone.">

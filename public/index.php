@@ -42,14 +42,24 @@ try {
 
     $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
     if ($method === 'POST') {
-        $token = $_POST[Csrf::FIELD] ?? null;
-        if (!$container->get(Csrf::class)->validate(is_string($token) ? $token : null)) {
-            Response::html(
-                $container->get(View::class)->render('errors/403', ['title' => '403 — Forbidden']),
-                403,
-            )->send();
+        // CSRF-exempt allowlist: external callbacks with no session/token. The
+        // ONLY entry is the Zernio webhook, which is authenticated instead by
+        // HMAC signature verification inside WebhookController (Phase 10). Kept
+        // here, narrowly, so a future route can never silently skip the gate.
+        $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+        $path = '/' . trim((string) $path, '/');
+        $csrfExempt = ['/webhooks/zernio'];
 
-            return;
+        if (!in_array($path, $csrfExempt, true)) {
+            $token = $_POST[Csrf::FIELD] ?? null;
+            if (!$container->get(Csrf::class)->validate(is_string($token) ? $token : null)) {
+                Response::html(
+                    $container->get(View::class)->render('errors/403', ['title' => '403 — Forbidden']),
+                    403,
+                )->send();
+
+                return;
+            }
         }
     }
 

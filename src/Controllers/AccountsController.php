@@ -1,0 +1,168 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kuyash\Controllers;
+
+use Kuyash\Core\Csrf;
+use Kuyash\Core\Flash;
+use Kuyash\Core\Messages;
+use Kuyash\Core\Response;
+use Kuyash\Core\View;
+use Kuyash\Library\AssetRepository;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\PostRepository;
+use Kuyash\Publish\PublishCounter;
+use Kuyash\Workspace\WorkspaceContext;
+use Kuyash\Workspace\WorkspaceSettings;
+
+/**
+ * Social accounts (Phase 10): the connect/disconnect surface and the publish
+ * dashboard's data. The connect flow is a faithful TWO-LEG mock OAuth — initiate
+ * (authorize screen with a CSRF-equivalent `state` nonce) → provider callback —
+ * but stores only an account REFERENCE + health, never a token/password (Zernio
+ * owns OAuth). All POSTs go through the global CSRF gate; the GET callback is
+ * guarded by the session `state` nonce (the OAuth pattern).
+ */
+final class AccountsController
+{
+    private const STATE_KEY = 'oauth_state';
+
+    public function __construct(
+        private readonly View $view,
+        private readonly AccountRepository $accounts,
+        private readonly PostRepository $posts,
+        private readonly AssetRepository $assets,
+        private readonly PublishCounter $counter,
+        private readonly WorkspaceSettings $settings,
+        private readonly WorkspaceContext $workspace,
+        private readonly Csrf $csrf,
+        private readonly Flash $flash,
+    ) {
+    }
+
+    /** @param array<string, string> $params */
+    public function index(array $params = []): Response
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $cap = $this->settings->compliance($this->workspace->id())['daily_post_cap'];
+
+        $accounts = array_map(function (array $a) use ($now, $cap): array {
+            $a['published_today'] = $this->counter->publishedToday($this->workspace->id(), $now, (int) $a['id']);
+            $a['daily_cap'] = $cap;
+
+            return $a;
+        }, $this->accounts->listFor($this->workspace));
+
+        return Response::html($this->view->render('accounts/index', [
+            'title' => 'Accounts — Kuyash',
+            'active' => 'accounts',
+            'workspaceName' => $this->workspace->currentName(),
+            'csrfField' => $this->csrf->field(),
+            'flashes' => Messages::resolveFlashes($this->flash),
+            'accounts' => $accounts,
+            'platforms' => AccountRepository::PLATFORMS,
+            'references' => $this->assets->readyReferencesFor($this->workspace),
+            'nextScheduled' => $this->posts->nextScheduled($this->workspace, $now),
+        ], 'layout/app'));
+    }
+
+    /** Leg 1 — the mock provider's authorize screen. @param array<string, string> $params */
+    public function connectStart(array $params = []): Response
+    {
+        $platform = (string) ($params['platform'] ?? '');
+        if (!in_array($platform, AccountRepository::PLATFORMS, true)) {
+            return $this->back('error', 'account.invalid_platform');
+        }
+
+        // CSRF-equivalent for the GET callback: a one-time nonce echoed back in
+        // the redirect and compared against the session (the OAuth `state` param)
+        $state = bin2hex(random_bytes(16));
+        $_SESSION[self::STATE_KEY] = $state;
+
+        return Response::html($this->view->render('accounts/authorize', [
+            'title' => 'Connect ' . $platform . ' — Kuyash',
+            'active' => 'accounts',
+            'workspaceName' => $this->workspace->currentName(),
+            'csrfField' => $this->csrf->field(),
+            'flashes' => [],
+            'platform' => $platform,
+            'state' => $state,
+        ], 'layout/app'));
+    }
+
+    /** Leg 2 — the provider redirects back here (GET, like a real OAuth callback). */
+    public function connectCallback(array $params = []): Response
+    {
+        $platform = (string) ($_GET['platform'] ?? '');
+        $state = (string) ($_GET['state'] ?? '');
+        $sessionState = (string) ($_SESSION[self::STATE_KEY] ?? '');
+        unset($_SESSION[self::STATE_KEY]); // one-time use
+
+        if (!in_array($platform, AccountRepository::PLATFORMS, true)) {
+            return $this->back('error', 'account.invalid_platform');
+        }
+        if ($sessionState === '' || !hash_equals($sessionState, $state)) {
+            return $this->back('error', 'account.connect_failed');
+        }
+
+        $handle = $this->cleanHandle((string) ($_GET['handle'] ?? ''), $platform);
+        // mock provider account reference (NOT a token) — the only thing we store
+        $externalRef = 'zacct_' . bin2hex(random_bytes(6));
+        $this->accounts->connect($this->workspace, $platform, $handle, $externalRef, gmdate('Y-m-d\TH:i:s\Z'));
+
+        return $this->back('success', 'account.connected');
+    }
+
+    /** @param array<string, string> $params */
+    public function disconnect(array $params = []): Response
+    {
+        $id = $params['id'] ?? '';
+        if (!ctype_digit($id) || $this->accounts->find($this->workspace, (int) $id) === null) {
+            return $this->back('error', 'account.not_found');
+        }
+        $this->accounts->disconnect($this->workspace, (int) $id);
+
+        return $this->back('success', 'account.disconnected');
+    }
+
+    /** Set / clear the per-account default reference asset. @param array<string, string> $params */
+    public function setReference(array $params = []): Response
+    {
+        $id = $params['id'] ?? '';
+        if (!ctype_digit($id) || $this->accounts->find($this->workspace, (int) $id) === null) {
+            return $this->back('error', 'account.not_found');
+        }
+
+        $assetRaw = trim((string) ($_POST['asset_id'] ?? ''));
+        if ($assetRaw === '') {
+            $this->accounts->clearDefaultReference($this->workspace, (int) $id);
+
+            return $this->back('success', 'account.reference_updated');
+        }
+        if (!ctype_digit($assetRaw) || !$this->accounts->setDefaultReference($this->workspace, (int) $id, (int) $assetRaw)) {
+            return $this->back('error', 'account.reference_invalid');
+        }
+
+        return $this->back('success', 'account.reference_updated');
+    }
+
+    /** Sanitize a handle to a safe display string; fall back to a generated one. */
+    private function cleanHandle(string $raw, string $platform): string
+    {
+        $clean = preg_replace('/[^@A-Za-z0-9_.\- ]/', '', $raw) ?? '';
+        $clean = trim(substr($clean, 0, 64));
+        if ($clean === '') {
+            $clean = '@kuyash_' . $platform . '_' . bin2hex(random_bytes(2));
+        }
+
+        return $clean;
+    }
+
+    private function back(string $type, string $messageKey): Response
+    {
+        $this->flash->add($type, $messageKey);
+
+        return Response::redirect('/accounts', 303);
+    }
+}

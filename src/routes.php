@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Kuyash\Auth\Auth;
+use Kuyash\Controllers\AccountsController;
 use Kuyash\Controllers\AuthController;
 use Kuyash\Controllers\DashboardController;
 use Kuyash\Controllers\DigestController;
@@ -16,6 +17,7 @@ use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\TrendController;
 use Kuyash\Controllers\WorkflowController;
+use Kuyash\Publish\WebhookController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Response;
@@ -71,6 +73,19 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/queue/job/{id}/approve', $protected([QueueController::class, 'approve']));
     $router->post('/queue/job/{id}/reject', $protected([QueueController::class, 'reject']));
     $router->post('/queue/job/{id}/retry', $protected([QueueController::class, 'retry']));
+
+    // Accounts (Phase 10): mock two-leg OAuth connect, disconnect, per-account
+    // default reference. The GET callback is guarded by a session `state` nonce.
+    $router->get('/accounts', $protected([AccountsController::class, 'index']));
+    $router->get('/accounts/connect/{platform}', $protected([AccountsController::class, 'connectStart']));
+    $router->get('/accounts/callback', $protected([AccountsController::class, 'connectCallback']));
+    $router->post('/accounts/{id}/disconnect', $protected([AccountsController::class, 'disconnect']));
+    $router->post('/accounts/{id}/reference', $protected([AccountsController::class, 'setReference']));
+
+    // Inbound Zernio webhook — NOT auth-protected (external callback) and
+    // CSRF-EXEMPT (allowlisted before the CSRF gate in public/index.php); it is
+    // authenticated instead by HMAC signature verification in the controller.
+    $router->post('/webhooks/zernio', [WebhookController::class, 'receive']);
 
     $router->get('/logs', $protected([LogsController::class, 'index']));
 

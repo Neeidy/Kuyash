@@ -11,6 +11,15 @@ use Kuyash\Workflow\Nodes;
 /** @var list<array<string, mixed>> $jobs ordered by step */
 /** @var list<array<string, mixed>> $timeline events, chronological */
 /** @var list<array<string, mixed>> $approvals with decided_by_email */
+/** @var list<array<string, mixed>> $posts per-account publish targets (may be unset) */
+
+$posts ??= [];
+$postTone = static fn (string $s): string => match ($s) {
+    'published' => 'ok',
+    'failed' => 'err',
+    'publishing' => 'info',
+    default => 'neutral',
+};
 
 $jobsByNode = [];
 $contentByType = [];
@@ -153,6 +162,35 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
     </ul>
   </div>
 </div>
+
+<?php if ($posts !== []): ?>
+<div class="card">
+  <div class="card__head"><h2>Published targets</h2>
+    <span class="card__action"><span class="chip chip--faint num"><?= count($posts) ?></span></span>
+  </div>
+  <div class="card__body">
+    <ul class="job-list">
+      <?php foreach ($posts as $post): ?>
+      <li class="job-row">
+        <div class="job-row__main">
+          <span class="job-row__type mono"><?= View::e((string) $post['account_handle']) ?>
+            <span class="muted">· <?= View::e((string) $post['platform']) ?></span></span>
+          <span class="job-row__entity">
+            <?php if (($post['ai_label_applied'] ?? false)): ?><span class="chip chip--ai">AI label set</span> <?php endif; ?>
+            <?php if (($post['scheduled_for'] ?? null) !== null): ?>scheduled <?= View::e(substr((string) $post['scheduled_for'], 0, 16)) ?>Z · <?php endif; ?>
+            <?php if (preg_match('#^https?://#i', (string) ($post['external_url'] ?? '')) === 1): ?><a href="<?= View::e((string) $post['external_url']) ?>" rel="noopener noreferrer nofollow" target="_blank">view post</a><?php endif; ?>
+            <?php if (($post['error_message'] ?? null) !== null): ?><span class="job-row__error"><?= View::e((string) $post['error_message']) ?></span><?php endif; ?>
+          </span>
+        </div>
+        <span class="chip chip--<?= $postTone((string) $post['status']) ?>"><span class="dot dot--<?= $postTone((string) $post['status']) ?>"></span><?= View::e((string) $post['status']) ?></span>
+      </li>
+      <?php endforeach; ?>
+    </ul>
+    <p class="note">One row per connected account. AI labels are applied per platform exactly when
+      compliance required them; failures are recorded per target without failing the whole run.</p>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php if ($approvals !== []): ?>
 <div class="card">
