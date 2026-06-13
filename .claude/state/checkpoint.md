@@ -7,26 +7,22 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-12
-- Güncelleyen: Claude (**FAZ 9 İNŞA EDİLDİ — KABUL/COMMIT BEKLİYOR.** Commit YAPILMADI.
-  Sıra: kullanıcı kabul + commit onayı → güvenlik kapısı + auto-push)
+- Güncelleyen: Claude (**FAZ 9 KABUL EDİLDİ, commit'lendi + push edildi** `431e692`.
+  Sıra: **/next-phase → Faz 10 (Zernio publishing, doc-gated)**)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 9 (Compliance Agent + Approval Modes) İNŞA EDİLDİ; kabul bekliyor** (2026-06-12).
-  HEAD hâlâ **Faz 8 `ddc5cf9`** (Faz 7 `b90cb8e`, Faz 6 `393d666`). origin/main = `ddc5cf9`. Working tree'de
-  Faz 9 değişiklikleri (commit'lenmemiş). NOT: model hatası nedeniyle build Fable→Opus geçişiyle tamamlandı.
-- Faz 9 özeti: migration 0007 (workspaces compliance kolonları + approvals rebuild **truthful-record CHECK**:
-  manual⇒gerçek user+policy NULL / auto⇒user NULL+policy). src/Compliance/ (CompliancePolicy kuyash-v1, SlopScorer
-  script+caption max-Jaccard, ComplianceCheckExecutor ai_label/format/slop → pass/pass_with_ai_label/warn/block,
-  QualityScore risk formülü breach<60&sample≥5, AutoApprovalGate sıralı guardrail'ler + GateDecision,
-  PublishGateExecutor defer, DigestReport). Engine: compliance branch (block=run cancel), finalizeAwaiting gate
-  consult + finalizeAutoApproved (truthful auto kayıt), JobResult::deferred + finalizeDeferred (retry artmaz).
-  /settings + /digest controller/template, truthful badge'ler (runs/show + queue chip). **Tam detay → faz kapanınca ADR-015.**
+- Aşama: **FAZ 9 (Compliance Agent + Approval Modes) KABUL EDİLDİ, commit'lendi + push edildi** (2026-06-12).
+  **Faz 9 `431e692` = HEAD** (Faz 8 `ddc5cf9`, Faz 7 `b90cb8e`, Faz 6 `393d666`). origin/main = HEAD. Working
+  tree temiz (bu state commit'i hariç). NOT: build model hatası nedeniyle Fable→Opus geçişiyle tamamlandı.
+- Faz 9 özeti: COMPLIANCE node artık gerçek `kuyash-v1` policy motoru; approvals truthful Manual/Auto +
+  guardrail'ler. migration 0007 (workspaces compliance kolonları + approvals **truthful-record CHECK**). src/Compliance/
+  8 sınıf (Policy/Slop/Executor/Quality/Gate/GateDecision/PublishGate/Digest). Auto kapsamı = **pass + pass_with_ai_label**
+  (warn/block ASLA). Engine: block=run cancel, gate consult + truthful auto kayıt, defer (retry artmaz).
+  /settings + /digest UI + truthful badge'ler. **Tam mimari detay → ADR-015.**
 - Doğrulama: **541 PASS, 0 FAIL** (+74); 0 PHP uyarısı; **3 reviewer GO** (compliance ZORUNLU=GO/0 blocker,
-  security GO/0 blocker, ux KOŞULLU→3 düzeltme uygulandı: kill-switch confirm form'a, .field__hint cascade,
-  sample<5'te quality score "—"). Canlı smoke (8082, smoke4): /settings+/digest render+persist, kill switch,
-  CSRF 403, worker temiz. Ertelenenler → `.claude/docs/phase-9-followups.md`. dev DB manual varsayılana döndü.
-- Auto kapsamı (kilit karar 1): **pass + pass_with_ai_label** auto-onaylanır; warn/block ASLA. compliance-reviewer onayladı.
+  security GO/0 blocker, ux KOŞULLU→3 düzeltme uygulandı). Canlı smoke (8082, smoke4) regresyonsuz; secret grep
+  temiz; auto-push yapıldı. **Ertelenenler → `.claude/docs/phase-9-followups.md`** (Faz 10 per-account sayaç, Faz 11 budget ledger).
 - KURAL (kullanıcı, 2026-06-11): tüm run/test komutları `cd ~/Desktop/Kuyash &&` önekiyle.
 - Test: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
   Smoke (iki terminal): **[Terminal-1]** sunucu (8080 dolu → 8082)

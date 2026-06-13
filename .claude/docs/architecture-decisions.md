@@ -96,3 +96,52 @@ utility also retrofits the Pexels clip download (clears the Phase 7 buffering HA
 live-bucket SigV4 smoke + PRIVATE/no-ACL bucket confirmation before `STORAGE_DRIVER=r2`.
 **Deferred to Phase 13:** assembly-side staging for an evicted remote video; render/cache
 eviction. Commit `ddc5cf9`.
+
+## ADR-015: Compliance Agent + approval modes (Phase 9, 2026-06-12)
+The COMPLIANCE node (locked into every workflow since Phase 4) becomes a real
+`kuyash-v1` policy engine, and approvals gain a truthful Manual/Auto model with
+autonomy guardrails (realizes ADR-011) — the prerequisites for any real publish
+(Phase 10). **Truthful records as a DB invariant:** migration 0007 rebuilds
+`approvals` with a CHECK — `manual ⇒ real decided_by + policy_version NULL` /
+`auto ⇒ decided_by NULL + policy_version NOT NULL` (+ `score_json` snapshot); a
+"human approved" stamp on an agent decision is a constraint violation, not just a
+convention. The auto record is written ONLY worker-side in `Engine::finalizeAutoApproved`
+(unreachable from HTTP). **`src/Compliance/*`:** `CompliancePolicy` (versioned
+constants — threshold change = VERSION bump), `SlopScorer` (Phase-5 followup #8:
+max Jaccard of the *rendered* script+captions vs the workspace's last 10 runs —
+one near-duplicate is the violation, empty history = 0), `ComplianceCheckExecutor`
+(ai_label [AI visuals OR any TTS incl. mock = synthetic voice → label required] /
+format [15-45s + 9:16 from the draft render or asset metadata; missing metadata =
+`unknown`, never blocks] / slop [warn ≥ 0.55, block ≥ 0.80] → status
+pass/pass_with_ai_label/warn/block with a full audit `result_json`; provider
+`kuyash-compliance`, cost NULL), `QualityScore` (derive-only:
+`risk = 0.40·slop_avg + 0.35·block_rate` over last 20 checks `+ 0.25·reject_fail_rate`
+over 7d; breach `score < 60 AND sample ≥ 5`), `AutoApprovalGate` + `GateDecision`
+(ordered rules: mode≠auto → manual / kill switch / not pass|pass_with_ai_label /
+daily cap / budget cap / quality breach → flip workspace to Manual), `PublishGateExecutor`
+(wraps the still-mock publish; defers auto-approved publishes on kill switch / daily
+published cap — Phase 10 swaps only the inner executor), `DigestReport` (derive-only
+daily read-model). **Locked decision 1 (user-confirmed, compliance-reviewer GO):**
+auto-approve scope = `pass` + `pass_with_ai_label` only (strict-pass would make Auto
+dead code since full runs always carry TTS; the label is applied automatically at
+publish so a labeled clean render is low-risk); warn/block NEVER auto-approve.
+**Engine:** compliance branch (warn advances → guaranteed manual review via the gate;
+block cancels the run with reasons; the check job stays `ready` — a verdict, not a
+failure, so no retry waste); `JobResult::deferred` + `finalizeDeferred` (back to
+`queued`, NO retry_count bump, event only when the reason changes — no spam; the
+watchdog ignores `queued` so a deferred publish can't dead-letter). **Settings =
+columns on `workspaces`** (not a new table — matches the avatar pattern):
+`approval_mode`/`kill_switch`/`daily_post_cap`(1-10, default 2)/`budget_cap_cents`
+(NULL = none); `WorkspaceSettings` moves to core.php (worker-side gate reads it,
+session-free). **Guardrails constrain autonomy, never humans** — every guardrail
+writes a `guardrail.*` audit event; manual approvals/publishes are never gated.
+**Budget cap** = observed `SUM(jobs.cost_cents)` (truthful-minimal; Phase 11 ledger +
+preflight replaces it). **Daily cap** counted at two points (gate auto-approvals +
+PublishGate published) — unify into one per-account counter when Phase 10 adds
+accounts (`?int $accountId = null` seam already present). **UI:** `/settings` +
+`/digest`; truthful badges branch on the stored `mode` (auto → "Auto-approved by
+compliance agent (policy kuyash-v1)", NEVER "by you"); `approvalsForRun` LEFT JOINs
+users (auto rows have NULL decided_by by design). Verification: **541 PASS / 0 FAIL**
+(+74); compliance-reviewer (MANDATORY) + security-auditor both **GO / 0 blocker**;
+ux-reviewer conditional → 3 fixes applied. **Deferred:** `.claude/docs/phase-9-followups.md`.
+Commit `431e692`.
