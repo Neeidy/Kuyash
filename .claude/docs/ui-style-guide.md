@@ -25,7 +25,7 @@ The redesign must be perceptibly a DIFFERENT product from the first pass, not a 
 - NO emoji in headings or UI chrome ("Good morning 👋" is banned).
 - NO three-color KPI card salad: color is reserved for STATUS ONLY.
 - NO generic SaaS hero phrases. Microcopy is operational and specific ("3 renders awaiting your approval", not "Here's what's happening today").
-- NO default system-font-stack look: pick ONE distinctive UI typeface pairing (self-hosted via @font-face from local files — still zero external requests at runtime; e.g. Inter Display/Inter, or Geist if license allows local bundling; mono font for numbers/logs: e.g. JetBrains Mono or IBM Plex Mono, local). **Font binary files (.woff2) must be committed under `phase-0-demo/assets/fonts/`, obtained from the projects' official open-source releases (one-time build-time download, announce it to the user first); verify zero external fetches at runtime.**
+- NO default system-font-stack look: pick ONE distinctive UI typeface pairing (self-hosted via @font-face from local files — still zero external requests at runtime; e.g. Inter Display/Inter, or Geist if license allows local bundling; mono font for numbers/logs: e.g. JetBrains Mono or IBM Plex Mono, local). **Font binary files (.woff2) live under `public/assets/fonts/` (the real app ships InterVariable + JetBrainsMono there), obtained from the projects' official open-source releases; verify zero external fetches at runtime.** *(The Phase 0 static demo under `phase-0-demo/` was removed once the real app superseded it — git history retains it.)*
 
 ## Design tokens (define once in base.css as CSS custom properties)
 
