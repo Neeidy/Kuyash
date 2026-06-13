@@ -7,18 +7,19 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-13
-- Güncelleyen: Claude (**FAZ 13 KABUL + commit + push** — detay ADR-019, 693 PASS/0 FAIL.
-  **V1 phase-plan (0–13) TAMAMLANDI.** Sırada faz YOK; kalanlar V2 parking lot.)
+- Güncelleyen: Claude (**Faz 14 (i18n TR/EN) KABUL + commit `2e4bd41` + push edildi**. 732 PASS, 3 reviewer GO.
+  Detay ADR-020'ye taşındı, Mevcut durum kısaltıldı. V1 sonrası rota: operatör enable-time / V2 / followups.)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 13 (Hardening) KABUL EDİLDİ, commit + push edildi** (2026-06-13) — **SON faz, V1 (0–13) TAMAM**.
-  Faz feat'leri: F13 `9b68a67`, F12 `dd34bbb`, F11 `bd6b5a6`, F10 `c664604`, F9 `431e692`, F8 `ddc5cf9`. origin/main = HEAD.
-- Faz 13 özeti: 401/403 non-retryable fast-fail (`Core/PermanentFailure`+`Engine::finalizeFailure` ilk denemede
-  dead-letter); PostRepository UNIQUE backstop; webhook per-IP rate-limit (migration 0011 `rate_limits` +
-  `Core/RateLimiter`); WAL-aware backup/restore (`Core/SqliteBackup` VACUUM INTO + `bin/backup.php`/`restore.php`);
-  `bin/r2-smoke.php` enable-time gate; Caddy header/blocklist+HSTS; `production-readiness.md`. **Tam detay → ADR-019.**
-- Doğrulama: **693 PASS, 0 FAIL**; 3 reviewer GO (security ZORUNLU GO/0). **Ertelenenler → `phase-13-followups.md`.**
+- Aşama: **FAZ 14 (i18n TR/EN) KABUL EDİLDİ, commit + push edildi** (2026-06-13) — V1 (0–13) üstüne mini-faz.
+  Faz feat'leri: F14 `2e4bd41`, F13 `9b68a67`, F12 `dd34bbb`, F11 `bd6b5a6`, F10 `c664604`. origin/main = HEAD.
+- Faz 14 özeti: `Core/I18n` static çevirmen (locale→en→key fallback, `{name}`) + `View::t()` escaped;
+  `lang/en.php`+`lang/tr.php` (478 anahtar parite, Messages MAP/EVENTS/STATUS foldlandı → Messages I18n facade,
+  "tek sınıf swap"); migration **0012** `users.locale`; per-user locale (session-cache + `/locale` CSRF switch);
+  `<html lang>` + topbar EN/TR toggle; 21 template ~250 literal → `View::t()`. **Tam detay → ADR-020.**
+- Doğrulama: **732 PASS, 0 FAIL**; 3 reviewer GO (compliance TR-truthfulness GATE GO/0). Ertelenenler (kozmetik):
+  aria-current SR etiketi, birkaç enum data olarak çevrilmedi.
 - KURAL (kullanıcı, 2026-06-11): tüm run/test komutları `cd ~/Desktop/Kuyash &&` önekiyle.
 - Test: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
   Smoke (iki terminal): **[Terminal-1]** sunucu (8080 dolu → 8082)
@@ -48,15 +49,14 @@
 
 ## Sıradaki adım
 
-0. **V1 PHASE-PLAN (0–13) TAMAMLANDI.** Yeni faz token'ı YOK. Bundan sonrası ya (a) V2 parking lot
-   (Stripe, multi-tenant UI, onboarding, AI avatars, ElevenLabs, ek AI-video sağlayıcıları, Creator Watch,
-   branching graph, MRR paneli), ya (b) followup'ların ele alınması, ya da (c) operatör enable-time adımları
-   (R2 smoke + STORAGE_DRIVER=r2, Zernio doc-gate 12 madde, AI-video 7 madde, `caddy validate` + tunnel).
-   Yeni bir iş için kullanıcı yönlendirmesi bekle.
+0. **Faz 14 KABUL + commit + push bekleniyor.** Kullanıcı kabul ederse: güvenlik kapısı (secret grep) →
+   `feat` commit + `git push origin main` (auto-push memory) → Faz 14 detayını ADR'ye taşı + "Mevcut durum"u
+   ~4 satıra indir (~1 sayfa kuralı). Ertelenen ux nit'leri (aria-current span, digest/signed_in_as iki nokta)
+   kozmetik — istenirse uygulanır. Sonra V1 sonrası rota: operatör enable-time / V2 parking lot / followups.
 1. **Operatör enable-time (production-readiness.md):** R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra
    `STORAGE_DRIVER=r2`; backup cron (`bin/backup.php`); `caddy validate` + canlı tunnel; prod `.env`
-   APP_DEBUG=false + gerçek key'ler. Not: gerçek dev DB 0011'e migrate edildi (WAL-safe yedek:
-   `storage/database/kuyash.pre-0011.bak.sqlite`).
+   APP_DEBUG=false + gerçek key'ler. Not: gerçek dev DB **0012'ye** migrate edildi (WAL-safe yedek:
+   `storage/database/kuyash.pre-0012.bak.sqlite` + `storage/backups/20260613T215117Z/`).
 2. Faz 12 ertelenenler: `.claude/docs/phase-12-followups.md` (localSourcePath dedup, startRun branch
    stratejisi, ai_video units=seconds gerçek-fiyatla, executor real-cost passthrough testi, async/poll
    gerçek-entegrasyon → ai-video-notes.md 7 madde).
@@ -78,6 +78,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-06-13 — FAZ 14 KABUL: kullanıcı kabul + commit + push onayı verdi. Güvenlik kapısı (secret grep temiz) → Faz 14 feat `2e4bd41` commit + `git push origin main` (auto-push). Faz 14 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-020), "Mevcut durum" ~4 satıra indirildi (~1 sayfa kuralı). V1 sonrası rota: operatör enable-time / V2 parking lot / followups.
+- 2026-06-13 — START PHASE 14: i18n (TR/EN) İNŞA EDİLDİ. `Core/I18n` static çevirmen (setLocale clamp en/tr, `t()` fallback locale→en→key, `interpolate {name}`, lookup() null-on-miss seam, test-only setLangDir) + `View::t()`=e(I18n::t()) escaped. `lang/en.php`+`lang/tr.php` (478 anahtar parite; eski `Messages::MAP`→flat, `EVENTS`→`event.*`, `STATUS`→`status.*` foldlandı; `Messages` artık I18n facade — public API + ~16 call-site değişmedi → "tek sınıf swap" gerçekleşti). migration **0012** `users.locale` (NOT NULL DEFAULT 'en' CHECK en/tr; Migrator additive). Locale resolution: `Auth::SESSION_LOCALE` login'de cache + `sessionLocale()`/`setSessionLocale()`, `public/index.php` `I18n::setLocale(I18n::resolve(session, APP_LOCALE))`; `config/app.php` `app.locale`. `LocaleController` + `POST /locale` (`$protected`, CSRF blanket-gate, allowlist+CHECK, path-only redirect-back + backslash-guard). `base.php`/`app.php` `<html lang>` + topbar `.lang-switch` EN/TR (no-JS form POST) + CSS. 21 template'te ~250 literal → `View::t()` (gömülü-link cümleler segment-split; canonical node adları TREND/COMPLIANCE/PUBLISH/LIBRARY çevrilmedi). 732 PASS (+39: i18n fallback/interp/clamp/resolve, 0012 CHECK, /locale CSRF+redirect+backslash, TR-render smoke, BOTH-lang compliance truthfulness, parite+template-key tarayıcı). 3 reviewer: **compliance GO/0 (GATE)**, security GO (1 LOW backslash open-redirect → regex guard + test UYGULANDI), ux GO (slop-chip `chip--wrap` + `dash.kpi_cache` TR kısaltma UYGULANDI; aria/iki-nokta nit'leri ertelendi). Dev DB 0012'ye migrate (WAL-safe yedek `kuyash.pre-0012.bak.sqlite`); HTTP smoke: login→EN dash→`/locale`→TR dash (`lang="tr"`, "Panel"/"Çıkış yap", 0 "Sign out"), DB persist OK, smoke4 'en'e geri alındı. Commit YAPILMADI — kabul bekliyor.
 - 2026-06-13 — TEMİZLİK (faz değil): `phase-0-demo/` statik mock main'den KALDIRILDI (`git rm -r`, 37 dosya/~8.1k satır; git history'de duruyor) — `chore(cleanup)` `758e1d7`; tek ölü referans `ui-style-guide.md` font yolu `phase-0-demo/assets/fonts`→`public/assets/fonts` güncellendi. `KULLANIM_REHBERI.md` (TR kullanım rehberi) eklendi — `docs` `8a556a7`. Push edildi. **i18n (TR/EN) bir gözden kaçış**: gerçek backend tek dil (EN), ~21 template/~350 string; öneri = ayrı **Phase 14 — i18n** mini-fazı (Messages.php zaten key-routed, "tek sınıf swap" tasarımı hazır). Kod YAZILMADI — `START PHASE 14`/`/next-phase` bekliyor.
 - 2026-06-13 — FAZ 13 KABUL: kullanıcı kabul + commit + push onayı verdi. Güvenlik kapısı (secret grep temiz) → Faz 13 feat commit + `git push origin main` (auto-push). Faz 13 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-019), "Mevcut durum" ~4 satıra indirildi (~1 sayfa kuralı). **V1 phase-plan (0–13) TAMAMLANDI** — sırada faz YOK; bundan sonrası V2 parking lot / followup'lar / operatör enable-time adımları.
 - 2026-06-13 — START PHASE 13: Hardening (final faz 13/13) İNŞA EDİLDİ. (1) 401/403 non-retryable fast-fail: `Core/PermanentFailure(+Exception)`, `JobResult::failedPermanent()`+retryable bayrak, `Engine::finalizeFailure` non-retryable→ilk denemede dead-letter (backoff yok), `Worker` uncaught PermanentFailure sınıflandırır, OpenAI text/TTS+Pexels 401/403→PermanentFailureException (domain değil → executor catch'i geçer → Worker). (2) PostRepository `insertPublishing` UNIQUE backstop (collision→mevcut id). (3) webhook per-IP rate-limit: migration 0011 `rate_limits` + `Core/RateLimiter` (120/60s, clock-injectable) → `WebhookController` 429 (HMAC/fail-closed önce çalışır). (4) WAL-aware backup/restore: `Core/SqliteBackup` (wal_checkpoint+VACUUM INTO+integrity), `bin/backup.php` (DB+media+manifest, --db-only), `bin/restore.php` (dry-run/--force, DB move-aside, integrity). (5) `bin/r2-smoke.php` enable-time gate (put→presign GET→anon GET 401/403 PRIVATE teyidi→delete; exit 0/1/2). (6) Caddyfile `(app)` snippet + blocklist genişletme (/database,/bin,/tests) + prod HTTPS+HSTS bloğu. (7) `production-readiness.md` + `release-test-checklist.md` + `phase-13-followups.md`. 693 PASS (+20). 3 reviewer: security **ZORUNLU GO/0**, compliance GO/0, ux GO (1 polish UYGULANDI: queue `non-retryable:`→"(no auto-retry)"). Ertelenenler: CF-Connecting-IP per-IP (tunnel ardında REMOTE_ADDR global), restore symlink containment, rate-limit write-amp. Smoke: backup/restore round-trip OK, real-DB 0011 (WAL-safe yedek) + HTTP boot OK. Commit YAPILMADI — kabul bekliyor.
@@ -86,5 +88,3 @@
 - 2026-06-13 — START PHASE 12: Quick Create AI image-to-video İNŞA EDİLDİ. migration 0010 (workflows.template rebuild → 'quick_create'); **Migrator FK-off+foreign_key_check kapısı** (parent-tablo rebuild güvenli; gerçek dev DB 12 run/0 ihlal). VideoGenProvider seam (Mock ffmpeg-zoompan/$0 + Fal doc-gated flag-off stub + VideoResult/Exception); AiVideoExecutor (AssetCache içerik-adresli cache-hit=null cost, draft render, **ai_label_required=true HEP**); Nodes source-aware expand (VISUALS source=ai→ai_video, polymorphic back-compat); Engine quick_create branch (prompt nodes_json snapshot + re-validate); CostEstimator source-aware; FinalRender/Compliance/MockExecutor ai_video okur; WorkflowRepository seed+exclude+findByTemplate; /quick sayfası (QuickCreateController + template + nav "Create" + CSS). 673 PASS (+43). 5 reviewer: compliance GO/0 (ZORUNLU), security GO/0, php GO/0, qa GO/0, ux KOŞULLU→2 should-fix (caps hint→field__hint, upload-trap→delete+ayrı mesaj) + nitler (radiogroup, focus-visible, .env.example) UYGULANDI. Smoke OK (real-DB 0010 + VIDEO_MOCK=false doc-gated + HTTP boot). Commit YAPILMADI — kabul bekliyor.
 - 2026-06-13 — /next-phase: Faz 12 (Quick Create AI video, credit-gated) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-12-plan.md`'e kaydedildi. Kullanıcı 3 kilitli karar: (1) kısa brief-faithful zincir (no trend/idea/script/voice); (2) mock-first + doc-gated flag-off real stub (async submit/poll YOK V1); (3) özel /quick sayfası. Mühendislik incelemesi: ASSEMBLE atlandı — AI klip final_render'da distribution gibi normalize edilir (AssemblyExecutor tts+asset_fetch zorunlu kılıyor). migration 0010 workflows.template rebuild ('quick_create'); VideoGenProvider seam + Mock (ffmpeg zoompan) + Fal flag-off stub + AiVideoExecutor; Nodes source-aware expand (VISUALS source=ai→ai_video). Kod YAZILMADI — START PHASE 12 bekleniyor.
 - 2026-06-12 — FAZ 11 KABUL: kullanıcı kabul + commit + push onayı verdi. Faz 11 feat `bd6b5a6` commit'lendi, güvenlik kapısı (secret grep temiz) + `git push origin main` (auto-push). Faz 11 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-017), "Mevcut durum" ~4 satıra indirildi (~1 sayfa kuralı). Sıra: /next-phase → Faz 12 (Quick Create AI video, credit-gated).
-- 2026-06-12 — START PHASE 11: Usage/Costs/Credit Ledger İNŞA EDİLDİ. migration 0009 (usage_events append-only UNIQUE(job_id) + credit_transactions grant/spend/adjust); src/Usage/ 6 sınıf (UsageRecorder [Engine::finalize tx içinde tek yazım yolu, yalnız gerçek non-null+pozitif maliyet → mock/cache 0 satır=truthful, idempotent], CostEstimator [config-driven det.], PreflightGate [startRun HARD-BLOCK + guardrail.preflight_block], UsageRepository [MTD tek doğruluk kaynağı], CreditLedger, BudgetExceededException); AutoApprovalGate MTD→usage_events (parity); /usage + nav + footer; bin/grant-credits.php; config/usage.php; Format::cents; WorkflowException un-final. 630 PASS (+43). 5 reviewer GO (security ZORUNLU GO/0). 2 MED qa fix (ayrıştırıcı parity testi + finalizeAwaiting e2e) + ux polish + recorder non-positive-skip uygulandı. Canlı smoke (preflight block uçtan-uca) OK. Commit YAPILMADI — kabul bekliyor.
-- 2026-06-12 — /next-phase: Faz 11 (Usage, Costs & Credit Ledger) planı Plan Mode'da yazıldı ve ONAYLANDI; `.claude/docs/phase-11-plan.md`'e kaydedildi. Kullanıcı 2 kilitli karar: (1) ledger **cents-cinsinden + budget-cap geçidi** (prepaid kredi ekonomisi reddedildi — krediler cents üzerine görüntü katmanı, grant manuel/bin script, Stripe yok); (2) preflight **hard-block** (over-budget run reddedilir). `usage_events` = MTD tek doğruluk kaynağı (AutoApprovalGate repoint). Kod YAZILMADI — START PHASE 11 bekleniyor.

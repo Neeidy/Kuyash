@@ -331,3 +331,44 @@ OK; dev DB migrated to 0011 (WAL-safe backup). **3-dimension review:** security 
 compliance **GO/0**, ux **GO** (1 polish applied: queue `non-retryable:`→"(no auto-retry)"). **Deferred:**
 `.claude/docs/phase-13-followups.md` (CF-Connecting-IP per-IP behind tunnel, restore symlink containment,
 rate-limit write-amp). **V1 phase-plan (0–13) COMPLETE.** Commit `9b68a67`.
+
+## ADR-020: i18n (TR/EN) — presentation-layer locale, per-user, EN source + fallback (Phase 14, 2026-06-13)
+A missed original requirement: the real backend shipped English-only. NEW mini-phase on top of V1 (0–13),
+strictly presentation-layer — the DB stores message KEYS not localized text, so there is **no stored-text
+migration and approval-record truthfulness is untouched**. Two locked decisions: (a) **EN = default + source
+language**, TR selectable (missing TR key → EN); (b) **per-USER locale** (SaaS-ready), not per-workspace.
+**1. Translator.** New `Core/I18n` (static — matches `View::e`/`Format`/`Messages`): `setLocale()` clamps to
+`SUPPORTED=[en,tr]` (unknown→en), `t($key,$params)` resolves **locale → en → key** then interpolates `{name}`
+(missing key renders visibly, never fatal), `lookup()` returns null-on-miss (the custom-fallback seam for
+Messages), `resolve(?session,$default)` is a pure allowlist picker, `interpolate()` reuses Messages' grammar.
+Lang maps load lazily via `require lang/{locale}.php` (path derived from `__DIR__`, never user input; cached);
+`setLangDir()` is a test-only seam. `View::t($key,$params) = e(I18n::t(...))` — the escaped template short form.
+**2. Lang files + the "swap one class".** `lang/en.php` + `lang/tr.php` flat `['key'=>'text']`, **478 keys each,
+parity-checked (0 tr-only, 0 missing)**. The former `Messages::MAP` (flash, un-prefixed — the controller
+contract), `EVENTS` (→`event.*`) and `STATUS` (→`status.*`) were folded in; `Messages` is now the thin
+locale-aware facade (`text/status/event/resolveFlashes` delegate to I18n) — **public API + all ~16 call sites
+unchanged**. This realizes the long-planned "the TR i18n pass replaces exactly one class" design.
+**3. Migration 0012.** `users.locale TEXT NOT NULL DEFAULT 'en' CHECK (locale IN ('en','tr'))` — additive,
+forward-only; the CHECK is DB-level defense behind the app allowlist.
+**4. Locale resolution.** `Auth` selects `locale`, caches it at login in `$_SESSION[Auth::SESSION_LOCALE]`,
+exposes `sessionLocale()`/`setSessionLocale()`; `public/index.php` calls `I18n::setLocale(I18n::resolve(
+auth->sessionLocale(), config app.locale))` ONCE after `Session::start()` (anon → `APP_LOCALE`, new
+`config/app.php` `app.locale`). No per-request DB hit just for locale.
+**5. Switcher.** `LocaleController` + `POST /locale` (`$protected`; CSRF via the blanket gate — NOT exempt):
+allowlist+CHECK validated, prepared-statement UPDATE + session cache, **path-only redirect-back** from Referer
+(host dropped → no open redirect; rejects `//` AND `/\` protocol-relative). `templates/layout/app.php` topbar
+`.lang-switch` EN/TR segmented toggle (one no-JS form POST per inactive locale, active = `aria-current` span);
+`<html lang>` in `base.php`+`app.php`.
+**6. Template extraction.** ~250 UI literals across the **21 templates** → `View::t('area.key')`; dynamic data
+stays `View::e($var)`. Sentences with inline links use a segment-split (text runs as separate escaped keys) so
+TR word order reads naturally. **Canonical node names (TREND/COMPLIANCE/PUBLISH/LIBRARY) are NOT translated.**
+**Verification: 732 PASS / 0 FAIL** (+39: I18n fallback/interp/clamp/resolve, 0012 column/CHECK/default,
+`/locale` CSRF+redirect+backslash, TR-render smoke ≥2 screens, **BOTH-language compliance-truthfulness gate**,
+lang-parity + template-key coverage scan, Auth locale cache + LocaleController). Dev DB migrated to 0012
+(WAL-safe backup `kuyash.pre-0012.bak.sqlite`); HTTP smoke: login→EN dash→`/locale`→TR dash (`lang="tr"`,
+"Panel"/"Çıkış yap", 0 "Sign out"), DB persisted, smoke4 reset to 'en'. **3-dimension review:** compliance
+(MANDATORY GATE) **GO/0** (TR keeps human-vs-agent approval + mandatory-AI-label distinction), security **GO**
+(1 LOW backslash open-redirect → regex guard + test APPLIED), ux **GO** (slop-chip `chip--wrap` + `dash.kpi_cache`
+TR shortened APPLIED; aria-current/colon nits deferred — cosmetic). **Deferred (cosmetic):** SR label on the
+active language span; a few enum values (account status/health, asset type/kind, tx type) left as data, not
+translated. Commit `2e4bd41`.
