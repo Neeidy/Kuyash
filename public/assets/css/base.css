@@ -145,8 +145,9 @@ code, .mono {
 }
 code { background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
 
-/* tabular numerals everywhere a number can tick */
-.num, .mono, td, .kpi__value { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+/* tabular numerals everywhere a number can tick (display numbers also get
+   the mono family in app.css — Phase 15 consolidated the 3 stat idioms) */
+.num, .mono, td, .kpi__num, .quality-score, .trend-card__score { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
 
 ::selection { background: var(--accent-dim); }
 
