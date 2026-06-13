@@ -241,3 +241,55 @@ clean. **5-dimension review all GO** — security (MANDATORY) **0 blockers**, ph
 compliance/truthfulness, ux, qa; 2 MEDIUM qa findings applied (discriminating parity test +
 finalizeAwaiting e2e test) + recorder non-positive-skip + ux polish. **Deferred:**
 `.claude/docs/phase-11-followups.md`. Commit `bd6b5a6`.
+
+## ADR-018: Quick Create — AI image-to-video, credit-gated, mock-first, AI-labeled (Phase 12, 2026-06-13)
+
+Kuyash's **second pipeline entry**: a photo + prompt → **AI image-to-video** → the existing
+compliance + publish tail. **Locked product shape:** a **short, brief-faithful chain** (the prompt
+is the only creative input — **no TREND/IDEA/SCRIPT/VOICE**); **mock-first + doc-gated flag-off** real
+provider (no async submit/poll in V1); a **dedicated `/quick` page**. Chain:
+**VISUALS(ai) → CAPTION → HASHTAGS → MUSIC NOTE/STYLE → PREVIEW → COMPLIANCE → PUBLISH**
+(PUBLISH expands render_review → final_render → publish). **No ASSEMBLE** (engineering refinement vs
+the approved preview): the AI clip is already a finished video, so it is normalized at `final_render`
+exactly like a distribution library video (`AssemblyEngine::assembleDistribution`, no narrated draft —
+`AssemblyExecutor` hard-requires both tts + asset_fetch, which quick_create lacks). **migration 0010:**
+id-preserving rebuild of the **`workflows` PARENT table** to widen `template` CHECK with `'quick_create'`
+(`runs.entity_type` already allowed it since 0003; `reference_asset_id` since 0005 — no new column, the
+prompt rides in the run's nodes_json VISUALS settings snapshot). **Migrator change (the FK trap):**
+dropping a parent with child rows throws `FOREIGN KEY constraint failed`, and `PRAGMA foreign_keys` is a
+**no-op inside a transaction** — so `Migrator` now toggles `foreign_keys=OFF` **around** each per-file tx
+(restored ON on success AND throw paths; same always-ON-on-connect connection) and runs **`PRAGMA
+foreign_key_check` after every file**, hard-failing on any orphan (net integrity gain — never verified
+before). Verified on the **real dev DB: 4 workflows + 12 runs → 0 violations, 0 orphans**.
+**VideoGenProvider seam** (adapter rule, mirrors StockProvider): `MockVideoGenProvider` (default —
+ffmpeg **zoompan** Ken-Burns, real 9:16 clip, **costCents=null**, a `FAIL_SENTINEL` prompt triggers the
+testable error path) + `FalVideoGenProvider` (real, built only when `VIDEO_MOCK=false`+key — a **doc-gated
+stub that throws BEFORE any HTTP**; `.claude/docs/ai-video-notes.md` lists the 7 required doc items) +
+`VideoResult{w,h,seconds,costCents,model,meta}`. **`AiVideoExecutor`** (`ai_video` job, defaults timeout
+600 / **max_retries 1** — never blindly re-issue a paid call): resolves the run's ready **photo** reference
+to a local path (stages remote disks like AssetFetchExecutor), reads+sanitizes the prompt, generates via
+**`AssetCache::remember`** content-addressed (`ai_video|provider|assetId|prompt|dur`) → **cache HIT = null
+cost (truthful)**, normalizes a **draft render** for review/format-check, and returns
+`{visual_ref(cache), draft_render_id, duration, ai_label_required:true, title:prompt, cached}`.
+**AI-label is ALWAYS required** (realistic AI media): `ComplianceCheckExecutor::aiLabelCheck` reads
+`ai_video.ai_label_required` → `pass_with_ai_label` → `posts.ai_label_applied=1` — no unlabeled-publish
+path, no misrepresentation (compliance MANDATORY review confirmed). **Source-aware `Nodes::expand`** is
+**polymorphic**: bare node ids keep `VISUALS→asset_fetch` (back-compat); decoded `{node,settings}` entries
+let `VISUALS(source=ai)→ai_video`. All three callers pass entries (`Engine::startRun`/`advance`,
+`CostEstimator`). **`Engine::startRun` quick_create branch:** requires a ready photo, clamps the prompt to
+300, injects it into the VISUALS snapshot, **re-validates the rewritten snapshot** (a drifted prompt can't
+start a run), entity_type='quick_create'. The Phase 11 **`PreflightGate` hard-blocks** an over-budget run
+(ai_video ≈ $7) **before any spend/row** (`BudgetExceededException` + `guardrail.preflight_block`).
+`WorkflowRepository` **seeds** the quick_create workflow but **excludes it from the builder `listFor`**
+(`findByTemplate` getter; `WorkflowController` redirects stray quick_create ids to `/quick`). **UI:**
+`/quick` (`QuickCreateController` + `templates/quick/index.php`) — photo upload (reuses Phase 3 AssetIngest
+validation) OR pick a ready photo (fieldset radiogroup), prompt, **live estimated credit cost**, **mandatory
+AI-label notice**; "Create" nav item; `config/media.php` image_video block + `.env.example` VIDEO_* docs.
+**Security:** the prompt **never reaches an ffmpeg argument or a path** (sanitized+clamped; the mock only
+sentinel-compares it; ffmpeg via arg-array proc_open, no shell); every new query workspace-scoped; CSRF via
+the central gate; doc-gated provider leaks no key. Verification: **673 PASS / 0 FAIL** (+43); DI (web+worker)
+OK; smoke (real-DB 0010 rebuild + `VIDEO_MOCK=false` doc-gated + HTTP boot) OK; secret grep clean.
+**5-dimension review:** compliance (MANDATORY) **GO/0**, security **GO/0**, php-architect **GO/0**, qa
+**GO/0**, ux **CONDITIONAL→GO** (2 should-fix applied: ALL-CAPS hint→`field__hint`; non-photo-upload trap→
+delete row + distinct message; + radiogroup/focus-visible/.env.example nits). **Deferred:**
+`.claude/docs/phase-12-followups.md`. Commit `dd34bbb`.
