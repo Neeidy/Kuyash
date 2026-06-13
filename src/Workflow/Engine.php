@@ -8,6 +8,8 @@ use Closure;
 use Kuyash\Compliance\AutoApprovalGate;
 use Kuyash\Compliance\GateDecision;
 use Kuyash\Core\Database;
+use Kuyash\Usage\PreflightGate;
+use Kuyash\Usage\UsageRecorder;
 use Kuyash\Workspace\WorkspaceContext;
 
 /**
@@ -39,6 +41,8 @@ final class Engine
         private readonly WorkflowValidator $validator,
         ?Closure $clock = null,
         private readonly ?AutoApprovalGate $autoGate = null,
+        private readonly ?UsageRecorder $usage = null,
+        private readonly ?PreflightGate $preflight = null,
     ) {
         $this->clock = $clock ?? static fn (): string => gmdate(self::ISO);
     }
@@ -122,6 +126,13 @@ final class Engine
         $chain = Nodes::expand(array_column($nodes, 'node'));
         $first = $chain[0];
         $now = ($this->clock)();
+
+        // Pre-flight budget gate (Phase 11, hard block): refuse a run whose
+        // estimated cost would push MTD spend past the cap BEFORE any row is
+        // created — so an over-budget run leaves no half-started state. No cap
+        // set → no-op. Throws BudgetExceededException (a WorkflowException, so
+        // the controllers flash 'run.budget_exceeded' unchanged).
+        $this->preflight?->check($wsId, (string) $workflow['template'], is_array($nodes) ? $nodes : [], $now);
 
         return $this->db->transaction(function () use (
             $workflow, $wsId, $entityType, $entityId, $referenceAssetId, $first, $now, $userId
@@ -334,6 +345,10 @@ final class Engine
             return; // watchdog requeued (or another worker re-claimed) — the live attempt owns the row
         }
 
+        // Phase 11: ledger the real spend (if any) atomically with the cost_cents
+        // write. Mock/cache = null cost → nothing recorded (truthful).
+        $this->usage?->record($job, $result, $now);
+
         $runId = (int) $job['run_id'];
         $key = $status === JobResult::STATUS_PUBLISHED ? 'job.published' : 'job.finished';
         $this->events->record($wsId, 'info', 'transition', $key, [
@@ -425,6 +440,10 @@ final class Engine
         if ($updated->rowCount() === 0) {
             return;
         }
+
+        // Phase 11: a real script generation already spent money before this
+        // approval pause — ledger it now (same honest path as cost_cents above).
+        $this->usage?->record($job, $result, $now);
 
         $runId = (int) $job['run_id'];
 

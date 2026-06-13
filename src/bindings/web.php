@@ -26,6 +26,7 @@ use Kuyash\Controllers\MediaController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\TrendController;
+use Kuyash\Controllers\UsageController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
@@ -50,6 +51,8 @@ use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\WebhookController;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Storage\StorageManager;
+use Kuyash\Usage\CreditLedger;
+use Kuyash\Usage\UsageRepository;
 use Kuyash\Workflow\Cockpit;
 use Kuyash\Trend\QuotaCounter;
 use Kuyash\Trend\TrendConfigRepository;
@@ -267,6 +270,16 @@ return static function (Container $container, string $basePath): void {
     $container->bind(LogsController::class, static fn (Container $c): LogsController => new LogsController(
         $c->get(View::class),
         $c->get(EventLog::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
+    ));
+
+    $container->bind(UsageController::class, static fn (Container $c): UsageController => new UsageController(
+        $c->get(View::class),
+        $c->get(UsageRepository::class),
+        $c->get(CreditLedger::class),
+        $c->get(WorkspaceSettings::class),
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),

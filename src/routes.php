@@ -16,6 +16,7 @@ use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\TrendController;
+use Kuyash\Controllers\UsageController;
 use Kuyash\Controllers\WorkflowController;
 use Kuyash\Publish\WebhookController;
 use Kuyash\Core\Config;
@@ -88,6 +89,9 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/webhooks/zernio', [WebhookController::class, 'receive']);
 
     $router->get('/logs', $protected([LogsController::class, 'index']));
+
+    // Usage, costs & credits (Phase 11): live single-workspace spend vs budget cap
+    $router->get('/usage', $protected([UsageController::class, 'index']));
 
     $router->get('/settings', $protected([SettingsController::class, 'index']));
     $router->post('/settings', $protected([SettingsController::class, 'save']));

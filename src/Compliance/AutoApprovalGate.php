@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kuyash\Compliance;
 
 use Kuyash\Core\Database;
+use Kuyash\Usage\UsageRepository;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workspace\WorkspaceSettings;
 
@@ -34,6 +35,7 @@ final class AutoApprovalGate
         private readonly EventLog $events,
         private readonly WorkspaceSettings $settings,
         private readonly QualityScore $quality,
+        private readonly UsageRepository $usage,
     ) {
     }
 
@@ -150,18 +152,14 @@ final class AutoApprovalGate
     }
 
     /**
-     * Month-to-date observed spend: SUM(jobs.cost_cents). Truthful but minimal
-     * — the Phase 11 credit ledger + preflight estimation replaces this.
+     * Month-to-date observed spend. Phase 11 re-points this from
+     * SUM(jobs.cost_cents) to the usage_events ledger — the single source of
+     * truth — via UsageRepository. Behaviour is unchanged (parity test pins it):
+     * jobs.cost_cents stays as the per-job display rollup. $accountId is the
+     * Phase 10 seam (per-account budgeting is not in V1 scope).
      */
     public function monthToDateSpendCents(int $workspaceId, string $now, ?int $accountId = null): int
     {
-        $monthStart = substr($now, 0, 7) . '-01T00:00:00Z';
-        $row = $this->db->one(
-            'SELECT COALESCE(SUM(cost_cents), 0) AS spent FROM jobs
-             WHERE workspace_id = ? AND cost_cents IS NOT NULL AND created_at >= ?',
-            [$workspaceId, $monthStart],
-        );
-
-        return (int) ($row['spent'] ?? 0);
+        return $this->usage->monthToDateSpendCents($workspaceId, $now);
     }
 }

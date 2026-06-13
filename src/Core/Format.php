@@ -23,6 +23,17 @@ final class Format
         return $precise ? sprintf('%s (%.1fs)', $clock, $seconds) : $clock;
     }
 
+    /** 7 → "$0.07" · 1250 → "$12.50" · -120 → "-$1.20" · 0 → "$0.00". */
+    public static function cents(?int $cents): string
+    {
+        if ($cents === null) {
+            return '—';
+        }
+        $sign = $cents < 0 ? '-' : '';
+
+        return $sign . '$' . number_format(abs($cents) / 100, 2);
+    }
+
     public static function bytes(int $bytes): string
     {
         if ($bytes >= 1048576) {

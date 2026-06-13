@@ -63,6 +63,11 @@ use Kuyash\Trend\TrendProvider;
 use Kuyash\Trend\TrendRepository;
 use Kuyash\Trend\TrendService;
 use Kuyash\Trend\YouTubeTrendsProvider;
+use Kuyash\Usage\CostEstimator;
+use Kuyash\Usage\CreditLedger;
+use Kuyash\Usage\PreflightGate;
+use Kuyash\Usage\UsageRecorder;
+use Kuyash\Usage\UsageRepository;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\ExecutorRegistry;
@@ -123,11 +128,41 @@ return static function (Container $container, string $basePath): void {
         $c->get(SlopScorer::class),
     ));
 
+    /* -------- Usage ledger + cost estimation (Phase 11) --------------------- */
+
+    $container->bind(UsageRepository::class, static fn (Container $c): UsageRepository => new UsageRepository(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(CreditLedger::class, static fn (Container $c): CreditLedger => new CreditLedger(
+        $c->get(Database::class),
+    ));
+
+    $container->bind(CostEstimator::class, static fn (Container $c): CostEstimator => new CostEstimator(
+        (array) $c->get(Config::class)->get('usage'),
+    ));
+
+    // single write path into the ledger; called from inside Engine::finalize
+    $container->bind(UsageRecorder::class, static fn (Container $c): UsageRecorder => new UsageRecorder(
+        $c->get(Database::class),
+        (array) $c->get(Config::class)->get('usage'),
+    ));
+
+    $container->bind(PreflightGate::class, static fn (Container $c): PreflightGate => new PreflightGate(
+        $c->get(CostEstimator::class),
+        $c->get(UsageRepository::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(EventLog::class),
+    ));
+
+    // Phase 11: month-to-date spend now reads usage_events (single source of
+    // truth) via UsageRepository; guardrail behaviour is unchanged (parity test).
     $container->bind(AutoApprovalGate::class, static fn (Container $c): AutoApprovalGate => new AutoApprovalGate(
         $c->get(Database::class),
         $c->get(EventLog::class),
         $c->get(WorkspaceSettings::class),
         $c->get(QualityScore::class),
+        $c->get(UsageRepository::class),
     ));
 
     $container->bind(DigestReport::class, static fn (Container $c): DigestReport => new DigestReport(
@@ -187,6 +222,8 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkflowValidator::class),
         null,
         $c->get(AutoApprovalGate::class),
+        $c->get(UsageRecorder::class),   // Phase 11: ledger real spend on finalize
+        $c->get(PreflightGate::class),   // Phase 11: hard-block over-budget runs at start
     ));
 
     // Worker liveness signal — written by the worker, read by the web UI

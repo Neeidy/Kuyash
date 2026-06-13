@@ -68,6 +68,11 @@ use Kuyash\Core\View;
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1.5" width="12" height="13" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3.5"/></svg></span>
         Digest
       </a>
+      <a class="nav-item<?= ($active ?? '') === 'usage' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'usage' ? ' aria-current="page"' : '' ?> href="/usage">
+        <span class="nav-item__marker"></span>
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5v13M11.2 4.2H6.4a1.9 1.9 0 000 3.8h3.2a1.9 1.9 0 010 3.8H4.8"/></svg></span>
+        Usage
+      </a>
       <a class="nav-item<?= ($active ?? '') === 'settings' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'settings' ? ' aria-current="page"' : '' ?> href="/settings">
         <span class="nav-item__marker"></span>
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg></span>
@@ -75,7 +80,7 @@ use Kuyash\Core\View;
       </a>
     </nav>
     <div class="sidebar__foot">
-      <p>Phase 10 · Publishing<br>Mock-first Zernio (doc-gated); per-account targets, AI labels, truthful records.</p>
+      <p>Phase 11 · Usage &amp; Costs<br>Real usage ledger, money-denominated credits, pre-flight budget gate.</p>
     </div>
   </aside>
 

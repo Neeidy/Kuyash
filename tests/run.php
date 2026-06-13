@@ -34,8 +34,15 @@ use Kuyash\Compliance\GateDecision;
 use Kuyash\Compliance\PublishGateExecutor;
 use Kuyash\Compliance\QualityScore;
 use Kuyash\Compliance\SlopScorer;
+use Kuyash\Usage\BudgetExceededException;
+use Kuyash\Usage\CostEstimator;
+use Kuyash\Usage\CreditLedger;
+use Kuyash\Usage\PreflightGate;
+use Kuyash\Usage\UsageRecorder;
+use Kuyash\Usage\UsageRepository;
 use Kuyash\Controllers\DigestController;
 use Kuyash\Controllers\SettingsController;
+use Kuyash\Controllers\UsageController;
 use Kuyash\Database\Migrator;
 use Kuyash\Core\Format;
 use Kuyash\Workspace\WorkspaceSettings;
@@ -298,9 +305,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 8);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 9);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -1091,6 +1098,7 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
             $events,
             new \Kuyash\Workspace\WorkspaceSettings($db),
             new \Kuyash\Compliance\QualityScore($db, $clock),
+            new UsageRepository($db),
         )
         : null;
     $engine = new Engine($db, $events, new WorkflowValidator(), $clock, $autoGate);
@@ -3823,7 +3831,7 @@ $gtNow = '2026-06-12T12:00:00Z';
 $gtClock = static fn (): string => $gtNow;
 $gtEvents = new EventLog($gtDb);
 $gtSettings = new WorkspaceSettings($gtDb);
-$gtGate = new AutoApprovalGate($gtDb, $gtEvents, $gtSettings, new QualityScore($gtDb, $gtClock));
+$gtGate = new AutoApprovalGate($gtDb, $gtEvents, $gtSettings, new QualityScore($gtDb, $gtClock), new UsageRepository($gtDb));
 
 // seed a run + a compliance_check(ready, given status) + a render_review job
 $seedGateScenario = static function (Database $db, int $ws, int $userId, string $complianceStatus) use ($gtNow): array {
@@ -3904,10 +3912,15 @@ check('gate: autoApprovalsToday counts only auto-approved rows for the day', (st
         && $gtGate->autoApprovalsToday($gtWs, '2026-07-01T00:00:00Z') === 0;
 })());
 
-// budget cap: seed a costly job this month, set a low cap → deny
+// budget cap: seed a costly usage_event this month (Phase 11: MTD spend now
+// reads usage_events, not jobs.cost_cents), set a low cap → deny
 check('gate: month budget cap reached → deny + guardrail event', (static function () use ($gtGate, $gtSettings, $seedGateScenario, $gtDb, $gtWs, $gtUser, $gtNow): bool {
     $job = $seedGateScenario($gtDb, $gtWs, $gtUser, 'pass');
-    $gtDb->run("UPDATE jobs SET cost_cents = 200 WHERE id = ?", [$job['id']]);
+    $gtDb->run(
+        "INSERT INTO usage_events (workspace_id, run_id, job_id, provider, category, cost_cents, created_at)
+         VALUES (?, ?, ?, 'openai', 'ai_text', 200, ?)",
+        [$gtWs, $job['run_id'], $job['id'], $gtNow],
+    );
     $gtSettings->setBudgetCapCents($gtWs, 50);
     $d = $gtGate->evaluate($job, $gtNow);
     $ev = $gtDb->one("SELECT key FROM events WHERE key = 'guardrail.budget_cap_reached' AND run_id = ?", [$job['run_id']]);
@@ -3922,7 +3935,7 @@ check('gate: quality breach flips workspace to Manual + fallback event', (static
     $db = migratedDb($basePath);
     [$u, $ws] = seedUser($db, 'gtq@example.com', $argonHash, 'GTQ WS');
     $settings = new WorkspaceSettings($db);
-    $gate = new AutoApprovalGate($db, new EventLog($db), $settings, new QualityScore($db, static fn (): string => $gtNow));
+    $gate = new AutoApprovalGate($db, new EventLog($db), $settings, new QualityScore($db, static fn (): string => $gtNow), new UsageRepository($db));
     $settings->setApprovalMode($ws, 'auto');
     // 5 blocked, high-slop checks → risk = 0.40*0.95 + 0.35*1.0 = 0.73 → score 27
     for ($i = 0; $i < 5; $i++) {
@@ -4248,7 +4261,7 @@ $_SESSION['auth_user_id'] = $aeUser;
 $aeCtx->set($aeWs);
 $scSettings = new WorkspaceSettings($aeDb);
 $scQuality = new QualityScore($aeDb, static fn (): string => $aeNow);
-$scGate = new AutoApprovalGate($aeDb, $aeEvents, $scSettings, $scQuality);
+$scGate = new AutoApprovalGate($aeDb, $aeEvents, $scSettings, $scQuality, new UsageRepository($aeDb));
 $scAuth = new Auth($aeDb, new LoginThrottle($aeDb), $aeCtx);
 $settingsCtl = new SettingsController($badgeView, $scSettings, $scQuality, $scGate, $aeEvents, $aeCtx, $scAuth, new Csrf(), new Flash());
 
@@ -4827,6 +4840,323 @@ check('accounts ctl: disconnect flips status; cross-tenant disconnect is denied'
     $acCtl->disconnect(['id' => (string) $bId]);
 
     return $dropped && $acDb->one("SELECT status FROM accounts WHERE id=?", [$bId])['status'] === 'connected';
+})());
+$_SESSION = [];
+
+/* ================== Phase 11: Usage, Costs & Credit Ledger ================== */
+
+echo "== 0009 schema: usage ledger (usage_events + credit_transactions) ==\n";
+
+$ulDb = migratedDb($basePath);
+[$ulUser, $ulWs] = seedUser($ulDb, 'ul@example.com', $argonHash, 'UL WS');
+$ulNow = '2026-06-12T12:00:00Z';
+
+// minimal workflow + run + job (FKs: usage_events.job_id / run_id reference real rows)
+$ulSeedJob = static function (Database $db, int $ws, int $user, string $now, string $type = 'script_draft'): array {
+    $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'WF', 'full', '[]', ?, ?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$ws, $wf, $user, $now, $now]);
+    $run = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, run_after, created_at) VALUES (?, ?, 'SCRIPT', 3, ?, 'processing', ?, ?)", [$ws, $run, $type, $now, $now]);
+
+    return ['run_id' => $run, 'id' => $db->lastInsertId(), 'workspace_id' => $ws, 'type' => $type];
+};
+
+$ulJob = $ulSeedJob($ulDb, $ulWs, $ulUser, $ulNow);
+
+check('0009: usage_events category CHECK rejects an unknown category', throws(static fn () => $ulDb->run(
+    "INSERT INTO usage_events (workspace_id, job_id, provider, category, cost_cents, created_at) VALUES (?, ?, 'openai', 'bogus', 5, ?)",
+    [$ulWs, $ulJob['id'], $ulNow],
+), PDOException::class));
+check('0009: usage_events cost_cents CHECK rejects a negative value', throws(static fn () => $ulDb->run(
+    "INSERT INTO usage_events (workspace_id, job_id, provider, category, cost_cents, created_at) VALUES (?, ?, 'openai', 'ai_text', -1, ?)",
+    [$ulWs, $ulJob['id'], $ulNow],
+), PDOException::class));
+check('0009: usage_events accepts a valid row', (static function () use ($ulDb, $ulWs, $ulJob, $ulNow): bool {
+    $ulDb->run("INSERT INTO usage_events (workspace_id, run_id, job_id, provider, category, unit_type, cost_cents, created_at) VALUES (?, ?, ?, 'openai', 'ai_text', 'tokens', 7, ?)", [$ulWs, $ulJob['run_id'], $ulJob['id'], $ulNow]);
+
+    return (int) $ulDb->one('SELECT cost_cents AS c FROM usage_events WHERE job_id = ?', [$ulJob['id']])['c'] === 7;
+})());
+check('0009: usage_events UNIQUE(job_id) blocks a second row for the same job', throws(static fn () => $ulDb->run(
+    "INSERT INTO usage_events (workspace_id, job_id, provider, category, cost_cents, created_at) VALUES (?, ?, 'openai', 'ai_text', 7, ?)",
+    [$ulWs, $ulJob['id'], $ulNow],
+), PDOException::class));
+check('0009: credit_transactions type CHECK rejects an unknown type', throws(static fn () => $ulDb->run(
+    "INSERT INTO credit_transactions (workspace_id, type, amount_cents, created_at) VALUES (?, 'bogus', 100, ?)",
+    [$ulWs, $ulNow],
+), PDOException::class));
+check('0009: credit_transactions partial UNIQUE blocks two spends for one job (grants OK)', (static function () use ($ulDb, $ulWs, $ulJob, $ulNow): bool {
+    $ulDb->run("INSERT INTO credit_transactions (workspace_id, type, amount_cents, ref_job_id, created_at) VALUES (?, 'spend', -7, ?, ?)", [$ulWs, $ulJob['id'], $ulNow]);
+    $secondSpend = throws(static fn () => $ulDb->run("INSERT INTO credit_transactions (workspace_id, type, amount_cents, ref_job_id, created_at) VALUES (?, 'spend', -7, ?, ?)", [$ulWs, $ulJob['id'], $ulNow]), PDOException::class);
+    // two grants (ref_job_id NULL) are NOT covered by the partial index → allowed
+    $ulDb->run("INSERT INTO credit_transactions (workspace_id, type, amount_cents, created_at) VALUES (?, 'grant', 100, ?)", [$ulWs, $ulNow]);
+    $ulDb->run("INSERT INTO credit_transactions (workspace_id, type, amount_cents, created_at) VALUES (?, 'grant', 100, ?)", [$ulWs, $ulNow]);
+
+    return $secondSpend;
+})());
+
+echo "== Core: Format::cents (money formatting) ==\n";
+check('Format::cents formats cents → dollars, signs, null', Format::cents(7) === '$0.07'
+    && Format::cents(1250) === '$12.50' && Format::cents(-120) === '-$1.20'
+    && Format::cents(0) === '$0.00' && Format::cents(null) === '—');
+
+echo "== Usage: CostEstimator (deterministic per-node config) ==\n";
+
+$ceCfg = require $basePath . '/config/usage.php';
+$estimator = new CostEstimator($ceCfg);
+$fullEst = $estimator->estimateRun('full', \Kuyash\Workflow\Nodes::defaultNodes('full'));
+check('estimator: full template total is deterministic (idea1+script2+caption1+hashtag1+tts5 = 10c)', $fullEst['total_cents'] === 10);
+check('estimator: full template groups ai_text(5) + tts(5)', ($fullEst['by_category']['ai_text'] ?? 0) === 5 && ($fullEst['by_category']['tts'] ?? 0) === 5);
+$distEst = $estimator->estimateRun('distribution', \Kuyash\Workflow\Nodes::defaultNodes('distribution'));
+check('estimator: distribution template total (caption1+hashtag1 = 2c, ai_text only)', $distEst['total_cents'] === 2 && ($distEst['by_category']['ai_text'] ?? 0) === 2);
+check('estimator: empty nodes falls back to the template sequence', $estimator->estimateRun('full', [])['total_cents'] === 10);
+check('estimator: accepts a bare node-id list', $estimator->estimateRun('full', ['SCRIPT'])['total_cents'] === 2);
+// config consistency: every priced type must map to a schema-valid category, so a
+// future estimable type can never be silently dropped by the recorder (truthfulness)
+check('config/usage: every priced type maps to a valid ledger category', (static function () use ($ceCfg): bool {
+    $allowed = ['ai_text', 'tts', 'stock', 'publish', 'ai_video'];
+    foreach ($ceCfg['estimate_cents'] as $type => $cents) {
+        if ($cents > 0 && !isset($ceCfg['categories'][$type])) {
+            return false;
+        }
+    }
+    foreach ($ceCfg['categories'] as $cat) {
+        if (!in_array($cat, $allowed, true)) {
+            return false;
+        }
+    }
+
+    return true;
+})());
+
+echo "== Usage: UsageRecorder (truthful spend, idempotent) ==\n";
+
+$urDb = migratedDb($basePath);
+[$urUser, $urWs] = seedUser($urDb, 'ur@example.com', $argonHash, 'UR WS');
+$urNow = '2026-06-12T09:00:00Z';
+$urCfg = require $basePath . '/config/usage.php';
+$recorder = new UsageRecorder($urDb, $urCfg);
+
+$urJob = $ulSeedJob($urDb, $urWs, $urUser, $urNow, 'script_draft');
+$recorder->record($urJob, JobResult::awaitingApproval(['x' => 1], 'openai', 7), $urNow);
+check('recorder: real cost writes exactly one usage_event (ai_text, tokens)', (static function () use ($urDb, $urJob): bool {
+    $rows = $urDb->all('SELECT category, provider, cost_cents, unit_type FROM usage_events WHERE job_id = ?', [$urJob['id']]);
+
+    return count($rows) === 1 && $rows[0]['category'] === 'ai_text' && (int) $rows[0]['cost_cents'] === 7
+        && $rows[0]['provider'] === 'openai' && $rows[0]['unit_type'] === 'tokens';
+})());
+check('recorder: real cost mirrors a negative spend into credit_transactions', (static function () use ($urDb, $urJob): bool {
+    $tx = $urDb->one("SELECT amount_cents FROM credit_transactions WHERE ref_job_id = ? AND type = 'spend'", [$urJob['id']]);
+
+    return $tx !== null && (int) $tx['amount_cents'] === -7;
+})());
+check('recorder: idempotent — re-recording the same job adds no second row', (static function () use ($recorder, $urDb, $urJob, $urNow): bool {
+    $recorder->record($urJob, JobResult::awaitingApproval(['x' => 1], 'openai', 7), $urNow);
+
+    return (int) $urDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$urJob['id']])['n'] === 1
+        && (int) $urDb->one('SELECT COUNT(*) AS n FROM credit_transactions WHERE ref_job_id = ?', [$urJob['id']])['n'] === 1;
+})());
+$urJob2 = $ulSeedJob($urDb, $urWs, $urUser, $urNow, 'script_draft');
+$recorder->record($urJob2, JobResult::ready(['cached' => true], 'mock', null), $urNow);
+check('recorder: null cost (mock / cache hit) writes NOTHING (truthful)',
+    (int) $urDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$urJob2['id']])['n'] === 0);
+$urJob3 = $ulSeedJob($urDb, $urWs, $urUser, $urNow, 'assembly');
+$recorder->record($urJob3, JobResult::ready([], 'ffmpeg', 5), $urNow);
+check('recorder: unmapped type (assembly) records nothing even with a cost',
+    (int) $urDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$urJob3['id']])['n'] === 0);
+$urJob4 = $ulSeedJob($urDb, $urWs, $urUser, $urNow, 'tts');
+$recorder->record($urJob4, JobResult::ready([], 'openai', 3), $urNow);
+check('recorder: tts job → tts category, chars unit', (static function () use ($urDb, $urJob4): bool {
+    $r = $urDb->one('SELECT category, unit_type FROM usage_events WHERE job_id = ?', [$urJob4['id']]);
+
+    return $r !== null && $r['category'] === 'tts' && $r['unit_type'] === 'chars';
+})());
+
+echo "== Usage: CreditLedger (balance, grant, adjust, isolation) ==\n";
+
+$clDb = migratedDb($basePath);
+[$clU, $clWs] = seedUser($clDb, 'cl@example.com', $argonHash, 'CL WS');
+[$clU2, $clWs2] = seedUser($clDb, 'cl2@example.com', $argonHash, 'CL WS2');
+$ledger = new CreditLedger($clDb);
+$ledger->grant($clWs, 5000, 'seed', '2026-06-01T00:00:00Z');
+$ledger->adjust($clWs, -250, 'correction', '2026-06-02T00:00:00Z');
+check('ledger: balance = SUM(amount_cents)', $ledger->balanceCents($clWs) === 4750);
+check('ledger: totals split grant / spend / adjust', (static function () use ($ledger, $clWs): bool {
+    $t = $ledger->totals($clWs);
+
+    return $t['granted'] === 5000 && $t['adjusted'] === -250 && $t['spent'] === 0;
+})());
+check('ledger: recent is newest-first', (static function () use ($ledger, $clWs): bool {
+    $r = $ledger->recent($clWs, 5);
+
+    return count($r) === 2 && $r[0]['type'] === 'adjust';
+})());
+check('ledger: tenant isolation — another workspace balance is 0', $ledger->balanceCents($clWs2) === 0);
+check('ledger: grant normalizes a negative arg to a positive grant', (static function () use ($ledger, $clWs2): bool {
+    $ledger->grant($clWs2, -1000, 'abs');
+
+    return $ledger->balanceCents($clWs2) === 1000;
+})());
+
+echo "== Usage: UsageRepository (MTD, by-category, isolation) ==\n";
+
+$repDb = migratedDb($basePath);
+[$repU, $repWs] = seedUser($repDb, 'rep@example.com', $argonHash, 'REP WS');
+[$repU2, $repWs2] = seedUser($repDb, 'rep2@example.com', $argonHash, 'REP WS2');
+$repNow = '2026-06-15T12:00:00Z';
+$usageRepo = new UsageRepository($repDb);
+$insEv = static function (Database $db, int $ws, int $job, string $cat, int $cents, string $at): void {
+    $db->run("INSERT INTO usage_events (workspace_id, job_id, provider, category, cost_cents, created_at) VALUES (?, ?, 'openai', ?, ?, ?)", [$ws, $job, $cat, $cents, $at]);
+};
+$rj1 = $ulSeedJob($repDb, $repWs, $repU, $repNow, 'script_draft');
+$rj2 = $ulSeedJob($repDb, $repWs, $repU, $repNow, 'tts');
+$rj3 = $ulSeedJob($repDb, $repWs, $repU, $repNow, 'script_draft');
+$rj4 = $ulSeedJob($repDb, $repWs2, $repU2, $repNow, 'script_draft');
+$insEv($repDb, $repWs, $rj1['id'], 'ai_text', 7, '2026-06-10T00:00:00Z');
+$insEv($repDb, $repWs, $rj2['id'], 'tts', 5, '2026-06-11T00:00:00Z');
+$insEv($repDb, $repWs, $rj3['id'], 'ai_text', 100, '2026-05-30T00:00:00Z'); // last month → excluded
+$insEv($repDb, $repWs2, $rj4['id'], 'ai_text', 999, '2026-06-12T00:00:00Z'); // other ws
+check('repo: MTD spend sums only this month + this workspace', $usageRepo->monthToDateSpendCents($repWs, $repNow) === 12);
+check('repo: MTD by-category grouping', (static function () use ($usageRepo, $repWs, $repNow): bool {
+    $b = $usageRepo->monthToDateByCategory($repWs, $repNow);
+
+    return ($b['ai_text'] ?? 0) === 7 && ($b['tts'] ?? 0) === 5;
+})());
+check('repo: tenant isolation — each workspace sees only its own MTD', $usageRepo->monthToDateSpendCents($repWs2, $repNow) === 999);
+check('repo: monthStart derives the first of the UTC month', UsageRepository::monthStart('2026-06-15T12:00:00Z') === '2026-06-01T00:00:00Z');
+check('repo: recentCharges newest-first + workspace-scoped', count($usageRepo->recentCharges($repWs, 10)) === 3);
+check('repo: event count is month + workspace scoped', $usageRepo->monthToDateEventCount($repWs, $repNow) === 2);
+
+echo "== Usage: AutoApprovalGate MTD parity (usage_events vs old jobs.cost_cents SUM) ==\n";
+
+$parDb = migratedDb($basePath);
+[$parU, $parWs] = seedUser($parDb, 'par@example.com', $argonHash, 'PAR WS');
+$parNow = '2026-06-12T12:00:00Z';
+$parGate = new AutoApprovalGate($parDb, new EventLog($parDb), new WorkspaceSettings($parDb), new QualityScore($parDb, static fn (): string => $parNow), new UsageRepository($parDb));
+$pj1 = $ulSeedJob($parDb, $parWs, $parU, $parNow, 'script_draft');
+$pj2 = $ulSeedJob($parDb, $parWs, $parU, $parNow, 'tts');
+// jobs.cost_cents (the OLD source) deliberately holds a DIFFERENT, larger total
+// (999c) than usage_events (the NEW source, 12c). The assertion only passes if
+// the gate truly reads usage_events and ignores the stale jobs.cost_cents rollup
+// — a regression that still summed jobs.cost_cents would return 999, not 12.
+$parDb->run('UPDATE jobs SET cost_cents = 990 WHERE id = ?', [$pj1['id']]);
+$parDb->run('UPDATE jobs SET cost_cents = 9 WHERE id = ?', [$pj2['id']]);
+$parDb->run("INSERT INTO usage_events (workspace_id, job_id, provider, category, cost_cents, created_at) VALUES (?, ?, 'openai', 'ai_text', 7, ?)", [$parWs, $pj1['id'], $parNow]);
+$parDb->run("INSERT INTO usage_events (workspace_id, job_id, provider, category, cost_cents, created_at) VALUES (?, ?, 'openai', 'tts', 5, ?)", [$parWs, $pj2['id'], $parNow]);
+$oldJobsSum = (int) $parDb->one("SELECT COALESCE(SUM(cost_cents), 0) AS s FROM jobs WHERE workspace_id = ? AND cost_cents IS NOT NULL AND created_at >= '2026-06-01T00:00:00Z'", [$parWs])['s'];
+check('parity: gate MTD reads usage_events (12c), NOT the stale jobs.cost_cents rollup (999c)', $parGate->monthToDateSpendCents($parWs, $parNow) === 12 && $oldJobsSum === 999);
+
+echo "== Usage: pre-flight budget gate (hard block) in Engine::startRun ==\n";
+
+$pfDb = migratedDb($basePath);
+[$pfUser, $pfWs] = seedUser($pfDb, 'pf@example.com', $argonHash, 'PF WS');
+$pfCtx = new WorkspaceContext($pfDb);
+$_SESSION = ['workspace_id' => $pfWs];
+$pfCfg = require $basePath . '/config/usage.php';
+$pfSettings = new WorkspaceSettings($pfDb);
+$pfEvents = new EventLog($pfDb);
+$pfPreflight = new PreflightGate(new CostEstimator($pfCfg), new UsageRepository($pfDb), $pfSettings, $pfEvents);
+$pfEngine = new Engine($pfDb, $pfEvents, new WorkflowValidator(), static fn (): string => '2026-06-12T12:00:00Z', null, null, $pfPreflight);
+$pfDb->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'Full', 'full', ?, '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')", [$pfWs, json_encode(\Kuyash\Workflow\Nodes::defaultNodes('full'))]);
+$pfWf = $pfDb->lastInsertId();
+
+check('preflight: no cap → run starts (never blocks)', $pfEngine->startRun($pfCtx, $pfWf, null, $pfUser) > 0);
+$pfSettings->setBudgetCapCents($pfWs, 5); // remaining 5c < full-run estimate 10c
+check('preflight: estimate over remaining → BudgetExceededException', throws(static fn () => $pfEngine->startRun($pfCtx, $pfWf, null, $pfUser), BudgetExceededException::class));
+check('preflight: a blocked run writes a guardrail.preflight_block event',
+    $pfDb->one("SELECT key FROM events WHERE workspace_id = ? AND key = 'guardrail.preflight_block'", [$pfWs]) !== null);
+$pfRunsBefore = (int) $pfDb->one('SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ?', [$pfWs])['n'];
+check('preflight: a blocked run leaves NO new run row', (static function () use ($pfEngine, $pfCtx, $pfWf, $pfUser, $pfDb, $pfWs, $pfRunsBefore): bool {
+    try {
+        $pfEngine->startRun($pfCtx, $pfWf, null, $pfUser);
+    } catch (BudgetExceededException) {
+        // expected
+    }
+
+    return (int) $pfDb->one('SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ?', [$pfWs])['n'] === $pfRunsBefore;
+})());
+check('preflight: exception carries estimate / remaining / cap + flash key', (static function () use ($pfEngine, $pfCtx, $pfWf, $pfUser): bool {
+    try {
+        $pfEngine->startRun($pfCtx, $pfWf, null, $pfUser);
+    } catch (BudgetExceededException $e) {
+        return $e->estimateCents === 10 && $e->remainingCents === 5 && $e->capCents === 5 && $e->messageKey === 'run.budget_exceeded';
+    }
+
+    return false;
+})());
+$pfSettings->setBudgetCapCents($pfWs, 100); // remaining 100c > estimate 10c
+check('preflight: cap above estimate → run starts again', $pfEngine->startRun($pfCtx, $pfWf, null, $pfUser) > 0);
+$_SESSION = [];
+
+echo "== Usage: recording via Engine::finalize (real cost vs mock) ==\n";
+
+$feDb = migratedDb($basePath);
+[$feU, $feWs] = seedUser($feDb, 'fe@example.com', $argonHash, 'FE WS');
+$feNow = '2026-06-12T12:00:00Z';
+$feRecorder = new UsageRecorder($feDb, require $basePath . '/config/usage.php');
+$feEngine = new Engine($feDb, new EventLog($feDb), new WorkflowValidator(), static fn (): string => $feNow, null, $feRecorder, null);
+$feSeedClaimed = static function (Database $db, int $ws, int $user, string $now, string $type, string $worker): array {
+    $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'WF', 'full', '[]', ?, ?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$ws, $wf, $user, $now, $now]);
+    $run = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, worker_id, run_after, created_at) VALUES (?, ?, 'CAPTION', 7, ?, 'processing', ?, ?, ?)", [$ws, $run, $type, $worker, $now, $now]);
+
+    return $db->one('SELECT * FROM jobs WHERE id = ?', [$db->lastInsertId()]);
+};
+$feJob = $feSeedClaimed($feDb, $feWs, $feU, $feNow, 'caption_generation', 'w1');
+$feEngine->finalize($feJob, JobResult::ready(['caption' => 'x'], 'openai', 4));
+check('finalize: real-cost job records one usage_event (4c) + a -4c spend', (static function () use ($feDb, $feJob): bool {
+    return (int) $feDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$feJob['id']])['n'] === 1
+        && (int) $feDb->one('SELECT cost_cents AS c FROM usage_events WHERE job_id = ?', [$feJob['id']])['c'] === 4
+        && (int) $feDb->one("SELECT amount_cents AS a FROM credit_transactions WHERE ref_job_id = ? AND type = 'spend'", [$feJob['id']])['a'] === -4;
+})());
+$feJob2 = $feSeedClaimed($feDb, $feWs, $feU, $feNow, 'caption_generation', 'w1');
+$feEngine->finalize($feJob2, JobResult::ready(['caption' => 'x'], 'mock', null));
+check('finalize: mock (null cost) job records NO usage_event (truthful)',
+    (int) $feDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$feJob2['id']])['n'] === 0);
+// the awaiting path (a paused real script already spent money before approval):
+// drive it through Engine::finalize, not the recorder directly
+$feJob3 = $feSeedClaimed($feDb, $feWs, $feU, $feNow, 'script_draft', 'w1');
+$feEngine->finalize($feJob3, JobResult::awaitingApproval(['script' => 'x'], 'openai', 6));
+check('finalize: awaiting (paused script) ledgers its already-incurred spend via the Engine', (static function () use ($feDb, $feJob3): bool {
+    return (int) $feDb->one('SELECT COUNT(*) AS n FROM usage_events WHERE job_id = ?', [$feJob3['id']])['n'] === 1
+        && (int) $feDb->one('SELECT cost_cents AS c FROM usage_events WHERE job_id = ?', [$feJob3['id']])['c'] === 6
+        && (string) $feDb->one('SELECT status AS s FROM jobs WHERE id = ?', [$feJob3['id']])['s'] === 'awaiting_approval'
+        && (int) $feDb->one("SELECT amount_cents AS a FROM credit_transactions WHERE ref_job_id = ? AND type = 'spend'", [$feJob3['id']])['a'] === -6;
+})());
+
+echo "== Usage: UsageController (live page, states, isolation) ==\n";
+
+$ucDb = migratedDb($basePath);
+[$ucU, $ucWs] = seedUser($ucDb, 'uc@example.com', $argonHash, 'UC WS');
+$ucCtx = new WorkspaceContext($ucDb);
+$_SESSION = ['auth_user_id' => $ucU, 'workspace_id' => $ucWs];
+$ucCtx->set($ucWs);
+$ucCtl = new UsageController(new View($basePath . '/templates'), new UsageRepository($ucDb), new CreditLedger($ucDb), new WorkspaceSettings($ucDb), $ucCtx, new Csrf(), new Flash());
+check('usage ctl: empty state renders (no spend, no cap)', (static function () use ($ucCtl): bool {
+    $body = $ucCtl->index()->body();
+
+    return str_contains($body, 'Usage &amp; costs') && str_contains($body, 'No spend recorded this month')
+        && str_contains($body, 'No monthly budget cap is set');
+})());
+(new WorkspaceSettings($ucDb))->setBudgetCapCents($ucWs, 1000); // $10 cap
+$ucJob = $ulSeedJob($ucDb, $ucWs, $ucU, gmdate('Y-m-d\TH:i:s\Z'), 'script_draft');
+$ucDb->run("INSERT INTO usage_events (workspace_id, run_id, job_id, provider, category, unit_type, cost_cents, created_at) VALUES (?, ?, ?, 'openai', 'ai_text', 'tokens', 250, ?)", [$ucWs, $ucJob['run_id'], $ucJob['id'], gmdate('Y-m-d\TH:i:s\Z')]);
+(new CreditLedger($ucDb))->grant($ucWs, 5000, 'seed');
+check('usage ctl: renders spend, cap, breakdown label + credit balance', (static function () use ($ucCtl): bool {
+    $body = $ucCtl->index()->body();
+
+    return str_contains($body, '$2.50') && str_contains($body, '$10.00') && str_contains($body, 'AI text')
+        && str_contains($body, 'Credit balance') && str_contains($body, '$50.00');
+})());
+check('usage ctl: tenant-scoped — another workspace sees none of this spend', (static function () use ($basePath, $ucDb, $argonHash): bool {
+    [, $ows] = seedUser($ucDb, 'ucother@example.com', $argonHash, 'UC OTHER');
+    $octx = new WorkspaceContext($ucDb);
+    $octx->set($ows);
+    $body = (new UsageController(new View($basePath . '/templates'), new UsageRepository($ucDb), new CreditLedger($ucDb), new WorkspaceSettings($ucDb), $octx, new Csrf(), new Flash()))->index()->body();
+
+    return str_contains($body, 'No spend recorded this month') && !str_contains($body, '$2.50');
 })());
 $_SESSION = [];
 
