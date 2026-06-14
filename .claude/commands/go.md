@@ -1,6 +1,6 @@
 # /go — Kuyash CONTINUOUS Phase Loop (repo-specific; Experience Layer 16→20)
 
-> Repo-only command. Does NOT touch the global `/go` command. Runs Experience-Layer phases
+> Repo-only command. Does NOT touch the global `/goal` command. Runs Experience-Layer phases
 > **16 → 17 → 18 → 19 → 20 back-to-back, WITHOUT stopping between phases**, per
 > `.claude/docs/experience-layer-plan.md` §2. Build single-agent; gate with three subagents.
 > The user reviews everything at the END (branch commits, no push) — NOT per phase.
