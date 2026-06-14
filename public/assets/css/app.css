@@ -963,3 +963,80 @@ html:not(.js) .cmdk-trigger { display: none; }
   font-family: var(--font-mono); font-size: 11.5px; color: var(--text);
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 17 — Signature dashboard: business KPI deltas, inline-player approval
+   cards, connected-accounts widget. All real data; honest placeholders.
+   Animation stays transform/opacity (the inline-player progress is a real
+   video-driven scaleX, not a CSS loop). No new backdrop-filter.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* business KPI deltas (the strip itself reuses .kpi-strip / .kpi) */
+.kpi__delta { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.kpi__delta--up { color: var(--ok); }
+
+/* approval cards with inline player */
+.appr-list { display: flex; flex-direction: column; gap: var(--s3); }
+.appr-card {
+  border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden;
+  background: var(--surface-2); transition: border-color var(--dur-micro) var(--ease-out);
+}
+.appr-card:hover { border-color: var(--border-strong); }
+
+.inline-player { position: relative; aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+.inline-player__poster, .inline-player__video {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+.inline-player__play {
+  position: absolute; inset: 0; margin: auto; width: 48px; height: 48px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45); border: 1.5px solid rgba(255, 255, 255, 0.6); color: #fff;
+  display: grid; place-items: center;
+  transition: transform var(--dur-micro) var(--spring), background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+.inline-player__play svg { width: 20px; height: 20px; }
+.inline-player:hover .inline-player__play { transform: scale(1.08); background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.inline-player.is-playing .inline-player__play { opacity: 0; transform: scale(0.6); pointer-events: none; }
+.inline-player__badge {
+  position: absolute; left: var(--s2); top: var(--s2); display: none; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent);
+  padding: 3px 8px; border-radius: var(--r-ctl);
+}
+.inline-player.is-playing .inline-player__badge { display: inline-flex; }
+.inline-player__badge-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-ink); }
+.inline-player__dur {
+  position: absolute; right: var(--s2); bottom: var(--s2); font-size: 11px; color: var(--text);
+  background: rgba(0, 0, 0, 0.6); padding: 2px 7px; border-radius: 5px;
+}
+.inline-player.is-playing .inline-player__dur { display: none; }
+.inline-player__progress {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; z-index: 2;
+  transform: scaleX(0); transform-origin: left; background: var(--accent);
+}
+.inline-player--pending {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: linear-gradient(160deg, var(--surface-2), var(--surface-3)); color: var(--text-3);
+}
+.inline-player__ph-type { font-size: 11px; color: var(--text-2); }
+.inline-player__ph-note { font-size: 11px; color: var(--text-3); }
+
+.appr-card__body { padding: var(--s3) var(--s4) var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.appr-card__title { font-size: 12.5px; color: var(--text-2); }
+.appr-card__meta { display: flex; gap: var(--s1); flex-wrap: wrap; align-items: center; }
+.appr-card__actions { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; }
+.appr-card__actions form { margin: 0; }
+
+/* connected-accounts widget — real health only, no fabricated metrics */
+.acct-list { display: flex; flex-direction: column; }
+.acct-row {
+  display: flex; align-items: center; gap: var(--s3);
+  padding: var(--s2) 0; border-bottom: 1px solid var(--border);
+}
+.acct-row:last-child { border-bottom: 0; }
+.acct-row__avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  font-size: 10.5px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-3); border: 1px solid var(--border);
+}
+.acct-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.acct-row__handle { font-size: 13px; font-weight: 550; }
+.acct-row__plat { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

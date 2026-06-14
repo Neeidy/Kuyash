@@ -40,6 +40,8 @@ final class DashboardController
             throw new RuntimeException('Session workspace has no membership for this user.');
         }
 
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+
         return Response::html($this->view->render('dashboard', [
             'title' => 'Dashboard — Kuyash',
             'active' => 'dashboard',
@@ -48,8 +50,8 @@ final class DashboardController
             'workspaceName' => $workspace['name'],
             'role' => $workspace['role'],
             'csrfField' => $this->csrf->field(),
-            'workerAlive' => $this->heartbeat->isAlive(gmdate('Y-m-d\TH:i:s\Z')),
-            'cockpit' => $this->cockpit->snapshot($this->workspace),
+            'workerAlive' => $this->heartbeat->isAlive($now),
+            'cockpit' => $this->cockpit->snapshot($this->workspace, $now),
         ], 'layout/app'));
     }
 }

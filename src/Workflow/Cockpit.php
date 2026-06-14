@@ -6,13 +6,21 @@ namespace Kuyash\Workflow;
 
 use Kuyash\Core\Database;
 use Kuyash\Media\AssetCache;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Usage\CreditLedger;
+use Kuyash\Usage\UsageRepository;
 use Kuyash\Workspace\WorkspaceContext;
 
 /**
- * Read-model for the dashboard cockpit (Phase 7 first pass): a KPI strip, the
- * active-runs panel, and the awaiting-approval strip with render thumbnails —
- * all from REAL data now available (runs, jobs, renders, cache). Countdown and
- * growth deltas stay placeholders until Phase 10 wires the schedule/metrics.
+ * Read-model for the dashboard cockpit. Phase 7 gave it the operational KPIs +
+ * active-runs + awaiting strip; Phase 17 adds the business KPI strip (balance,
+ * month-to-date spend, cost-per-content), the rich approval cards (reusing the
+ * queue's awaitingApproval shape so the dashboard inline player has real draft
+ * data) and a connected-accounts read.
+ *
+ * HONESTY: every number is real. cost-per-content is null (→ "—") when there are
+ * no renders yet; the accounts read exposes ONLY stored fields (platform/handle/
+ * health/reference) — there are no follower/engagement metrics to fabricate.
  *
  * Every query is workspace-scoped (tenant isolation). Read-only — never writes.
  */
@@ -21,24 +29,60 @@ final class Cockpit
     public function __construct(
         private readonly Database $db,
         private readonly AssetCache $cache,
+        private readonly CreditLedger $ledger,
+        private readonly UsageRepository $usage,
+        private readonly AccountRepository $accountRepo,
+        private readonly JobRepository $jobs,
     ) {
     }
 
     /**
      * @return array{
      *   kpis: array{active: int, awaiting: int, completed: int, renders: int, cache_hits: int},
+     *   business: array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, cost_per_content_cents: int|null, awaiting: int},
      *   activeRuns: list<array<string, mixed>>,
-     *   awaiting: list<array<string, mixed>>
+     *   awaiting: list<array<string, mixed>>,
+     *   accounts: list<array<string, mixed>>
      * }
      */
-    public function snapshot(WorkspaceContext $ctx): array
+    public function snapshot(WorkspaceContext $ctx, string $now): array
     {
         $ws = $ctx->id();
+        $kpis = $this->kpis($ws);
 
         return [
-            'kpis' => $this->kpis($ws),
+            'kpis' => $kpis,
+            'business' => $this->business($ws, $now, $kpis['awaiting'], $kpis['renders']),
             'activeRuns' => $this->activeRuns($ws),
-            'awaiting' => $this->awaiting($ws),
+            'awaiting' => array_slice($this->jobs->awaitingApproval($ctx), 0, 4),
+            'accounts' => array_slice($this->accountRepo->listFor($ctx, 6), 0, 4),
+        ];
+    }
+
+    /**
+     * Business KPI strip — all real. cost-per-content is the all-time average
+     * cost per produced render (null when nothing has rendered yet, so the UI
+     * shows "—" instead of a divide-by-zero or a fabricated figure).
+     *
+     * @return array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, cost_per_content_cents: int|null, awaiting: int}
+     */
+    private function business(int $ws, string $now, int $awaiting, int $renders): array
+    {
+        $totals = $this->ledger->totals($ws);
+        $weekAgo = gmdate('Y-m-d\TH:i:s\Z', (strtotime($now . ' -7 days')) ?: time());
+        $grantedWeek = $this->db->one(
+            "SELECT COALESCE(SUM(amount_cents), 0) AS c FROM credit_transactions
+             WHERE workspace_id = ? AND type = 'grant' AND created_at >= ?",
+            [$ws, $weekAgo],
+        );
+
+        return [
+            'balance_cents' => $this->ledger->balanceCents($ws),
+            'spent_mtd_cents' => $this->usage->monthToDateSpendCents($ws, $now),
+            'charges_mtd' => $this->usage->monthToDateEventCount($ws, $now),
+            'granted_week_cents' => (int) ($grantedWeek['c'] ?? 0),
+            'cost_per_content_cents' => $renders > 0 ? intdiv($totals['spent'], $renders) : null,
+            'awaiting' => $awaiting,
         ];
     }
 
@@ -79,34 +123,4 @@ final class Cockpit
         );
     }
 
-    /**
-     * Jobs paused for approval, newest first, with the draft render thumbnail
-     * (when present) pulled from the job's result_json.
-     *
-     * @return list<array<string, mixed>>
-     */
-    private function awaiting(int $ws): array
-    {
-        $rows = $this->db->all(
-            "SELECT id, run_id, node, type, result_json
-             FROM jobs
-             WHERE workspace_id = ? AND status = 'awaiting_approval'
-             ORDER BY id DESC LIMIT 6",
-            [$ws],
-        );
-
-        return array_map(static function (array $row): array {
-            $result = json_decode((string) $row['result_json'], true);
-            $result = is_array($result) ? $result : [];
-
-            return [
-                'id' => (int) $row['id'],
-                'run_id' => (int) $row['run_id'],
-                'node' => (string) $row['node'],
-                'type' => (string) $row['type'],
-                'draft_render_id' => isset($result['draft_render_id']) ? (int) $result['draft_render_id'] : null,
-                'ai_label_required' => (bool) ($result['ai_label_required'] ?? false),
-            ];
-        }, $rows);
-    }
 }

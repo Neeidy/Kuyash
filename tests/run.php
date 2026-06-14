@@ -5973,6 +5973,54 @@ check('p16: new palette/shortcuts keys all present in tr.php (parity, both langu
 check('p16: the command-palette + drawer partials are shipped', is_file($basePath . '/templates/layout/partials/command-palette.php') && is_file($basePath . '/templates/layout/partials/drawer.php'));
 check('p16: build-free preserved — no package.json / node_modules added to the app', !is_file($basePath . '/package.json') && !is_dir($basePath . '/node_modules'));
 
+echo "== Phase 17: signature-dashboard cockpit (real business KPIs, honest accounts, rich awaiting) ==\n";
+$p17Db = migratedDb($basePath);
+[$p17User, $p17Ws] = seedUser($p17Db, 'p17@example.com', $argonHash, 'P17 WS');
+$p17Now = gmdate('Y-m-d\TH:i:s\Z');
+$p17Db->run('INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [$p17Ws, 'Full', 'full', '[]', $p17Now, $p17Now]);
+$p17Wf = (int) $p17Db->lastInsertId();
+$p17Db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, current_node, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'awaiting_approval', 'PREVIEW', ?, ?, ?)", [$p17Ws, $p17Wf, $p17User, $p17Now, $p17Now]);
+$p17Run = (int) $p17Db->lastInsertId();
+$p17Db->run(
+    "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, result_json, max_retries, priority, run_after, created_at)
+     VALUES (?, ?, 'PREVIEW', 8, 'render_review', 'awaiting_approval', '{}', ?, 3, 0, ?, ?)",
+    [$p17Ws, $p17Run, json_encode(['ai_label_required' => true, 'compliance' => ['status' => 'pass']]), $p17Now, $p17Now],
+);
+$p17Db->run("INSERT INTO credit_transactions (workspace_id, type, amount_cents, reason, created_at) VALUES (?, 'grant', 5000, 'seed', ?)", [$p17Ws, $p17Now]);
+$p17Db->run("INSERT INTO accounts (workspace_id, platform, handle, status, health, connected_at, created_at, updated_at) VALUES (?, 'instagram', '@p17', 'connected', 'ok', ?, ?, ?)", [$p17Ws, $p17Now, $p17Now, $p17Now]);
+$p17Ctx = new WorkspaceContext($p17Db);
+$p17Ctx->set($p17Ws);
+$p17Paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+$p17Cockpit = new \Kuyash\Workflow\Cockpit(
+    $p17Db,
+    new AssetCache($p17Db, $p17Paths),
+    new CreditLedger($p17Db),
+    new UsageRepository($p17Db),
+    new AccountRepository($p17Db),
+    new \Kuyash\Workflow\JobRepository($p17Db),
+);
+$p17Snap = $p17Cockpit->snapshot($p17Ctx, $p17Now);
+check('p17: business balance is the real ledger balance (grant 5000c)', $p17Snap['business']['balance_cents'] === 5000);
+check('p17: cost-per-content is NULL when no renders exist (honest "—", never divide-by-zero)', $p17Snap['business']['cost_per_content_cents'] === null);
+check('p17: granted-this-week reflects the recent grant', $p17Snap['business']['granted_week_cents'] === 5000);
+check('p17: awaiting uses the rich shape (decoded result, AI-label flag)', count($p17Snap['awaiting']) === 1 && ($p17Snap['awaiting'][0]['result']['ai_label_required'] ?? null) === true);
+check('p17: accounts widget returns real stored fields only (platform/health), no fabricated metrics', count($p17Snap['accounts']) === 1
+    && $p17Snap['accounts'][0]['platform'] === 'instagram'
+    && $p17Snap['accounts'][0]['health'] === 'ok'
+    && !isset($p17Snap['accounts'][0]['followers'], $p17Snap['accounts'][0]['likes']));
+check('p17: tenant isolation — a sibling workspace sees an empty cockpit', (static function () use ($p17Db, $p17Cockpit, $p17Now): bool {
+    $other = new WorkspaceContext($p17Db);
+    $p17Db->run('INSERT INTO workspaces (name, created_at, updated_at) VALUES (?, ?, ?)', ['Other', $p17Now, $p17Now]);
+    $other->set((int) $p17Db->lastInsertId());
+    $snap = $p17Cockpit->snapshot($other, $p17Now);
+    return $snap['awaiting'] === [] && $snap['accounts'] === [] && $snap['business']['balance_cents'] === 0;
+})());
+$p17En = require $basePath . '/lang/en.php';
+$p17Tr = require $basePath . '/lang/tr.php';
+$p17Keys = ['dash.kpi_balance', 'dash.kpi_spent', 'dash.kpi_cost_per', 'dash.added_week', 'dash.charges_mtd', 'dash.no_data_yet', 'dash.accounts_title', 'dash.accounts_none', 'player.play', 'player.playing', 'player.preview_pending'];
+check('p17: new dashboard/player keys present in en.php', array_filter($p17Keys, static fn(string $k): bool => !isset($p17En[$k])) === []);
+check('p17: new dashboard/player keys present in tr.php (parity, both languages)', array_filter($p17Keys, static fn(string $k): bool => !isset($p17Tr[$k])) === []);
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(

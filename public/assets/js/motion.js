@@ -50,25 +50,37 @@
     window.addEventListener('resize', function () { moveTo(activeItem()); });
   })();
 
-  /* ---- KPI count-up: integer .kpi__num only, once, rAF eased.
-     Skips money / % / decimals; reduced-motion or no-JS shows the real value. ---- */
+  /* ---- KPI count-up, once, rAF eased. Two modes:
+       • data-count="48.50" data-count-prefix="$" data-count-decimals="2" → money/explicit
+       • bare integer text content → auto (skips %/decimals/non-numeric)
+     reduced-motion or no-JS leaves the real server-rendered value untouched. ---- */
   (function countUp() {
     var nums = Array.prototype.slice.call(document.querySelectorAll('.kpi__num'));
     if (!nums.length) return;
     var dur = durOf('--dur-count');
-    if (reduced() || dur <= 0) return; /* leave the server-rendered numbers as-is */
+    if (reduced() || dur <= 0) return;
     nums.forEach(function (el) {
-      var raw = (el.textContent || '').trim();
-      if (!/^\d{1,9}$/.test(raw)) return;
-      var to = parseInt(raw, 10);
+      var to, dec, prefix, suffix;
+      if (el.hasAttribute('data-count')) {
+        to = parseFloat(el.getAttribute('data-count'));
+        if (isNaN(to)) return;
+        dec = parseInt(el.getAttribute('data-count-decimals') || '0', 10) || 0;
+        prefix = el.getAttribute('data-count-prefix') || '';
+        suffix = el.getAttribute('data-count-suffix') || '';
+      } else {
+        var raw = (el.textContent || '').trim();
+        if (!/^\d{1,9}$/.test(raw)) return;
+        to = parseInt(raw, 10); dec = 0; prefix = ''; suffix = '';
+      }
       if (to <= 0) return;
       var start = null;
-      el.textContent = '0';
+      el.textContent = prefix + (0).toFixed(dec) + suffix;
       function step(t) {
         if (start === null) start = t;
         var p = Math.min((t - start) / dur, 1);
         var e = 1 - Math.pow(1 - p, 3);
-        el.textContent = (p < 1) ? Math.round(to * e).toString() : to.toString();
+        var v = (p < 1) ? (to * e) : to;
+        el.textContent = prefix + v.toFixed(dec) + suffix;
         if (p < 1) requestAnimationFrame(step);
       }
       requestAnimationFrame(step);

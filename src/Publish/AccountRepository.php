@@ -33,9 +33,11 @@ final class AccountRepository
     public function listFor(WorkspaceContext $ctx, int $limit = 100): array
     {
         return array_map(self::shape(...), $this->db->all(
+            // defense-in-depth: the reference-title JOIN is also workspace-scoped,
+            // so a stray asset id can never surface another tenant's title.
             'SELECT a.*, asset.title AS reference_title
              FROM accounts a
-             LEFT JOIN assets asset ON asset.id = a.default_reference_asset_id
+             LEFT JOIN assets asset ON asset.id = a.default_reference_asset_id AND asset.workspace_id = a.workspace_id
              WHERE a.workspace_id = ?
              ORDER BY a.id DESC LIMIT ' . max(1, min(200, $limit)),
             [$ctx->id()],

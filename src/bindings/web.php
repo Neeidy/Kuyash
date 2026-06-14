@@ -125,6 +125,10 @@ return static function (Container $container, string $basePath): void {
     $container->bind(Cockpit::class, static fn (Container $c): Cockpit => new Cockpit(
         $c->get(Database::class),
         $c->get(AssetCache::class),
+        $c->get(CreditLedger::class),
+        $c->get(UsageRepository::class),
+        $c->get(AccountRepository::class),
+        $c->get(JobRepository::class),
     ));
 
     $container->bind(DashboardController::class, static fn (Container $c): DashboardController => new DashboardController(
