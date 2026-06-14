@@ -28,7 +28,7 @@ use Kuyash\Core\View;
   </div>
 </div>
 
-<div class="card">
+<div class="card card--primary">
   <div class="card__head"><h2><?= View::t('queue.approvals') ?></h2></div>
   <div class="card__body">
     <?php if ($awaiting === []): ?>

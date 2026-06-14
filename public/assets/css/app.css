@@ -779,3 +779,44 @@ fieldset.field { border: 0; padding: 0; margin: 0 0 var(--s3); min-inline-size: 
   font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 15.5 — Elevation: surface-depth + typographic hierarchy/rhythm.
+   Identity unchanged (Ops-Teal, status-only color); depth = tone + 1px borders,
+   NO new shadows/glows/gradients. These rules come last so they refine the
+   components defined above without editing their original declarations.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* depth 1 — raised content surfaces catch a hair of light on the top edge
+   (lighter top border = soft overhead light, not a glow) */
+.card, .panel, .kpi, .wf-card, .asset-card, .trend-card { border-top-color: var(--border-strong); }
+
+/* depth 2 — banded card head/foot: a distinct tone lifts the header/footer off
+   the body plane. Corners inset by the card's 1px border so they meet cleanly. */
+.card__head {
+  background: var(--surface-2);
+  border-radius: calc(var(--r-card) - 1px) calc(var(--r-card) - 1px) 0 0;
+}
+.card__foot {
+  background: var(--surface-2);
+  border-radius: 0 0 calc(var(--r-card) - 1px) calc(var(--r-card) - 1px);
+}
+
+/* depth 3 — one focal card per key screen reads as primary: accent on the head
+   band + a stronger edge. Used sparingly (markup opt-in via .card--primary). */
+.card--primary { border-color: var(--border-strong); }
+.card--primary > .card__head { background: var(--accent-dim); }
+.card--primary > .card__head h2 { color: var(--accent); }
+
+/* type/rhythm — a stronger page title and more generous vertical rhythm so
+   information has clearer structure (still on the 4px grid). */
+.screen-head { margin-bottom: var(--s6); }
+.screen-head h1 { font-size: 23px; }
+.main > .card + .card { margin-top: var(--s4); }
+
+/* stat tiles: big mono number + small uppercase eyebrow label = a clear tier */
+.kpi__label { text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px; }
+
+@media (max-width: 480px) {
+  .screen-head h1 { font-size: 19px; }
+}

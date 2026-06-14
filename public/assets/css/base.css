@@ -36,7 +36,7 @@
   --border-strong: #34343b;
   --text: #e4e4e7;
   --text-2: #a1a1aa;
-  --text-3: #6b6b74;
+  --text-3: #7c7c85; /* Phase 15.5: nudged lighter to clear WCAG AA on small text (was #6b6b74); resolves phase-15-followups A11Y-1 */
 
   /* single brand accent — Ops Teal. Primary actions, active nav, focus ring ONLY. */
   --accent: #2dd4bf;

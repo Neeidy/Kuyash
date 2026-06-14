@@ -75,7 +75,7 @@ $kpis = $cockpit['kpis'];
     </div>
   </div>
 
-  <div class="card">
+  <div class="card card--primary">
     <div class="card__head"><h2><?= View::t('dash.awaiting_approval') ?></h2>
       <span class="card__action"><span class="chip chip--<?= $cockpit['awaiting'] === [] ? 'ok' : 'warn' ?> num"><?= count($cockpit['awaiting']) ?></span></span>
     </div>
