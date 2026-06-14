@@ -100,6 +100,24 @@ final class SettingsController
         return $this->back('success', 'settings.saved');
     }
 
+    /**
+     * Rename the active workspace (the topbar chip). ADDITIVE: writes the
+     * existing workspaces.name column — no new schema. CSRF is enforced globally
+     * (public/index.php) and the workspace id is the session-resolved tenant.
+     *
+     * @param array<string, string> $params
+     */
+    public function saveName(array $params = []): Response
+    {
+        $name = (string) ($_POST['workspace_name'] ?? '');
+
+        if (!$this->settings->setName($this->workspace->id(), $name)) {
+            return $this->back('error', 'settings.name_invalid');
+        }
+
+        return $this->back('success', 'settings.name_saved');
+    }
+
     /** @param array<string, string> $params */
     public function killSwitch(array $params = []): Response
     {

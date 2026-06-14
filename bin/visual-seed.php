@@ -234,9 +234,29 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
     // Run A's per-node progression — gives the dashboard "production line"
     // node-graph a real done → done → done → active → waiting shape (the early
     // nodes finished, VOICE is processing now). Media-free (no renders linked).
-    $insertJob($db, $workspaceId, $runRunning, 'TREND', 1, 'trend_fetch', 'ready', '{}', $ago(16));
-    $insertJob($db, $workspaceId, $runRunning, 'IDEA', 2, 'idea_generation', 'ready', '{}', $ago(14));
-    $insertJob($db, $workspaceId, $runRunning, 'SCRIPT', 3, 'script_draft', 'ready', '{}', $ago(12));
+    //
+    // Phase 21 §4: each finished job carries a REALISTIC result_json (same shape
+    // the executors emit) so the node drawer shows real, per-node-DISTINCT output
+    // (trend title/score, idea hook, script body, voice/duration) instead of one
+    // generic blurb. Deterministic + media-free (no file refs, no draft render).
+    $j = static fn (array $r): string => json_encode($r, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+    $seedScript = "Stop buying takeout on busy weeknights.\n\n"
+        . "Here is the quick version about one-pan weeknight dinners. Beat one sets it up, "
+        . "beat two shows the turn, beat three lands the takeaway (brisk pacing).\n\nSave this for your next grocery run.";
+    $insertJob($db, $workspaceId, $runRunning, 'TREND', 1, 'trend_fetch', 'ready', $j([
+        'trend' => 'One-pan weeknight dinners', 'niche' => 'home cooking', 'region' => 'US',
+        'score' => 92, 'format' => 'faceless', 'source' => 'mock', 'origin' => 'niche',
+    ]), $ago(16));
+    $insertJob($db, $workspaceId, $runRunning, 'IDEA', 2, 'idea_generation', 'ready', $j([
+        'idea' => 'Angle on "One-pan weeknight dinners": one sheet pan, five pantry staples, zero cleanup.',
+        'hook' => 'Stop buying takeout on busy weeknights.', 'format' => '15-45s vertical',
+    ]), $ago(14));
+    $insertJob($db, $workspaceId, $runRunning, 'SCRIPT', 3, 'script_draft', 'ready', $j([
+        'script' => $seedScript, 'word_count' => 44, 'estimated_duration_s' => 17.6,
+    ]), $ago(12));
+    // VOICE is still PROCESSING — a mid-flight job has not written its result yet,
+    // so result_json stays empty and the drawer honestly shows "no output yet"
+    // (the third state alongside done→real-output and wait→not-started).
     $insertJob($db, $workspaceId, $runRunning, 'VOICE', 4, 'tts', 'processing', '{}', $ago(4));
 
     // A couple of finished jobs on the completed run (flat list texture).

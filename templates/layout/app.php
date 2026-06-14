@@ -98,7 +98,7 @@ use Kuyash\Core\View;
     <button type="button" class="iconbtn topbar__menu" data-sidebar-toggle aria-label="<?= View::t('nav.toggle') ?>" aria-expanded="false">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
     </button>
-    <span class="mode-chip"><span class="dot"></span><span><?= View::e(($workspaceName ?? '') !== '' ? $workspaceName : I18n::t('nav.workspace')) ?></span></span>
+    <span class="mode-chip"><span class="dot"></span><span class="mode-chip__name"><?= View::e(($workspaceName ?? '') !== '' ? $workspaceName : I18n::t('nav.workspace')) ?></span></span>
     <div class="topbar__right">
       <span class="topbar__live" data-live>
         <span class="topbar__live-dot" aria-hidden="true"></span>

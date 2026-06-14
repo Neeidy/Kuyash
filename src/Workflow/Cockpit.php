@@ -67,7 +67,7 @@ final class Cockpit
      * status (done / active / wait / failed). Pure VISUALIZE — the engine stays
      * linear; this never changes a run. Null when nothing is in production.
      *
-     * @return array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null
+     * @return array{run_id: int, template: string, nodes: list<array{name: string, state: string, results: array<string, array<string, mixed>>}>}|null
      */
     private function pipeline(int $ws): ?array
     {
@@ -85,10 +85,18 @@ final class Cockpit
         if (!is_array($nodes) || $nodes === []) {
             return null;
         }
-        $jobs = $this->db->all('SELECT node, status FROM jobs WHERE workspace_id = ? AND run_id = ?', [$ws, (int) $run['id']]);
+        // status drives the node-graph state; result_json carries the REAL output
+        // each stage produced, surfaced read-only in the node drawer (Phase 21 §4).
+        $jobs = $this->db->all('SELECT node, status, type, result_json FROM jobs WHERE workspace_id = ? AND run_id = ?', [$ws, (int) $run['id']]);
         $byNode = [];
+        $resultsByNode = [];
         foreach ($jobs as $j) {
-            $byNode[(string) $j['node']][] = (string) $j['status'];
+            $node = (string) $j['node'];
+            $byNode[$node][] = (string) $j['status'];
+            $decoded = json_decode((string) ($j['result_json'] ?? ''), true);
+            if (is_array($decoded) && $decoded !== []) {
+                $resultsByNode[$node][(string) $j['type']] = $decoded;
+            }
         }
         $out = [];
         foreach ($nodes as $n) {
@@ -96,7 +104,11 @@ final class Cockpit
             if ($name === '') {
                 continue;
             }
-            $out[] = ['name' => $name, 'state' => $this->nodeGraphState($name, $byNode[$name] ?? [])];
+            $out[] = [
+                'name' => $name,
+                'state' => $this->nodeGraphState($name, $byNode[$name] ?? []),
+                'results' => $resultsByNode[$name] ?? [],
+            ];
         }
 
         return ['run_id' => (int) $run['id'], 'template' => (string) $run['template'], 'nodes' => $out];

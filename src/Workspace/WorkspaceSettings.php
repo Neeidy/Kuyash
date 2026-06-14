@@ -19,6 +19,8 @@ final class WorkspaceSettings
     public const CAP_MIN = 1;
     public const CAP_MAX = 10;
 
+    public const NAME_MAX = 60;
+
     private const ISO = 'Y-m-d\TH:i:s\Z';
 
     public function __construct(private readonly Database $db)
@@ -91,6 +93,27 @@ final class WorkspaceSettings
         $this->db->run(
             'UPDATE workspaces SET budget_cap_cents = ?, updated_at = ? WHERE id = ?',
             [$cents, gmdate(self::ISO), $workspaceId],
+        );
+
+        return true;
+    }
+
+    /**
+     * Rename the workspace (the name shown in the topbar). ADDITIVE — writes the
+     * EXISTING workspaces.name column (no new schema). Trimmed; rejects empty or
+     * over-long input (returns false). Tenant-scoped by the raw workspace_id the
+     * caller resolved from the session. No collapsed whitespace surprises: inner
+     * runs of whitespace are squashed to single spaces so the chip stays tidy.
+     */
+    public function setName(int $workspaceId, string $name): bool
+    {
+        $name = trim((string) preg_replace('/\s+/u', ' ', $name));
+        if ($name === '' || mb_strlen($name) > self::NAME_MAX) {
+            return false;
+        }
+        $this->db->run(
+            'UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?',
+            [$name, gmdate(self::ISO), $workspaceId],
         );
 
         return true;

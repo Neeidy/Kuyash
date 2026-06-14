@@ -6258,6 +6258,118 @@ check('p21: AI-label language preserved (compliance) in both locales',
     && stripos((string) $p21Tr['quick.ai_always_on'], 'AI etiketi') !== false
     && stripos((string) $p21En['acct.sample_note'], 'sample') !== false);
 
+echo "== Phase 21 rev: 4-item review fixes (workspace name · text tint · live pulse · node output) ==\n";
+I18n::setLocale('en');
+$revBase = (string) file_get_contents($basePath . '/public/assets/css/base.css');
+$revApp = (string) file_get_contents($basePath . '/public/assets/css/app.css');
+
+// ── Item 1: editable workspace name + topbar effect ───────────────────────
+$revDb = migratedDb($basePath);
+[$revUser, $revWs] = seedUser($revDb, 'rev@example.com', $argonHash, 'Old WS Name');
+$revSettings = new \Kuyash\Workspace\WorkspaceSettings($revDb);
+$revCtx = new WorkspaceContext($revDb);
+$revCtx->set($revWs);
+$revDb->run('INSERT INTO workspaces (name, created_at, updated_at) VALUES (?, ?, ?)', ['Sibling WS', gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+$revSibling = (int) $revDb->lastInsertId();
+check('rev/item1: setName renames the active workspace (additive write to workspaces.name; trims + collapses whitespace)',
+    $revSettings->setName($revWs, '  Neeidy   Studio  ') === true && $revCtx->currentName() === 'Neeidy Studio');
+check('rev/item1: setName rejects empty / whitespace-only and over-60-char names',
+    $revSettings->setName($revWs, '   ') === false && $revSettings->setName($revWs, str_repeat('x', 61)) === false);
+check('rev/item1: rename is tenant-scoped — the sibling workspace is untouched',
+    (string) ($revDb->one('SELECT name FROM workspaces WHERE id = ?', [$revSibling])['name'] ?? '') === 'Sibling WS'
+    && $revCtx->currentName() === 'Neeidy Studio');
+check('rev/item1: topbar workspace chip carries the v3 teal gradient effect (not dull gray)',
+    preg_match('/\.mode-chip__name\s*\{[^}]*linear-gradient/s', $revApp) === 1);
+$revSettingsTpl = (string) file_get_contents($basePath . '/templates/settings/index.php');
+check('rev/item1: settings page exposes the editable workspace-name field posting to /settings/name',
+    str_contains($revSettingsTpl, 'name="workspace_name"') && str_contains($revSettingsTpl, 'action="/settings/name"'));
+check('rev/item1: /settings/name route is registered and is NOT in the CSRF-exempt allowlist (so it is protected)',
+    str_contains((string) file_get_contents($basePath . '/src/routes.php'), "'/settings/name'")
+    && !str_contains((string) file_get_contents($basePath . '/public/index.php'), '/settings/name'));
+
+// ── Item 2: text ramp visibly teal + WCAG AA preserved ────────────────────
+$revLin = static fn (float $c): float => ($c /= 255) <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4;
+$revL = static fn (string $h): float => 0.2126 * $revLin((float) hexdec(substr($h, 0, 2))) + 0.7152 * $revLin((float) hexdec(substr($h, 2, 2))) + 0.0722 * $revLin((float) hexdec(substr($h, 4, 2)));
+$revRatio = static fn (string $a, string $b): float => (max($revL($a), $revL($b)) + 0.05) / (min($revL($a), $revL($b)) + 0.05);
+$revSurf = ['0a0a0b', '111113', '17171a', '1e1e22'];
+$revTeal = static function (string $token) use ($revBase, $revRatio, $revSurf): array {
+    preg_match('/' . preg_quote($token, '/') . ':\s*#([0-9a-fA-F]{6})/', $revBase, $m);
+    $h = $m[1] ?? '';
+    $r = (int) hexdec(substr($h, 0, 2)); $g = (int) hexdec(substr($h, 2, 2)); $b = (int) hexdec(substr($h, 4, 2));
+    $minAA = 99.0; foreach ($revSurf as $s) { $minAA = min($minAA, $revRatio($h, $s)); }
+    return ['hex' => $h, 'gr' => $g - $r, 'br' => $b - $r, 'aa' => $minAA];
+};
+$revT2 = $revTeal('--text-2'); $revT3 = $revTeal('--text-3');
+check('rev/item2: --text-2 is a CLEARLY teal-leaning slate (G−R ≥ 20, B > R) — not the old imperceptible whisper, not pure gray',
+    $revT2['hex'] !== '' && $revT2['gr'] >= 20 && $revT2['br'] > 0);
+check('rev/item2: --text-3 is a CLEARLY teal-leaning slate (G−R ≥ 20, B > R) — not pure gray',
+    $revT3['hex'] !== '' && $revT3['gr'] >= 20 && $revT3['br'] > 0);
+check('rev/item2: the tinted ramp still clears WCAG AA (≥4.5:1) on every surface (no luminance reduction)',
+    $revT2['aa'] >= 4.5 && $revT3['aa'] >= 4.5);
+
+// ── Item 3: live dot teal heartbeat + glow ────────────────────────────────
+check('rev/item3: a teal heartbeat keyframe (live-beat) is defined', str_contains($revApp, '@keyframes live-beat'));
+check('rev/item3: the connected live dot pulses (.is-live → live-beat animation)',
+    preg_match('/\.topbar__live\.is-live\s+\.topbar__live-dot\s*\{[^}]*animation:\s*live-beat/s', $revApp) === 1);
+check('rev/item3: the dot is teal with a glow (accent fill + box-shadow var(--glow)) — never dull gray',
+    preg_match('/\.topbar__live-dot\s*\{[^}]*var\(--accent\)[^}]*box-shadow[^}]*var\(--glow\)/s', $revApp) === 1);
+check('rev/item3: reduced-motion freezes the pulse (animation:none) but keeps a steady glow',
+    preg_match('/prefers-reduced-motion[\s\S]*?\.topbar__live-dot\s*\{[^}]*animation:\s*none/', $revApp) === 1);
+
+// ── Item 4: pipeline node drawer shows the REAL per-stage output ───────────
+$revP = migratedDb($basePath);
+[$revPUser, $revPWs] = seedUser($revP, 'revp@example.com', $argonHash, 'RevP WS');
+$revPNow = gmdate(NOW_ISO);
+$revPNodes = json_encode(\Kuyash\Workflow\Nodes::defaultNodes('full'));
+$revP->run('INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [$revPWs, 'Full', 'full', $revPNodes, $revPNow, $revPNow]);
+$revPWf = (int) $revP->lastInsertId();
+$revP->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, current_node, created_by, created_at, updated_at) VALUES (?, ?, 'trend', ?, 'running', 'VOICE', ?, ?, ?)", [$revPWs, $revPWf, $revPNodes, $revPUser, $revPNow, $revPNow]);
+$revPRun = (int) $revP->lastInsertId();
+$revPJob = static function (string $node, int $step, string $type, string $status, array $result) use ($revP, $revPWs, $revPRun, $revPNow): void {
+    $revP->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, result_json, run_after, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?, 100, ?)",
+        [$revPWs, $revPRun, $node, $step, $type, $status, json_encode($result), $revPNow, $revPNow]);
+};
+$revPJob('TREND', 1, 'trend_fetch', 'ready', ['trend' => 'One-pan dinners', 'score' => 92, 'niche' => 'home cooking', 'region' => 'US']);
+$revPJob('IDEA', 2, 'idea_generation', 'ready', ['idea' => 'Five pantry staples', 'hook' => 'Stop buying takeout']);
+$revPJob('VOICE', 4, 'tts', 'processing', []); // mid-flight: no result yet
+$revPCtx = new WorkspaceContext($revP); $revPCtx->set($revPWs);
+$revPPaths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+$revPCockpit = new \Kuyash\Workflow\Cockpit($revP, new AssetCache($revP, $revPPaths), new CreditLedger($revP), new UsageRepository($revP), new AccountRepository($revP), new \Kuyash\Workflow\JobRepository($revP));
+$revPPipe = $revPCockpit->snapshot($revPCtx, $revPNow)['pipeline'];
+$revPByName = [];
+foreach (($revPPipe['nodes'] ?? []) as $n) { $revPByName[(string) $n['name']] = $n; }
+check('rev/item4: Cockpit attaches the REAL per-node result (read-only, tenant-scoped)',
+    ($revPByName['TREND']['results']['trend_fetch']['trend'] ?? null) === 'One-pan dinners'
+    && ($revPByName['IDEA']['results']['idea_generation']['hook'] ?? null) === 'Stop buying takeout');
+check('rev/item4: a mid-flight (processing) node carries no result (honest empty)',
+    ($revPByName['VOICE']['results'] ?? null) === []);
+// render the partial directly and prove the drawer bodies are real + distinct + escaped
+$revPView = new View($basePath . '/templates');
+$revRenderPipeline = ['run_id' => 1, 'template' => 'full', 'nodes' => [
+    ['name' => 'TREND', 'state' => 'done', 'results' => ['trend_fetch' => ['trend' => 'One-pan dinners', 'score' => 92, 'niche' => 'home cooking', 'region' => 'US']]],
+    ['name' => 'IDEA', 'state' => 'done', 'results' => ['idea_generation' => ['idea' => 'Five pantry staples', 'hook' => 'Stop buying takeout']]],
+    ['name' => 'SCRIPT', 'state' => 'done', 'results' => ['script_draft' => ['script' => "Line one.\nLine two.", 'word_count' => 4, 'estimated_duration_s' => 1.6]]],
+    ['name' => 'COMPLIANCE', 'state' => 'done', 'results' => ['compliance_check' => ['status' => 'pass_with_ai_label', 'ai_label_required' => true, 'checks' => ['slop' => ['score' => 0.23]]]]],
+    ['name' => 'CAPTION', 'state' => 'done', 'results' => ['caption_generation' => ['captions' => ['instagram' => 'Save this <recipe>']]]],
+    ['name' => 'VOICE', 'state' => 'active', 'results' => []],
+    ['name' => 'PUBLISH', 'state' => 'wait', 'results' => []],
+]];
+$revPHtml = $revPView->render('partials/pipeline', ['pipeline' => $revRenderPipeline]);
+check('rev/item4: done nodes render their REAL, per-node-distinct output (trend/hook/script/similarity/platform)',
+    str_contains($revPHtml, 'One-pan dinners') && str_contains($revPHtml, 'Stop buying takeout')
+    && str_contains($revPHtml, 'Line one') && str_contains($revPHtml, '23%') && str_contains($revPHtml, 'Instagram'));
+check('rev/item4: an active node with no result shows the honest "no output yet" line',
+    str_contains($revPHtml, View::t('node.no_data')));
+check('rev/item4: a waiting node shows "not started yet"',
+    str_contains($revPHtml, View::t('node.not_started')));
+check('rev/item4: drawer output is HTML-escaped (no raw markup injection from result data)',
+    !str_contains($revPHtml, 'Save this <recipe>') && str_contains($revPHtml, 'Save this &lt;recipe&gt;'));
+check('rev/item4: different nodes yield DIFFERENT drawer bodies (not one generic blurb)', (static function () use ($revPHtml): bool {
+    preg_match_all('/<template id="node-tpl-\d+"[^>]*>(.*?)<\/template>/s', $revPHtml, $tm);
+    $bodies = array_map('trim', $tm[1] ?? []);
+    return count($bodies) >= 7 && count(array_unique($bodies)) >= 6;
+})());
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(

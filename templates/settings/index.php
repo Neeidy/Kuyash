@@ -9,6 +9,7 @@ use Kuyash\Core\View;
 /** @var string $policyVersion */
 /** @var int $autoUsedToday */
 /** @var int $spentThisMonthCents */
+/** @var string $workspaceName current workspace display name (topbar chip) */
 /** @var string $csrfField trusted generated HTML */
 
 $isAuto = $settings['approval_mode'] === 'auto';
@@ -21,6 +22,22 @@ $killOn = $settings['kill_switch'];
   </div>
   <div class="screen-head__actions">
     <span class="chip chip--<?= $isAuto ? 'warn' : 'ok' ?>"><span class="dot"></span><?= View::t('digest.mode_label') ?> <?= View::e($settings['approval_mode']) ?></span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__head"><h2><?= View::t('settings.workspace_card') ?></h2></div>
+  <div class="card__body">
+    <form method="post" action="/settings/name" class="settings-form">
+      <?= $csrfField ?>
+      <label class="field">
+        <span class="field__label"><?= View::t('settings.workspace_label') ?></span>
+        <input type="text" name="workspace_name" value="<?= View::e($workspaceName ?? '') ?>"
+               maxlength="60" autocomplete="off" required>
+        <span class="field__hint"><?= View::t('settings.workspace_hint') ?></span>
+      </label>
+      <button type="submit" class="btn btn--primary"><?= View::t('settings.workspace_save') ?></button>
+    </form>
   </div>
 </div>
 

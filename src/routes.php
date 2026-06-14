@@ -108,6 +108,7 @@ return static function (Router $router, Config $config, Container $container): v
 
     $router->get('/settings', $protected([SettingsController::class, 'index']));
     $router->post('/settings', $protected([SettingsController::class, 'save']));
+    $router->post('/settings/name', $protected([SettingsController::class, 'saveName']));
     $router->post('/settings/kill-switch', $protected([SettingsController::class, 'killSwitch']));
     $router->get('/digest', $protected([DigestController::class, 'index']));
 

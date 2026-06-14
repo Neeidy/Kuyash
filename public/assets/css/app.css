@@ -77,6 +77,16 @@
   border: 1px solid var(--border); background: var(--surface);
   font-size: 12px; font-weight: 500; color: var(--text-2);
 }
+/* the workspace name is a brand element (Phase 21 rev §1) — render it with a v3
+   teal gradient so it reads as identity, never as dull-gray test data. The solid
+   --accent color is the fallback when background-clip:text is unsupported. */
+.mode-chip__name {
+  font-weight: 600;
+  color: var(--accent);
+  background: linear-gradient(92deg, var(--accent-hover), var(--accent));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 
 /* EN/TR language switch (Phase 14): a compact segmented toggle in the topbar */
 .lang-switch {
@@ -1112,6 +1122,24 @@ html:not(.js) .cmdk-trigger { display: none; }
 }
 .drawer-flow__arrow { color: var(--text-3); }
 
+/* Phase 21 rev §4: the node drawer's REAL per-stage output (read-only; the data
+   comes from the run's job result_json via Cockpit::pipeline). All values are
+   server-escaped before they reach the <template> — no untrusted innerHTML. */
+.drawer-out { display: flex; flex-direction: column; gap: var(--s2); }
+.drawer-out__lead { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.5; }
+.drawer-out__hook { font-style: italic; color: var(--text); line-height: 1.5; }
+.drawer-out__body { color: var(--text-2); font-size: 13px; line-height: 1.6; }
+.drawer-out__line { color: var(--text-2); font-size: 12.5px; }
+.drawer-out__script {
+  border-left: 2px solid var(--accent-line); padding: var(--s2) var(--s3);
+  background: var(--surface-2); border-radius: var(--r-ctl);
+  color: var(--text-2); font-size: 12.5px; line-height: 1.6;
+}
+.drawer-out__caps { display: flex; flex-direction: column; gap: var(--s2); }
+.drawer-out__caps dt { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.drawer-out__caps dd { color: var(--text-2); font-size: 12.5px; line-height: 1.5; margin-bottom: var(--s2); }
+.drawer-out__tags { display: flex; flex-wrap: wrap; gap: var(--s2); }
+
 /* mobile: hide connectors, stack the nodes into rows (frontend node-graph rule) */
 @media (max-width: 720px) {
   .pipeline-conns { display: none; }
@@ -1127,20 +1155,39 @@ html:not(.js) .cmdk-trigger { display: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   Phase 19 — live layer indicator (topbar). The heartbeat is an opacity pulse
-   that maps to the real SSE connection state (.is-live, set by live-client.js);
-   reduced-motion zeroes it. JS-only affordance → hidden without JS (honest:
-   no JS = no live stream). Reuses the @keyframes pl-hb from the Phase 18 block.
+   Phase 19 — live layer indicator (topbar). Phase 21 rev §3: the dot is a TEAL
+   heartbeat — an opacity pulse PLUS a glow (box-shadow) ring, ~2s ease-in-out,
+   GPU-light (opacity + box-shadow only). The connecting state is a calm dim
+   teal (never dull gray); .is-live (set by live-client.js on a real SSE
+   snapshot) is the bright pulsing state. A base glow is always present so even
+   a single captured frame shows a teal halo. reduced-motion → static (no pulse),
+   keeping a steady glow. JS-only affordance → hidden without JS (honest: no JS
+   = no live stream).
    ════════════════════════════════════════════════════════════════════════ */
 html:not(.js) .topbar__live { display: none; }
 .topbar__live {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12px; color: var(--text-3); white-space: nowrap;
 }
-.topbar__live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
+/* connecting / reconnecting: calm dim teal, no pulse (honest "not live yet") */
+.topbar__live-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--accent); opacity: 0.45;
+  box-shadow: 0 0 4px 0 var(--glow);
+}
 .topbar__live.is-live { color: var(--text-2); }
-.topbar__live.is-live .topbar__live-dot { background: var(--ok); animation: pl-hb 2.4s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .topbar__live.is-live .topbar__live-dot { animation: none; } }
+/* live: bright teal + heartbeat pulse + breathing glow */
+.topbar__live.is-live .topbar__live-dot {
+  opacity: 1;
+  animation: live-beat 2s ease-in-out infinite;
+}
+@keyframes live-beat {
+  0%, 100% { opacity: 1;    box-shadow: 0 0 4px 0 var(--glow); }
+  50%      { opacity: 0.5;  box-shadow: 0 0 11px 3px var(--glow); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar__live.is-live .topbar__live-dot { animation: none; opacity: 1; box-shadow: 0 0 7px 2px var(--glow); }
+}
 @media (max-width: 640px) { .topbar__live-text { display: none; } }
 @media (max-width: 460px) { .topbar__live { display: none; } }
 

@@ -34,13 +34,19 @@
   --surface-3: #1e1e22;
   --border: #26262b;
   --border-strong: #34343b;
-  /* Phase 21: a whisper of teal in the neutral text ramp — a pure HUE shift
-     (green-cyan, G ≥ B > R, leaning toward the brand teal) with luminance held
-     or RAISED, so WCAG AA is preserved/improved. Replaces the old cool-blue zinc
-     (R = G < B). Kept subtle (≈5-7 points) per the "fısıltı tint" brief. */
-  --text: #e3e9e7;     /* near-white, ~15:1 on surface */
-  --text-2: #9ea6a3;   /* ~7.6:1 on surface */
-  --text-3: #888f8c; /* faint tier STILL clears WCAG AA on EVERY surface — measured bg 5.99 / surface 5.71 / surface-2 5.41 / surface-3 5.03 (≥4.5:1, all ≥ the old #8a8a93); resolves phase-15-followups A11Y-1 + A11Y-2 */
+  /* Phase 21 (rev): a CLEARLY VISIBLE teal-leaning slate across the whole neutral
+     text ramp — no pure gray anywhere. A pure HUE+SATURATION shift (green-cyan,
+     G > B > R, leaning toward the brand teal) with luminance HELD or RAISED, so
+     WCAG AA is preserved/improved (no luminance reduction). The earlier "whisper"
+     tint (G−R ≈ +6) was imperceptible; this lifts saturation to G−R ≈ +21/+47/+46
+     so the slate reads visibly teal while staying elegant (not "green text").
+     Measured AA on every surface (bg / surface / surface-2 / surface-3):
+       --text-2 #8fbeb3 → 9.57 / 9.12 / 8.65 / 8.06   (was ~7.6)
+       --text-3 #84b2a9 → 8.55 / 8.15 / 7.73 / 7.06   (was ~5.0)
+     all ≥ 4.5:1, all ≥ the previous ratios. */
+  --text: #d7ece5;     /* cool-mint near-white, ~16:1 on surface */
+  --text-2: #8fbeb3;   /* teal slate, ~9.1:1 on surface */
+  --text-3: #84b2a9;   /* faint teal slate — STILL clears WCAG AA on EVERY surface (min 7.06:1), brighter + more saturated than before */
 
   /* single brand accent — Ops Teal. Primary actions, active nav, focus ring ONLY.
      Phase 16: reconciled to the approved v3 teal (#2ff0d2) — a global value swap,

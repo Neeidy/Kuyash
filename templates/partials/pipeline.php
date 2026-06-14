@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Kuyash\Core\Messages;
 use Kuyash\Core\View;
 
 /**
@@ -11,7 +12,13 @@ use Kuyash\Core\View;
  * Phase-16 drawer via data-drawer-open → a server-rendered, escaped <template>
  * (no jargon, no innerHTML-from-untrusted). Mobile = stacked cards (SVG hidden).
  *
- * @var array{run_id:int, template:string, nodes:list<array{name:string,state:string}>} $pipeline
+ * Phase 21 §4: the drawer now shows the stage's REAL output — read from the run's
+ * job result_json (Cockpit attaches a per-node `results` map: job-type → result).
+ * done/active → real, per-node-distinct content; wait → "not started yet" + a
+ * short plain description; no data → an honest "no output yet". Every value is
+ * server-escaped before it reaches the <template> (XSS-safe innerHTML invariant).
+ *
+ * @var array{run_id:int, template:string, nodes:list<array{name:string,state:string,results:array<string,array<string,mixed>>}>} $pipeline
  */
 
 $stateKey = ['done' => 'runs.state_done', 'active' => 'runs.state_running', 'wait' => 'runs.state_pending', 'failed' => 'runs.state_failed'];
@@ -40,6 +47,166 @@ $sttIcon = static function (string $s): string {
         default => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8" stroke-dasharray="3 3.5"/></svg>',
     };
 };
+
+/* duration helper: round to 1dp, "?" when unknown */
+$fmtDur = static fn ($d): string => ($d === null || !is_numeric($d)) ? '?' : (string) round((float) $d, 1);
+
+/**
+ * The REAL output block for a node, built from its job result_json. Returns ''
+ * when there is no usable data (caller then shows an honest "no output yet").
+ * EVERY dynamic value is run through View::e — this HTML lands in an escaped
+ * <template> and is the only thing drawer.js injects as innerHTML.
+ *
+ * @param array<string, array<string, mixed>> $results job-type → result
+ */
+$outputHtml = static function (string $name, array $results) use ($fmtDur): string {
+    $line = static fn (string $text): string => '<p class="drawer-out__line">' . View::e($text) . '</p>';
+
+    switch ($name) {
+        case 'TREND':
+            $r = $results['trend_fetch'] ?? null;
+            if ($r === null || !isset($r['trend'])) {
+                return '';
+            }
+            return '<p class="drawer-out__lead">' . View::e((string) $r['trend']) . '</p>'
+                . $line(View::t('node.out.trend_meta', [
+                    'score' => (string) ($r['score'] ?? '?'),
+                    'niche' => (string) ($r['niche'] ?? '—'),
+                    'region' => (string) ($r['region'] ?? '—'),
+                ]));
+
+        case 'IDEA':
+            $r = $results['idea_generation'] ?? null;
+            if ($r === null || !isset($r['idea'])) {
+                return '';
+            }
+            $h = '';
+            if (isset($r['hook']) && (string) $r['hook'] !== '') {
+                $h .= '<p class="drawer-out__hook">“' . View::e((string) $r['hook']) . '”</p>';
+            }
+            return $h . '<p class="drawer-out__body">' . View::e((string) $r['idea']) . '</p>';
+
+        case 'SCRIPT':
+            $r = $results['script_draft'] ?? null;
+            if ($r === null || !isset($r['script'])) {
+                return '';
+            }
+            $h = '<blockquote class="drawer-out__script">' . nl2br(View::e((string) $r['script'])) . '</blockquote>';
+            if (isset($r['word_count'])) {
+                $h .= $line(View::t('node.out.script_meta', [
+                    'words' => (string) (int) $r['word_count'],
+                    'dur' => $fmtDur($r['estimated_duration_s'] ?? null),
+                ]));
+            }
+            return $h;
+
+        case 'VOICE':
+            $r = $results['tts'] ?? null;
+            if ($r === null) {
+                return '';
+            }
+            return $line(View::t('node.out.voice_meta', [
+                'voice' => (string) ($r['voice'] ?? '—'),
+                'dur' => $fmtDur($r['duration_s'] ?? null),
+            ]));
+
+        case 'VISUALS':
+        case 'LIBRARY':
+            $r = $results['asset_fetch'] ?? null;
+            if ($r === null) {
+                return '';
+            }
+            $src = (string) ($r['source'] ?? 'stock');
+            $srcKey = in_array($src, ['library', 'stock', 'reference', 'avatar'], true) ? 'node.out.src_' . $src : null;
+            $srcLabel = $srcKey !== null ? View::t($srcKey) : $src;
+            $lead = isset($r['title']) && (string) $r['title'] !== ''
+                ? (string) $r['title'] : View::t('node.out.visual_generic');
+            return '<p class="drawer-out__lead">' . View::e($lead) . '</p>'
+                . $line(View::t('node.out.visual_meta', ['source' => $srcLabel]));
+
+        case 'ASSEMBLE':
+            $r = $results['assembly'] ?? null;
+            if ($r === null) {
+                return '';
+            }
+            return $line(View::t('node.out.assemble_meta', ['dur' => $fmtDur($r['duration_s'] ?? null)]));
+
+        case 'CAPTION':
+            $caps = $results['caption_generation']['captions'] ?? [];
+            if (!is_array($caps) || $caps === []) {
+                return '';
+            }
+            $h = '<dl class="drawer-out__caps">';
+            foreach ($caps as $platform => $caption) {
+                $h .= '<dt>' . View::e(Messages::platform((string) $platform)) . '</dt>'
+                    . '<dd>' . View::e((string) $caption) . '</dd>';
+            }
+            return $h . '</dl>';
+
+        case 'HASHTAGS':
+            $tags = $results['hashtag_generation']['hashtags'] ?? [];
+            if (!is_array($tags) || $tags === []) {
+                return '';
+            }
+            $h = '<div class="drawer-out__tags">';
+            foreach ($tags as $tag) {
+                $h .= '<span class="tag">' . View::e((string) $tag) . '</span>';
+            }
+            return $h . '</div>';
+
+        case 'MUSIC NOTE / STYLE':
+            $r = $results['music_note'] ?? null;
+            if ($r === null || !isset($r['mood'])) {
+                return '';
+            }
+            $mood = (string) $r['mood'];
+            $moodKey = in_array($mood, ['upbeat', 'calm', 'cinematic'], true) ? 'node.out.mood_' . $mood : null;
+            $moodLabel = $moodKey !== null ? View::t($moodKey) : $mood;
+            return $line(View::t('node.out.music_meta', ['mood' => $moodLabel]))
+                . '<p class="note">' . View::e(View::t('node.out.music_hint')) . '</p>';
+
+        case 'PREVIEW':
+            if (($results['preview'] ?? null) === null) {
+                return '';
+            }
+            return $line(View::t('node.out.preview_line'));
+
+        case 'COMPLIANCE':
+            $r = $results['compliance_check'] ?? null;
+            if ($r === null || !isset($r['status'])) {
+                return '';
+            }
+            $statusKey = match ((string) $r['status']) {
+                'pass_with_ai_label' => 'node.out.comp_pass_ai',
+                'warn' => 'node.out.comp_warn',
+                'block' => 'node.out.comp_block',
+                default => 'node.out.comp_pass',
+            };
+            $h = '<p class="drawer-out__lead">' . View::e(View::t($statusKey)) . '</p>';
+            $slop = $r['checks']['slop']['score'] ?? null;
+            if (is_numeric($slop)) {
+                $h .= $line(View::t('node.out.similarity', ['pct' => (string) (int) round((float) $slop * 100)]));
+            }
+            $h .= $line(View::t(($r['ai_label_required'] ?? false) ? 'node.out.ai_label_yes' : 'node.out.ai_label_no'));
+            return $h;
+
+        case 'PUBLISH':
+            $r = $results['publish'] ?? null;
+            if ($r === null) {
+                return '';
+            }
+            $h = '';
+            $platforms = $r['platforms'] ?? [];
+            if (is_array($platforms) && $platforms !== []) {
+                $names = array_map(static fn ($p): string => Messages::platform((string) $p), $platforms);
+                $h .= $line(View::t('node.out.publish_targets', ['platforms' => implode(', ', $names)]));
+            }
+            return $h . '<p class="note">' . View::e(View::t('node.out.publish_note')) . '</p>';
+
+        default:
+            return '';
+    }
+};
 ?>
 <div class="pipeline-flow" data-pipeline>
   <svg class="pipeline-conns" id="pipeline-conns" preserveAspectRatio="none" aria-hidden="true"></svg>
@@ -57,17 +224,19 @@ $sttIcon = static function (string $s): string {
   </div>
 </div>
 <?php foreach ($pipeline['nodes'] as $i => $n): ?>
-<?php $st = (string) $n['state']; ?>
-<template id="node-tpl-<?= (int) $i ?>" data-title="<?= View::e((string) $n['name']) ?>">
+<?php $st = (string) $n['state']; $name = (string) $n['name']; ?>
+<template id="node-tpl-<?= (int) $i ?>" data-title="<?= View::e($name) ?>">
   <span class="nodestat nodestat--<?= View::e($st) ?>"><?= View::t($stateKey[$st] ?? 'runs.state_pending') ?></span>
-  <p class="drawer-desc"><?= View::t($descKey[(string) $n['name']] ?? 'node.desc.generic') ?></p>
-  <div class="drawer-flow">
-    <span><?= View::t('pipeline.flow_in') ?></span>
-    <span class="drawer-flow__arrow" aria-hidden="true">→</span>
-    <span><?= View::t('pipeline.flow_process') ?></span>
-    <span class="drawer-flow__arrow" aria-hidden="true">→</span>
-    <span><?= View::t('pipeline.flow_out') ?></span>
-  </div>
-  <p class="note"><?= View::t('pipeline.auto_note') ?></p>
+  <?php if ($st === 'wait'): ?>
+  <p class="drawer-desc"><?= View::t('node.not_started') ?></p>
+  <p class="note"><?= View::t($descKey[$name] ?? 'node.desc.generic') ?></p>
+  <?php else: ?>
+  <?php $out = $outputHtml($name, $n['results'] ?? []); ?>
+  <?php if ($out !== ''): ?>
+  <div class="drawer-out"><?= $out ?></div>
+  <?php else: ?>
+  <p class="muted"><?= View::t('node.no_data') ?></p>
+  <?php endif; ?>
+  <?php endif; ?>
 </template>
 <?php endforeach; ?>
