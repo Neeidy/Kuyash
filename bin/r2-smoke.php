@@ -10,7 +10,9 @@ declare(strict_types=1);
  *   1. SigV4 round-trip works — put → exists/size → presigned GET (200, body
  *      matches) → delete (and the object is then gone).
  *   2. The bucket is PRIVATE — the SAME object URL WITHOUT the presigned query
- *      string returns 401/403, NOT 200. A public bucket FAILS the gate loudly.
+ *      string is REFUSED (HTTP 401/403, or 400 for a fully-unsigned request) AND
+ *      the object bytes are withheld. The body is checked, not just the status: a
+ *      response that returns the object content (any status) FAILS the gate loudly.
  *
  * Requires real credentials (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
  * R2_SECRET_ACCESS_KEY / R2_BUCKET). It writes + deletes ONE throwaway object
@@ -73,15 +75,39 @@ try {
     $signedGet = $http->get($presigned, [], 30);
     $line($signedGet->status === 200 && $signedGet->body === $payload, 'presigned GET → 200 + body matches');
 
-    // 3) PRIVATE confirmation: the SAME url WITHOUT the signature must be denied
+    // 3) PRIVATE confirmation: the SAME url WITHOUT the signature must be denied.
+    //
+    // The security-critical fact is whether the unsigned request got the object
+    // BYTES back — NOT the exact status code. A fully unsigned request to R2 can
+    // legitimately be refused with 400 (malformed/absent auth) instead of 401/403;
+    // all three are "denied" SO LONG AS the body was withheld. So we check the body
+    // first (the real leak signal) and only then accept an explicit deny status.
     $anonUrl = explode('?', $presigned)[0];
     $anon = $http->get($anonUrl, [], 30);
+    $anonBody = (string) ($anon->body ?? '');
+
+    // LEAK = the object content actually came back to an unsigned caller. str_contains
+    // (not ===) so a wrapped/partial leak can't slip past on a body-length quirk.
+    $bodyLeaked = $payload !== '' && str_contains($anonBody, $payload);
+    // PRIVATE = an explicit access-refusal status AND no object bytes returned.
+    // A 200 (or any other status) or a body leak fails the gate — we never blindly
+    // trust a status code without confirming the body did not escape.
+    $isPrivate = !$bodyLeaked && in_array($anon->status, [400, 401, 403], true);
+
+    // surface the unsigned response for inspection: a private bucket answers with a
+    // short error document (XML/JSON), never the payload. Truncated + single-line.
+    $peek = trim(preg_replace('/\s+/', ' ', substr($anonBody, 0, 180)) ?? '');
+    echo "  ····  unsigned GET → HTTP {$anon->status}; body[" . strlen($anonBody) . "B]: "
+        . ($peek === '' ? '(empty)' : $peek) . "\n";
+
     $line(
-        in_array($anon->status, [401, 403], true),
-        "anonymous (unsigned) GET denied — bucket is PRIVATE (HTTP {$anon->status})",
+        $isPrivate,
+        "anonymous (unsigned) GET denied — bucket is PRIVATE (HTTP {$anon->status}, object bytes withheld)",
     );
-    if ($anon->status === 200) {
-        echo "  !!!!  CRITICAL: the bucket served an unsigned GET — it is PUBLIC. Do NOT enable R2.\n";
+    if ($bodyLeaked) {
+        echo "  !!!!  CRITICAL: an unsigned GET returned the OBJECT BYTES — the bucket is PUBLIC. Do NOT enable R2.\n";
+    } elseif ($anon->status === 200) {
+        echo "  !!!!  CRITICAL: an unsigned GET returned HTTP 200 — treat the bucket as PUBLIC until proven otherwise. Do NOT enable R2.\n";
     }
 
     // 4) delete + gone
