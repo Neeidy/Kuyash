@@ -820,3 +820,146 @@ fieldset.field { border: 0; padding: 0; margin: 0 0 var(--s3); min-inline-size: 
 @media (max-width: 480px) {
   .screen-head h1 { font-size: 19px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 16 — Motion & Interaction Core.
+   Client-side enhancement layer: sliding-pill nav, hover-lift + one-time
+   entrance, ⌘K command palette, reusable drawer. Animates transform/opacity
+   ONLY; backdrop-filter is confined to the on-demand palette/drawer scrims.
+   Every rule degrades: anything JS-only is gated on `html.js` so no-JS keeps
+   the server-rendered shell. All durations use --dur-* tokens → reduced-motion
+   zeroes them globally.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ---- one-time staggered entrance on the main content (CSS-only, flash-free,
+   no "hidden if JS errors" risk — same proven pattern as .asset-grid) ---- */
+@keyframes pl-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.main > * { animation: pl-rise var(--dur-enter) var(--ease-out) both; }
+.main > *:nth-child(2) { animation-delay: 45ms; }
+.main > *:nth-child(3) { animation-delay: 90ms; }
+.main > *:nth-child(4) { animation-delay: 135ms; }
+.main > *:nth-child(n+5) { animation-delay: 180ms; }
+@media (prefers-reduced-motion: reduce) { .main > * { animation: none; } }
+
+/* ---- sliding-pill sidebar nav (JS injects .nav-item__pill; no-JS keeps the
+   left marker + surface highlight already defined above) ---- */
+.nav-item { z-index: 1; }
+html.js .sidebar__nav { position: relative; }
+.nav-item__pill {
+  position: absolute; left: 0; right: 0; top: 0; height: 0;
+  border-radius: var(--r-ctl);
+  background: var(--accent-dim); border: 1px solid var(--accent-line);
+  z-index: 0; pointer-events: none; opacity: 0;
+  transform: translateY(0);
+  /* animate ONLY transform/opacity (§1.2 rule 1): height is set instantly by JS
+     while the pill is still invisible (opacity 0), so there is no height animation */
+  transition: transform var(--dur-quick) var(--spring),
+              opacity var(--dur-micro) var(--ease-out);
+}
+.nav-item__pill.is-ready { opacity: 1; }
+/* with the pill present, it (not the static bg/marker) is the highlight */
+html.js .nav-item.is-active { background: transparent; color: var(--accent); }
+html.js .nav-item.is-active .nav-item__marker { background: transparent; }
+html.js .nav-item:hover { background: transparent; }
+
+/* ---- hover-lift on stat tiles (matches the v3 KPI feel) ---- */
+.kpi { transition: transform var(--dur-quick) var(--spring), border-color var(--dur-quick) var(--ease-out); }
+.kpi:hover { transform: translateY(-3px); border-color: var(--border-strong); }
+
+/* ---- topbar ⌘K trigger (JS-only affordance → hidden without JS) ---- */
+html:not(.js) .cmdk-trigger { display: none; }
+.cmdk-trigger {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  padding: 4px 10px; border-radius: var(--r-ctl);
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 12px; color: var(--text-2);
+  transition: border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+.cmdk-trigger:hover { border-color: var(--border-strong); color: var(--text); }
+.cmdk-trigger .icon svg { width: 13px; height: 13px; }
+.cmdk-trigger b { font-family: var(--font-mono); color: var(--text-3); font-weight: 500; letter-spacing: 0.02em; }
+@media (max-width: 480px) { .cmdk-trigger .cmdk-trigger__label, .cmdk-trigger b { display: none; } }
+
+/* ---- ⌘K command palette (on-demand modal; backdrop-filter allowed here) ---- */
+@keyframes pl-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pl-pop { from { opacity: 0; transform: translateY(-10px) scale(0.985); } to { opacity: 1; transform: none; } }
+.cmdk {
+  position: fixed; inset: 0; z-index: 60;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 13vh var(--s4) var(--s4);
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}
+.cmdk.is-open { display: flex; animation: pl-fade var(--dur-quick) var(--ease-out); }
+.cmdk__box {
+  width: 560px; max-width: 100%;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--r-card); overflow: hidden;
+  box-shadow: var(--elev-modal), 0 0 0 1px var(--accent-dim);
+  animation: pl-pop var(--dur-quick) var(--spring);
+}
+.cmdk__input {
+  width: 100%; background: transparent; border: 0;
+  padding: var(--s4) var(--s5); color: var(--text); font-size: 15px;
+  border-bottom: 1px solid var(--border); outline: none;
+}
+.cmdk__input::placeholder { color: var(--text-3); }
+.cmdk__list { max-height: 46vh; overflow-y: auto; padding: var(--s2); margin: 0; }
+.cmdk__item {
+  display: flex; align-items: center; gap: var(--s3);
+  padding: var(--s2) var(--s3); border-radius: var(--r-ctl);
+  color: var(--text-2); font-size: 13.5px; cursor: pointer; scroll-margin: var(--s3);
+}
+.cmdk__item .icon { color: var(--text-3); }
+.cmdk__item.is-active, .cmdk__item:hover { background: var(--accent-dim); color: var(--text); }
+.cmdk__item.is-active .icon, .cmdk__item:hover .icon { color: var(--accent); }
+.cmdk__item .k {
+  margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; line-height: 1.6;
+}
+.cmdk__item[hidden] { display: none; }
+.cmdk__empty { padding: var(--s4) var(--s5); color: var(--text-3); font-size: 13px; }
+
+/* ---- reusable global drawer (on-demand; right-side spring slide) ---- */
+.drawer { position: fixed; inset: 0; z-index: 55; display: none; }
+.drawer.is-open { display: block; }
+.drawer__scrim {
+  position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  animation: pl-fade var(--dur-quick) var(--ease-out);
+}
+.drawer__panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 440px; max-width: 92vw;
+  display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--border-strong);
+  box-shadow: var(--elev-modal);
+  transform: translateX(100%);
+  transition: transform var(--dur-view) var(--spring);
+}
+.drawer.is-open .drawer__panel { transform: none; }
+.drawer__head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+  padding: var(--s4); border-bottom: 1px solid var(--border);
+}
+.drawer__head h3 { font-size: 15px; }
+.drawer__close {
+  width: 28px; height: 28px; border-radius: var(--r-ctl); color: var(--text-3);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+.drawer__close:hover { background: var(--surface-2); color: var(--text); }
+.drawer__body { padding: var(--s4); overflow-y: auto; }
+
+/* shortcuts list (the drawer's first, shell-level content) */
+.shortcut-list { display: flex; flex-direction: column; }
+.shortcut-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+  padding: var(--s2) 0; border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--text-2);
+}
+.shortcut-row:last-child { border-bottom: 0; }
+.shortcut-row kbd {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;
+}

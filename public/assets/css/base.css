@@ -38,12 +38,17 @@
   --text-2: #a1a1aa;
   --text-3: #7c7c85; /* Phase 15.5: nudged lighter to clear WCAG AA on small text (was #6b6b74); resolves phase-15-followups A11Y-1 */
 
-  /* single brand accent — Ops Teal. Primary actions, active nav, focus ring ONLY. */
-  --accent: #2dd4bf;
+  /* single brand accent — Ops Teal. Primary actions, active nav, focus ring ONLY.
+     Phase 16: reconciled to the approved v3 teal (#2ff0d2) — a global value swap,
+     fully reversible. --glow is the one soft accent halo, used only on on-demand
+     surfaces (active nav pill, palette/drawer); never an animated box-shadow. */
+  --accent: #2ff0d2;
   --accent-hover: #5eead4;
-  --accent-press: #14b8a6;
-  --accent-ink: #04211d;
-  --accent-dim: rgba(45, 212, 191, 0.10);
+  --accent-press: #13c4a8;
+  --accent-ink: #04221d;
+  --accent-dim: rgba(47, 240, 210, 0.10);
+  --accent-line: rgba(47, 240, 210, 0.22);
+  --glow: rgba(47, 240, 210, 0.40);
 
   /* the 5 semantic status colors — the ONLY other colors on screen */
   --ok: #4ade80;        --ok-dim: rgba(74, 222, 128, 0.10);
@@ -122,8 +127,16 @@ body {
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--text);
-  background: var(--bg);
+  /* static ambient gradient (Phase 16): painted once, zero animation, idle GPU ~0.
+     A faint teal wash top-right (over the content area) + violet bottom-left.
+     Kept subtle to fit the restrained operator identity. */
+  background:
+    radial-gradient(680px 480px at 88% -6%, rgba(47, 240, 210, 0.06), transparent 60%),
+    radial-gradient(560px 460px at 4% 106%, rgba(232, 121, 249, 0.05), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
   min-height: 100vh;
+  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
 

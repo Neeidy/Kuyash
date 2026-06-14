@@ -150,6 +150,17 @@ return [
     'nav.language' => 'Language',
     'nav.sign_out' => 'Sign out',
 
+    // command palette (⌘K) + shortcuts drawer (Phase 16)
+    'cmd.trigger' => 'Search',
+    'cmd.placeholder' => 'What do you want to do?',
+    'cmd.label' => 'Command menu',
+    'cmd.empty' => 'No matches',
+    'cmd.shortcuts' => 'Keyboard shortcuts',
+    'help.open_palette' => 'Open the command menu',
+    'help.close' => 'Close a menu or panel',
+    'help.navigate' => 'Move selection',
+    'help.select' => 'Open the selection',
+
     // errors/* + auth/login
     'error.403.title' => '403 — Forbidden',
     'error.403.body' => 'The request was rejected (missing or invalid security token). Go back, reload the page and try again.',

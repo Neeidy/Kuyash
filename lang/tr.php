@@ -146,6 +146,17 @@ return [
     'nav.language' => 'Dil',
     'nav.sign_out' => 'Çıkış yap',
 
+    // command palette (⌘K) + shortcuts drawer (Phase 16)
+    'cmd.trigger' => 'Ara',
+    'cmd.placeholder' => 'Ne yapmak istersin?',
+    'cmd.label' => 'Komut menüsü',
+    'cmd.empty' => 'Eşleşme yok',
+    'cmd.shortcuts' => 'Klavye kısayolları',
+    'help.open_palette' => 'Komut menüsünü aç',
+    'help.close' => 'Menüyü veya paneli kapat',
+    'help.navigate' => 'Seçimi taşı',
+    'help.select' => 'Seçimi aç',
+
     // errors/* + auth/login
     'error.403.title' => '403 — Yasak',
     'error.403.body' => 'İstek reddedildi (güvenlik anahtarı eksik veya geçersiz). Geri dönün, sayfayı yenileyin ve tekrar deneyin.',

@@ -18,6 +18,10 @@ use Kuyash\Core\View;
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= View::e($title ?? 'Kuyash') ?></title>
+<!-- mark JS-on synchronously so JS-only affordances (⌘K trigger, sliding pill)
+     resolve before first paint; without JS the .js class is never set and the
+     server-rendered shell stands on its own -->
+<script>document.documentElement.classList.add('js');</script>
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/app.css">
 </head>
@@ -96,6 +100,11 @@ use Kuyash\Core\View;
     </button>
     <span class="mode-chip"><span class="dot"></span><span><?= View::e(($workspaceName ?? '') !== '' ? $workspaceName : I18n::t('nav.workspace')) ?></span></span>
     <div class="topbar__right">
+      <button type="button" class="cmdk-trigger" data-cmdk-open aria-keyshortcuts="Meta+K Control+K">
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M11 11l3 3"/></svg></span>
+        <span class="cmdk-trigger__label"><?= View::t('cmd.trigger') ?></span>
+        <b>⌘K</b>
+      </button>
       <div class="lang-switch" role="group" aria-label="<?= View::t('nav.language') ?>">
         <?php foreach (['en' => 'EN', 'tr' => 'TR'] as $code => $label): ?>
           <?php if ($code === I18n::locale()): ?>
@@ -128,6 +137,11 @@ use Kuyash\Core\View;
   </main>
 </div>
 <div class="scrim" data-sidebar-scrim></div>
+<?php require __DIR__ . '/partials/command-palette.php'; ?>
+<?php require __DIR__ . '/partials/drawer.php'; ?>
+<script src="/assets/js/motion.js" defer></script>
+<script src="/assets/js/drawer.js" defer></script>
+<script src="/assets/js/palette.js" defer></script>
 <script src="/assets/js/app.js" defer></script>
 </body>
 </html>

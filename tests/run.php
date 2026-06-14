@@ -5961,6 +5961,18 @@ $_SESSION = [];
 $_POST = [];
 unset($_SERVER['HTTP_REFERER']);
 
+echo "== Phase 16: motion/interaction shell (accent token + palette i18n parity) ==\n";
+$p16Base = require $basePath . '/lang/en.php';
+$p16Tr = require $basePath . '/lang/tr.php';
+$p16Css = (string) file_get_contents($basePath . '/public/assets/css/base.css');
+check('p16: accent token reconciled to the approved v3 teal (#2ff0d2)', str_contains($p16Css, '--accent: #2ff0d2;'));
+check('p16: --glow token defined for the on-demand accent halo', str_contains($p16Css, '--glow:'));
+$p16Keys = ['cmd.trigger', 'cmd.placeholder', 'cmd.label', 'cmd.empty', 'cmd.shortcuts', 'help.open_palette', 'help.close', 'help.navigate', 'help.select'];
+check('p16: new palette/shortcuts keys all present in en.php', array_filter($p16Keys, static fn(string $k): bool => !isset($p16Base[$k])) === []);
+check('p16: new palette/shortcuts keys all present in tr.php (parity, both languages)', array_filter($p16Keys, static fn(string $k): bool => !isset($p16Tr[$k])) === []);
+check('p16: the command-palette + drawer partials are shipped', is_file($basePath . '/templates/layout/partials/command-palette.php') && is_file($basePath . '/templates/layout/partials/drawer.php'));
+check('p16: build-free preserved — no package.json / node_modules added to the app', !is_file($basePath . '/package.json') && !is_dir($basePath . '/node_modules'));
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(
