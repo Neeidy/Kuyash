@@ -49,6 +49,25 @@ final class Messages
     }
 
     /**
+     * Internal job-type enum → plain user-facing label (Phase 21 jargon scrub).
+     * A raw type like 'render_review' / 'script_draft' never reaches a chip.
+     * Same defensive fallback as status(): unknown type → the raw value.
+     */
+    public static function jobType(string $type): string
+    {
+        return I18n::lookup('jobtype.' . $type) ?? $type;
+    }
+
+    /**
+     * Platform enum → proper display name (Instagram / TikTok / YouTube). The
+     * lowercase storage enum never shows in the UI. Unknown → raw value.
+     */
+    public static function platform(string $platform): string
+    {
+        return I18n::lookup('platform.' . $platform) ?? $platform;
+    }
+
+    /**
      * Resolve queued flashes into displayable {type, text} pairs.
      *
      * @return list<array{type: string, text: string}>

@@ -2095,12 +2095,18 @@ check('workflows ctl: distribution run without asset flashes the key', (static f
 check('queue ctl: renders awaiting approvals + jobs + runs', (static function () use ($queueCtl): bool {
     $body = $queueCtl->index()->body();
 
-    return str_contains($body, 'Approvals') && str_contains($body, 'render_review')
+    // Phase 21: job types are humanized (no raw 'render_review' enum reaches the UI);
+    // the render preview is the graceful inline player, not the old raw <video> that
+    // showed a broken red block when its source was missing.
+    return str_contains($body, 'Approvals') && str_contains($body, 'Preview approval')
+        && !str_contains($body, 'render_review')
+        && str_contains($body, 'inline-player') && !str_contains($body, 'approve-card__video')
         && str_contains($body, 'never faked');
 })());
 check('queue ctl: warns when the worker is not running', (static function () use ($queueCtl): bool {
-    // $deadHeartbeat was never beaten → isAlive false → band shown
-    return str_contains($queueCtl->index()->body(), 'background worker is not running');
+    // $deadHeartbeat was never beaten → isAlive false → band shown (Phase 21: the
+    // band copy is de-jargoned — no "worker"/command — but still surfaces a pause)
+    return str_contains($queueCtl->index()->body(), 'Processing is paused');
 })());
 check('queue ctl: non-numeric job id → 404', $queueCtl->approve(['id' => 'abc'])->status() === 404
     && $queueCtl->retry(['id' => '../1'])->status() === 404);
@@ -5011,7 +5017,8 @@ $acCtl = new AccountsController(
 check('accounts ctl: index lists accounts + connect buttons + next-scheduled line', (static function () use ($acCtl): bool {
     $body = $acCtl->index()->body();
 
-    return str_contains($body, '@me') && str_contains($body, 'Connect instagram') && str_contains($body, 'Next scheduled');
+    // Phase 21: platform names are humanized (Instagram, not the lowercase enum)
+    return str_contains($body, '@me') && str_contains($body, 'Connect Instagram') && str_contains($body, 'Next scheduled');
 })());
 check('accounts ctl: connectStart renders authorize screen + sets state nonce', (static function () use ($acCtl): bool {
     $_SESSION = ['workspace_id' => $GLOBALS['acWs']];
@@ -6142,6 +6149,79 @@ check('p20: sidebar foot copy is jargon-free (no internal phase label / mock-fir
     return true;
 })());
 check('p20: the AI-label fact is kept in the foot copy (truthful, not stripped)', stripos((string) ($p20En['nav.foot_text'] ?? ''), 'AI-labeled') !== false && stripos((string) ($p20Tr['nav.foot_text'] ?? ''), 'AI etiketli') !== false);
+
+echo "== Phase 21: full experience conversion (jargon scrub + account widget) ==\n";
+
+I18n::setLocale('en');
+
+// (1) enum humanizers — internal job-type / platform enums never reach the UI raw
+check('p21: Messages::jobType maps internal enums to plain labels',
+    Messages::jobType('render_review') === 'Preview approval'
+    && Messages::jobType('script_draft') === 'Script draft'
+    && Messages::jobType('tts') === 'Voiceover'
+    && Messages::jobType('unknown_type') === 'unknown_type'); // unknown → raw fallback
+check('p21: Messages::platform gives proper display names',
+    Messages::platform('instagram') === 'Instagram'
+    && Messages::platform('tiktok') === 'TikTok'
+    && Messages::platform('youtube') === 'YouTube');
+
+// (2) account live-stream card (§1): deterministic, honest sample framing, humanized platform
+$p21View = new View($basePath . '/templates');
+$p21acct = ['id' => 7, 'platform' => 'instagram', 'handle' => '@det.kitchen', 'health' => 'ok', 'status' => 'connected'];
+$p21card1 = $p21View->render('partials/account-card', ['account' => $p21acct, 'manage' => false]);
+$p21card2 = $p21View->render('partials/account-card', ['account' => $p21acct, 'manage' => false]);
+check('p21: account-card renders the §1 widget (handle, humanized platform, engagement, followers)',
+    str_contains($p21card1, 'acc-card')
+    && str_contains($p21card1, '@det.kitchen')
+    && str_contains($p21card1, 'Instagram')           // humanized, not 'instagram'
+    && str_contains($p21card1, 'followers'));
+check('p21: account-card metrics are SAMPLE-framed (honest — not passed off as real)',
+    str_contains($p21card1, View::t('acct.sample'))
+    && stripos(View::t('acct.sample_note'), 'sample') !== false);
+check('p21: account-card sample figures are deterministic (same account → identical render)',
+    $p21card1 === $p21card2);
+check('p21: account-card points at NO media file (media-free → no 404 in the visual gate)',
+    !str_contains($p21card1, '/render/') && !str_contains($p21card1, '/media/')
+    && !str_contains($p21card1, '<video') && !str_contains($p21card1, '<img'));
+
+// (3) jargon-free guard over the WHOLE dictionary (both locales). The scrub target:
+// build commands, the worker, mock/Zernio leaks, internal phase labels, raw step ids.
+$p21En = require $basePath . '/lang/en.php';
+$p21Tr = require $basePath . '/lang/tr.php';
+check('p21: lang dictionaries are free of UI jargon (commands / worker / mock / Phase / node ids)', (static function () use ($p21En, $p21Tr): bool {
+    $re = '#(bin/|worker\.php|render_review|script_draft|script\.v|prompt_version|\bZernio\b|doc-gated|\bmock\b|Phase \d|Faz \d|düğüm|\bnodes\b)#i';
+    // infra words that must never leak into user-facing chrome. The /logs event
+    // feed (event.*) interpolates raw operational tokens (worker id, job type) and
+    // is a documented, separate carry-over — exempt those keys only.
+    $infra = '#(\bworker\b|işçi|\bpipelines?\b)#i';
+    foreach ([$p21En, $p21Tr] as $map) {
+        foreach ($map as $k => $v) {
+            if (preg_match($re, (string) $v)) {
+                return false;
+            }
+            if (!str_starts_with((string) $k, 'event.') && preg_match($infra, (string) $v)) {
+                return false;
+            }
+        }
+    }
+    return true;
+})());
+
+// (4) the new key families exist in BOTH locales (parity already enforced above)
+check('p21: jobtype/platform/acct key families present in en + tr', (static function () use ($p21En, $p21Tr): bool {
+    foreach (['jobtype.render_review', 'platform.instagram', 'acct.followers', 'acct.sample_note', 'ledger.type_grant'] as $k) {
+        if (!array_key_exists($k, $p21En) || !array_key_exists($k, $p21Tr)) {
+            return false;
+        }
+    }
+    return true;
+})());
+
+// (5) the AI-label compliance fact is preserved through the scrub (truthful, not stripped)
+check('p21: AI-label language preserved (compliance) in both locales',
+    stripos((string) $p21En['quick.ai_callout_strong'], 'AI label') !== false
+    && stripos((string) $p21Tr['quick.ai_always_on'], 'AI etiketi') !== false
+    && stripos((string) $p21En['acct.sample_note'], 'sample') !== false);
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {

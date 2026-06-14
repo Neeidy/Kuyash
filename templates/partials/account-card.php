@@ -1,0 +1,143 @@
+<?php
+
+declare(strict_types=1);
+
+use Kuyash\Core\Messages;
+use Kuyash\Core\View;
+
+/**
+ * Account live-stream card (Phase 21 §1). The signature connected-account widget,
+ * used on the dashboard ("Connected accounts") and /accounts.
+ *
+ * REAL data: handle, platform, health, status (and, in manage mode, published-today
+ * + the default-reference control). SAMPLE data: the video tile, engagement counts
+ * and follower/growth figures — there is no per-account metrics source yet
+ * (Cockpit deliberately refuses to fabricate them). They are computed DETERMINISTICALLY
+ * from the account so the screen reads like a real product, and are clearly marked
+ * "sample" on the card + a section note. The visual tile is a styled gradient
+ * preview (ken-burns, transform-only) — never a claim of a real, playable video,
+ * and it points at no file, so the media-free visual gate stays 404-free.
+ *
+ * @var array<string, mixed> $account  id, platform, handle, health, status, …
+ * @var bool                  $manage   true on /accounts → render the management footer
+ * @var string                $csrfField (manage only) trusted generated HTML
+ * @var list<array<string,mixed>> $references (manage only) ready reference assets
+ */
+
+$manage = $manage ?? false;
+$csrfField = $csrfField ?? '';
+$references = $references ?? [];
+
+$platform = (string) $account['platform'];
+$handle = (string) $account['handle'];
+$health = (string) ($account['health'] ?? 'unknown');
+$status = (string) ($account['status'] ?? 'connected');
+
+// Deterministic per-account seed → stable sample figures (no time/random; safe to
+// re-render). Same account always shows the same numbers across reloads.
+$seed = crc32($platform . '|' . $handle . '|' . (string) ($account['id'] ?? 0));
+$pick = static fn (int $salt, int $min, int $max): int
+    => $min + (int) ((($seed >> ($salt % 16)) ^ ($salt * 2_654_435_761)) % max(1, $max - $min + 1));
+
+$followers = $pick(1, 1_200, 96_000);
+$likes = $pick(3, 350, 12_000);
+$comments = $pick(5, 6, 480);
+$shares = $pick(7, 18, 3_200);
+$growth = $pick(9, 4, 90);
+
+// Compact 1.5K / 1.2M humanizer.
+$fmt = static function (int $n): string {
+    if ($n >= 1_000_000) {
+        return rtrim(rtrim(number_format($n / 1_000_000, 1), '0'), '.') . 'M';
+    }
+    if ($n >= 1_000) {
+        return rtrim(rtrim(number_format($n / 1_000, 1), '0'), '.') . 'K';
+    }
+    return (string) $n;
+};
+
+// Curated dark, cinematic gradients (match the v3 look) — chosen by seed, never muddy.
+$gradients = [
+    'linear-gradient(135deg,#1e3a5f,#0f5132,#3a1e5f)',
+    'linear-gradient(135deg,#2a1a3a,#1a2a3a,#3a2a1a)',
+    'linear-gradient(135deg,#5f1e3a,#32510f,#1e2a5f)',
+    'linear-gradient(135deg,#1a2e44,#3a1e4f,#0f3d3a)',
+    'linear-gradient(135deg,#3d1f2f,#1f2e3d,#22402e)',
+];
+$avatars = [
+    'linear-gradient(135deg,#2ff0d2,#60a5fa)',
+    'linear-gradient(135deg,#b794ff,#ff6b6b)',
+    'linear-gradient(135deg,#4ade80,#2ff0d2)',
+    'linear-gradient(135deg,#f59e0b,#b794ff)',
+];
+$grad = $gradients[$seed % count($gradients)];
+$avatar = $avatars[($seed >> 4) % count($avatars)];
+
+$healthKey = ['ok' => 'acct.health_ok', 'degraded' => 'acct.health_degraded'][$health] ?? 'acct.health_unknown';
+$healthTone = ['ok' => 'ok', 'degraded' => 'warn'][$health] ?? 'neutral';
+$statusKey = ['connected' => 'acct.status_connected', 'reauth_needed' => 'acct.status_reauth_needed'][$status] ?? 'acct.status_disconnected';
+$statusTone = ['connected' => 'ok', 'reauth_needed' => 'err'][$status] ?? 'neutral';
+?>
+<article class="acc-card">
+  <div class="acc-card__media" role="img" aria-label="<?= View::t('acct.video_aria', ['handle' => $handle]) ?>">
+    <span class="acc-card__kenburns" style="background-image: <?= $grad ?>"></span>
+    <span class="acc-card__overlay"></span>
+    <div class="acc-card__head">
+      <span class="acc-card__avatar" style="background-image: <?= $avatar ?>" aria-hidden="true"></span>
+      <span class="acc-card__handle"><?= View::e($handle) ?></span>
+      <span class="acc-card__plat"><?= View::e(Messages::platform($platform)) ?></span>
+    </div>
+    <div class="acc-card__eng">
+      <span class="acc-eng acc-eng--heart" aria-label="<?= (int) $likes ?> <?= View::t('acct.likes_aria') ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 8c0-2.5-2-4-4-4-1.5 0-3 1-4 2.5C11 5 9.5 4 8 4 6 4 4 5.5 4 8c0 4 8 9 8 9s8-5 8-9z"/></svg>
+        <span class="num"><?= View::e($fmt($likes)) ?></span>
+      </span>
+      <span class="acc-eng" aria-label="<?= (int) $comments ?> <?= View::t('acct.comments_aria') ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8 8 0 01-12 7L3 20l1.5-6A8 8 0 1121 11.5z"/></svg>
+        <span class="num"><?= View::e($fmt($comments)) ?></span>
+      </span>
+      <span class="acc-eng" aria-label="<?= (int) $shares ?> <?= View::t('acct.shares_aria') ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12l16-8-6 16-3-7-7-1z"/></svg>
+        <span class="num"><?= View::e($fmt($shares)) ?></span>
+      </span>
+      <span class="acc-card__sample chip"><?= View::t('acct.sample') ?></span>
+    </div>
+  </div>
+  <div class="acc-card__foot">
+    <span class="acc-card__who"><?= View::e($handle) ?> · <span class="num"><?= View::e($fmt($followers)) ?></span> <?= View::t('acct.followers') ?></span>
+    <span class="acc-card__grow num"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 14l7-7 7 7"/></svg> <?= View::t('acct.growth_today', ['n' => (int) $growth]) ?></span>
+  </div>
+  <div class="acc-card__status">
+    <span class="chip chip--<?= $healthTone ?>"><span class="dot dot--<?= $healthTone ?>"></span><?= View::t($healthKey) ?></span>
+    <?php if ($manage): ?>
+    <span class="chip chip--<?= $statusTone ?>"><span class="dot dot--<?= $statusTone ?>"></span><?= View::t($statusKey) ?></span>
+    <?php if (isset($account['published_today'], $account['daily_cap'])): ?>
+    <span class="chip chip--neutral num"><?= View::t('accounts.published_today', ['n' => (int) $account['published_today'], 'cap' => (int) $account['daily_cap']]) ?></span>
+    <?php endif; ?>
+    <?php endif; ?>
+  </div>
+  <?php if ($manage): ?>
+  <div class="acc-card__manage">
+    <form method="post" action="/accounts/<?= (int) $account['id'] ?>/reference" class="account-ref-form">
+      <?= $csrfField ?>
+      <label class="field field--inline">
+        <span class="field__label"><?= View::t('accounts.default_reference') ?></span>
+        <select name="asset_id">
+          <option value=""><?= View::t('accounts.none_option') ?></option>
+          <?php foreach ($references as $ref): ?>
+          <option value="<?= (int) $ref['id'] ?>"<?= (int) ($account['default_reference_asset_id'] ?? 0) === (int) $ref['id'] ? ' selected' : '' ?>><?= View::e((string) $ref['title']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('accounts.save') ?></button>
+    </form>
+    <?php if ($status !== 'disconnected'): ?>
+    <form method="post" action="/accounts/<?= (int) $account['id'] ?>/disconnect"
+          data-confirm="<?= View::t('accounts.disconnect_confirm', ['handle' => $handle]) ?>">
+      <?= $csrfField ?>
+      <button type="submit" class="btn btn--danger-ghost btn--sm"><?= View::t('accounts.disconnect') ?></button>
+    </form>
+    <?php endif; ?>
+  </div>
+  <?php endif; ?>
+</article>

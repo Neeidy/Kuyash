@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Kuyash\Core\Format;
+use Kuyash\Core\Messages;
 use Kuyash\Core\View;
 
 /** @var list<array<string, mixed>> $accounts each with published_today + daily_cap + reference_title */
@@ -10,17 +11,6 @@ use Kuyash\Core\View;
 /** @var list<array<string, mixed>> $references ready assets usable as a reference subject */
 /** @var array{run_id: int, run_after: string}|null $nextScheduled */
 /** @var string $csrfField trusted generated HTML */
-
-$statusTone = static fn (string $s): string => match ($s) {
-    'connected' => 'ok',
-    'reauth_needed' => 'err',
-    default => 'neutral',
-};
-$healthTone = static fn (string $h): string => match ($h) {
-    'ok' => 'ok',
-    'degraded' => 'warn',
-    default => 'neutral',
-};
 ?>
 <div class="screen-head">
   <div>
@@ -28,7 +18,7 @@ $healthTone = static fn (string $h): string => match ($h) {
     <p class="screen-sub"><?= View::t('accounts.subtitle') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--faint mono"><?= View::t('accounts.publishing_mock') ?></span>
+    <span class="chip chip--neutral"><?= View::t('accounts.publishing_mock') ?></span>
   </div>
 </div>
 
@@ -51,7 +41,7 @@ $healthTone = static fn (string $h): string => match ($h) {
     <p class="muted"><?= View::t('accounts.connect_desc') ?></p>
     <div class="tag-row">
       <?php foreach ($platforms as $platform): ?>
-      <a class="btn btn--ghost btn--sm" href="/accounts/connect/<?= View::e($platform) ?>"><?= View::t('accounts.connect', ['platform' => $platform]) ?></a>
+      <a class="btn btn--ghost btn--sm" href="/accounts/connect/<?= View::e($platform) ?>"><?= View::t('accounts.connect', ['platform' => Messages::platform($platform)]) ?></a>
       <?php endforeach; ?>
     </div>
   </div>
@@ -69,48 +59,11 @@ $healthTone = static fn (string $h): string => match ($h) {
       <p><?= View::t('accounts.none_hint') ?></p>
     </div>
     <?php else: ?>
-    <ul class="job-list">
-      <?php foreach ($accounts as $account): ?>
-      <li class="job-row job-row--stack">
-        <div class="job-row__main">
-          <span class="job-row__type mono"><?= View::e((string) $account['handle']) ?>
-            <span class="muted">· <?= View::e((string) $account['platform']) ?></span></span>
-          <span class="job-row__entity">
-            <?= View::t('accounts.published_today', ['n' => (int) $account['published_today'], 'cap' => (int) $account['daily_cap']]) ?>
-            <?php if (($account['reference_title'] ?? null) !== null): ?>
-            · <?= View::t('accounts.reference_label') ?> <?= View::e((string) $account['reference_title']) ?>
-            <?php endif; ?>
-          </span>
-          <form method="post" action="/accounts/<?= (int) $account['id'] ?>/reference" class="account-ref-form">
-            <?= $csrfField ?>
-            <label class="field field--inline">
-              <span class="field__label"><?= View::t('accounts.default_reference') ?></span>
-              <select name="asset_id">
-                <option value=""><?= View::t('accounts.none_option') ?></option>
-                <?php foreach ($references as $ref): ?>
-                <option value="<?= (int) $ref['id'] ?>"<?= (int) ($account['default_reference_asset_id'] ?? 0) === (int) $ref['id'] ? ' selected' : '' ?>><?= View::e((string) $ref['title']) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </label>
-            <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('accounts.save') ?></button>
-          </form>
-        </div>
-        <div class="job-row__side">
-          <div class="job-row__chips">
-            <span class="chip chip--<?= $statusTone((string) $account['status']) ?>"><span class="dot dot--<?= $statusTone((string) $account['status']) ?>"></span><?= View::e((string) $account['status']) ?></span>
-            <span class="chip chip--<?= $healthTone((string) $account['health']) ?>"><span class="dot dot--<?= $healthTone((string) $account['health']) ?>"></span><?= View::t('accounts.health_label') ?> <?= View::e((string) $account['health']) ?></span>
-          </div>
-          <?php if ((string) $account['status'] !== 'disconnected'): ?>
-          <form method="post" action="/accounts/<?= (int) $account['id'] ?>/disconnect"
-                data-confirm="<?= View::t('accounts.disconnect_confirm', ['handle' => (string) $account['handle']]) ?>">
-            <?= $csrfField ?>
-            <button type="submit" class="btn btn--danger-ghost btn--sm"><?= View::t('accounts.disconnect') ?></button>
-          </form>
-          <?php endif; ?>
-        </div>
-      </li>
+    <div class="acc-grid">
+      <?php foreach ($accounts as $account): $manage = true; require __DIR__ . '/../partials/account-card.php'; ?>
       <?php endforeach; ?>
-    </ul>
+    </div>
+    <p class="acct-note"><span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.5v3M8 5h.01"/></svg></span><?= View::t('acct.sample_note') ?></p>
     <p class="note"><?= View::t('accounts.caps_note') ?></p>
     <?php endif; ?>
   </div>

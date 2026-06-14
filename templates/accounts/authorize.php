@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use Kuyash\Core\Messages;
 use Kuyash\Core\View;
 
 /** @var string $platform */
 /** @var string $state one-time CSRF-equivalent nonce echoed back on the callback */
+
+$platformLabel = Messages::platform($platform);
 
 // Mock provider authorize screen. The "Authorize" button is a GET form to the
 // callback (mimicking a real OAuth redirect, state carried in the URL). No real
@@ -13,8 +16,8 @@ use Kuyash\Core\View;
 ?>
 <div class="screen-head">
   <div>
-    <h1><?= View::t('authz.title', ['platform' => $platform]) ?></h1>
-    <p class="screen-sub"><?= View::t('authz.subtitle', ['platform' => $platform]) ?></p>
+    <h1><?= View::t('authz.title', ['platform' => $platformLabel]) ?></h1>
+    <p class="screen-sub"><?= View::t('authz.subtitle', ['platform' => $platformLabel]) ?></p>
   </div>
   <div class="screen-head__actions">
     <a class="btn btn--ghost btn--sm" href="/accounts"><?= View::t('authz.cancel') ?></a>
@@ -22,7 +25,7 @@ use Kuyash\Core\View;
 </div>
 
 <div class="card">
-  <div class="card__head"><h2><?= View::t('authz.connect_to', ['platform' => $platform]) ?></h2></div>
+  <div class="card__head"><h2><?= View::t('authz.connect_to', ['platform' => $platformLabel]) ?></h2></div>
   <div class="card__body">
     <p class="muted"><?= View::t('authz.desc') ?></p>
     <form method="get" action="/accounts/callback" class="settings-form">

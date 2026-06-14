@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Kuyash\Core\Format;
+use Kuyash\Core\Messages;
 use Kuyash\Core\View;
 
 /** @var string $email */
@@ -22,16 +23,11 @@ use Kuyash\Core\View;
  */
 
 $biz = $cockpit['business'];
-$healthTone = static fn (string $h): string => match ($h) {
-    'ok', 'healthy' => 'ok',
-    'degraded' => 'warn',
-    default => 'neutral',
-};
 ?>
 <?php if (($workerAlive ?? true) === false): ?>
 <div class="callout callout--warn callout--banner" role="alert">
   <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13.5h13z"/><path d="M8 6.5V10M8 12h.01"/></svg></span>
-  <div><strong><?= View::t('dash.worker_down_title') ?></strong> <?= View::t('dash.worker_down_body') ?> <span class="mono">php bin/worker.php</span>.</div>
+  <div><strong><?= View::t('dash.worker_down_title') ?></strong> <?= View::t('dash.worker_down_body') ?></div>
 </div>
 <?php endif; ?>
 <div class="screen-head">
@@ -115,13 +111,13 @@ $healthTone = static fn (string $h): string => match ($h) {
           </div>
           <?php else: ?>
           <div class="inline-player inline-player--pending">
-            <span class="inline-player__ph-type mono"><?= View::e((string) $job['type']) ?></span>
+            <span class="inline-player__ph-type"><?= View::e(Messages::jobType((string) $job['type'])) ?></span>
             <span class="inline-player__ph-note"><?= View::t('player.preview_pending') ?></span>
           </div>
           <?php endif; ?>
 
           <div class="appr-card__body">
-            <h3 class="appr-card__title mono"><?= View::e((string) $job['node']) ?> · <?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?></h3>
+            <h3 class="appr-card__title"><?= View::e(Messages::jobType((string) $job['type'])) ?> · <?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?></h3>
             <div class="appr-card__meta">
               <span class="chip chip--warn"><span class="dot dot--warn"></span><?= View::t('status.awaiting_approval') ?></span>
               <?php if (($r['ai_label_required'] ?? false)): ?>
@@ -169,18 +165,11 @@ $healthTone = static fn (string $h): string => match ($h) {
         <p><a href="/accounts"><?= View::t('dash.accounts_connect') ?></a></p>
       </div>
       <?php else: ?>
-      <ul class="acct-list">
-        <?php foreach ($cockpit['accounts'] as $account): ?>
-        <li class="acct-row">
-          <span class="acct-row__avatar" aria-hidden="true"><?= View::e(strtoupper(substr((string) $account['platform'], 0, 2))) ?></span>
-          <div class="acct-row__main">
-            <span class="acct-row__handle"><?= View::e((string) $account['handle']) ?></span>
-            <span class="acct-row__plat mono"><?= View::e((string) $account['platform']) ?><?php if (($account['reference_title'] ?? null) !== null): ?> · <?= View::t('dash.ref_label') ?>: <?= View::e((string) $account['reference_title']) ?><?php endif; ?></span>
-          </div>
-          <span class="chip chip--<?= $healthTone((string) $account['health']) ?>"><span class="dot dot--<?= $healthTone((string) $account['health']) ?>"></span><?= View::e((string) $account['health']) ?></span>
-        </li>
+      <div class="acc-grid">
+        <?php foreach ($cockpit['accounts'] as $account): $manage = false; require __DIR__ . '/partials/account-card.php'; ?>
         <?php endforeach; ?>
-      </ul>
+      </div>
+      <p class="acct-note"><span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.5v3M8 5h.01"/></svg></span><?= View::t('acct.sample_note') ?></p>
       <?php endif; ?>
     </div>
   </div>
@@ -203,7 +192,7 @@ $healthTone = static fn (string $h): string => match ($h) {
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= View::t('dash.run_n', ['n' => (int) $run['id']]) ?> — <?= View::e((string) $run['workflow_name']) ?></span>
-          <span class="job-row__entity mono"><?= View::e((string) $run['template']) ?><?= $run['current_node'] !== null ? ' · ' . View::t('dash.at') . ' ' . View::e((string) $run['current_node']) : '' ?></span>
+          <span class="job-row__entity mono"><?= $run['current_node'] !== null ? View::t('dash.at') . ' ' . View::e((string) $run['current_node']) : '' ?></span>
         </div>
         <span class="chip chip--<?= \Kuyash\Core\Format::statusTone((string) $run['status']) ?>"><span class="dot dot--<?= \Kuyash\Core\Format::statusTone((string) $run['status']) ?>"></span><?= View::e(\Kuyash\Core\Messages::status((string) $run['status'])) ?></span>
         <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $run['id'] ?>"><?= View::t('dash.timeline') ?></a>

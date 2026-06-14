@@ -9,7 +9,9 @@ use Kuyash\Core\View;
 /** @var string $email */
 ?>
 <div class="panel">
+  <div class="login-brand"><span class="login-brand__mark" aria-hidden="true">K</span> Kuyash</div>
   <h1><?= View::t('login.title') ?></h1>
+  <p class="login-tagline"><?= View::t('login.tagline') ?></p>
   <?php if ($error !== null): ?>
   <div class="callout callout--err" role="alert">
     <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 11h.01"/></svg></span>
@@ -26,5 +28,5 @@ use Kuyash\Core\View;
     </label>
     <button type="submit" class="btn btn--primary"><?= View::t('login.submit') ?></button>
   </form>
-  <p class="note"><?= View::t('login.note') ?> <code>php bin/create-user.php</code></p>
+  <p class="note"><?= View::t('login.note') ?></p>
 </div>

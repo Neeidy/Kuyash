@@ -32,6 +32,12 @@ if ($capCents !== null && $pct !== null) {
 }
 $fillPct = $pct === null ? 0 : max(0, min(100, $pct));
 $fillTone = $pct === null ? 'ok' : ($pct >= 90 ? 'err' : ($pct >= 75 ? 'warn' : 'ok'));
+// plain labels for the credit-ledger transaction type enum (grant/spend/adjust)
+$ledgerLabels = [
+    'grant' => View::t('ledger.type_grant'),
+    'spend' => View::t('ledger.type_spend'),
+    'adjust' => View::t('ledger.type_adjust'),
+];
 $catMax = 0;
 foreach ($breakdown as $b) {
     $catMax = max($catMax, $b['cents']);
@@ -40,7 +46,7 @@ foreach ($breakdown as $b) {
 <div class="screen-head">
   <div>
     <h1><?= View::t('usage.title') ?></h1>
-    <p class="screen-sub"><?= View::t('usage.subtitle_1') ?> <span class="mono"><?= View::e($monthLabel) ?></span> <?= View::t('usage.subtitle_2') ?> <a href="/settings"><?= View::t('nav.settings') ?></a><?= View::t('usage.subtitle_3') ?> <span class="mono">bin/grant-credits.php</span>.</p>
+    <p class="screen-sub"><?= View::t('usage.subtitle_1') ?> <span class="mono"><?= View::e($monthLabel) ?></span> <?= View::t('usage.subtitle_2') ?> <a href="/settings"><?= View::t('nav.settings') ?></a><?= View::t('usage.subtitle_3') ?></p>
   </div>
 </div>
 
@@ -152,7 +158,7 @@ foreach ($breakdown as $b) {
     <span class="card__action"><span class="chip chip--<?= $balanceCents < 0 ? 'warn' : ($balanceCents === 0 ? 'neutral' : 'ok') ?> num"><?= View::e(Format::cents($balanceCents)) ?></span></span>
   </div>
   <div class="card__body">
-    <p class="muted"><?= View::t('usage.credit_body_1') ?><span class="mono">bin/grant-credits.php</span><?= View::t('usage.credit_body_2') ?></p>
+    <p class="muted"><?= View::t('usage.credit_body_1') ?></p>
     <div class="chip-row">
       <span class="chip chip--faint"><?= View::t('usage.granted') ?> <span class="mono num"><?= View::e(Format::cents($creditTotals['granted'])) ?></span></span>
       <span class="chip chip--faint"><?= View::t('usage.spent') ?> <span class="mono num"><?= View::e(Format::cents($creditTotals['spent'])) ?></span></span>
@@ -165,7 +171,7 @@ foreach ($breakdown as $b) {
       <?php foreach ($ledger as $tx): ?>
       <li class="job-row">
         <div class="job-row__main">
-          <span class="job-row__type"><?= View::e((string) $tx['type']) ?><?php if (($tx['reason'] ?? null) !== null && (string) $tx['reason'] !== ''): ?> <span class="muted">· <?= View::e((string) $tx['reason']) ?></span><?php endif; ?></span>
+          <span class="job-row__type"><?= $ledgerLabels[(string) $tx['type']] ?? View::e((string) $tx['type']) ?><?php if (($tx['reason'] ?? null) !== null && (string) $tx['reason'] !== ''): ?> <span class="muted">· <?= View::e((string) $tx['reason']) ?></span><?php endif; ?></span>
           <span class="job-row__entity mono"><?= View::e(Format::utcTime((string) $tx['created_at'])) ?></span>
         </div>
         <span class="chip chip--<?= (int) $tx['amount_cents'] < 0 ? 'neutral' : 'ok' ?> mono num"><?= View::e(Format::cents((int) $tx['amount_cents'])) ?></span>

@@ -57,8 +57,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
 <div class="screen-head">
   <div>
     <h1><?= View::t('runs.run_n', ['n' => (int) $run['id']]) ?> — <?= View::e($run['workflow_name']) ?></h1>
-    <p class="screen-sub mono"><?= View::e($run['workflow_template']) ?> ·
-      <?= View::t('runs.entity_label') ?> <?= View::e($run['entity_type']) ?><?= $run['entity_id'] !== null ? ' #' . (int) $run['entity_id'] : '' ?> ·
+    <p class="screen-sub mono"><?= View::t('runs.entity_label') ?> <?= View::e($run['entity_type']) ?><?= $run['entity_id'] !== null ? ' #' . (int) $run['entity_id'] : '' ?> ·
       <?= View::t('runs.started_label') ?> <?= View::e($run['created_at']) ?></p>
   </div>
   <div class="screen-head__actions">
@@ -110,7 +109,6 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
     <div class="content-block">
       <h3 class="content-block__label"><?= View::t('runs.script') ?>
         <?php if (isset($script['word_count'])): ?><span class="chip chip--faint num"><?= (int) $script['word_count'] ?> <?= View::t('queue.words') ?> · ~<?= View::e((string) ($script['estimated_duration_s'] ?? '?')) ?>s</span><?php endif; ?>
-        <?php if (isset($script['prompt_version'])): ?><span class="chip chip--faint mono"><?= View::e((string) $script['prompt_version']) ?></span><?php endif; ?>
       </h3>
       <blockquote class="content-block__script"><?= nl2br(View::e((string) $script['script'])) ?></blockquote>
     </div>
@@ -122,7 +120,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       <dl class="caption-grid">
         <?php foreach ($captions as $platform => $caption): ?>
         <div class="caption-grid__row">
-          <dt class="mono"><?= View::e((string) $platform) ?></dt>
+          <dt><?= View::e(Messages::platform((string) $platform)) ?></dt>
           <dd><?= View::e((string) $caption) ?></dd>
         </div>
         <?php endforeach; ?>
@@ -150,8 +148,8 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       <?php foreach ($jobs as $job): ?>
       <li class="job-row">
         <div class="job-row__main">
-          <span class="job-row__type mono"><?= (int) $job['step'] ?>. <?= View::e($job['type']) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity"><?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::t('runs.provider_label') . ' ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
+          <span class="job-row__type"><?= (int) $job['step'] ?>. <?= View::e(Messages::jobType((string) $job['type'])) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
+          <span class="job-row__entity"><?= View::e($job['node']) ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
           <?php if ($job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?></span>
           <?php endif; ?>
@@ -173,8 +171,8 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       <?php foreach ($posts as $post): ?>
       <li class="job-row">
         <div class="job-row__main">
-          <span class="job-row__type mono"><?= View::e((string) $post['account_handle']) ?>
-            <span class="muted">· <?= View::e((string) $post['platform']) ?></span></span>
+          <span class="job-row__type"><?= View::e((string) $post['account_handle']) ?>
+            <span class="muted">· <?= View::e(Messages::platform((string) $post['platform'])) ?></span></span>
           <span class="job-row__entity">
             <?php if (($post['ai_label_applied'] ?? false)): ?><span class="chip chip--ai"><?= View::t('runs.ai_label_set') ?></span> <?php endif; ?>
             <?php if (($post['scheduled_for'] ?? null) !== null): ?><?= View::t('runs.scheduled_label') ?> <?= View::e(substr((string) $post['scheduled_for'], 0, 16)) ?>Z · <?php endif; ?>

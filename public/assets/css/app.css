@@ -1143,3 +1143,116 @@ html:not(.js) .topbar__live { display: none; }
 @media (prefers-reduced-motion: reduce) { .topbar__live.is-live .topbar__live-dot { animation: none; } }
 @media (max-width: 640px) { .topbar__live-text { display: none; } }
 @media (max-width: 460px) { .topbar__live { display: none; } }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 21 — Full Experience Conversion.
+   (1) Signature page-title treatment (one rule → every screen reads v3).
+   (2) Account live-stream card (§1) — the connected-account widget.
+   (3) Login branding.
+   transform/opacity ONLY (the ken-burns is a transform scale); no blur, no
+   spinner, no new persistent backdrop. reduced-motion zeroes every animation.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* (1) gradient page title — premium, static (no motion). Solid-color fallback
+   first, so a browser without background-clip:text never renders invisible. */
+.screen-head h1 { color: var(--text); }
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .screen-head h1 {
+    background: linear-gradient(180deg, #f4f6fb 22%, var(--text-2));
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+  }
+}
+
+/* (2) account live-stream cards */
+.acc-grid {
+  display: grid; gap: var(--gap-grid);
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+}
+.acc-card {
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-top-color: var(--border-strong);
+  border-radius: var(--r-card); overflow: hidden;
+  transition: transform var(--dur-quick) var(--ease-out), border-color var(--dur-quick) var(--ease-out);
+}
+.acc-card:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+.acc-card__media { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: #000; }
+@keyframes pl-kenburns { 0% { transform: scale(1.05); } 100% { transform: scale(1.12); } }
+.acc-card__kenburns {
+  position: absolute; inset: 0; background-size: cover; background-position: center;
+  will-change: transform; animation: pl-kenburns 20s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) { .acc-card__kenburns { animation: none; } }
+.acc-card__overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0.25), transparent 38%, rgba(0,0,0,0.8));
+}
+.acc-card__head {
+  position: absolute; top: 10px; left: 12px; right: 12px;
+  display: flex; align-items: center; gap: var(--s2);
+}
+.acc-card__avatar {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  background-size: cover; border: 2px solid rgba(255,255,255,0.85);
+}
+.acc-card__handle {
+  font-size: 12.5px; font-weight: 600; color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.acc-card__plat {
+  margin-left: auto; flex: none; font-size: 10.5px; font-weight: 500; color: #fff;
+  background: rgba(0,0,0,0.5); padding: 3px 8px; border-radius: var(--r-ctl);
+}
+.acc-card__eng {
+  position: absolute; left: 12px; right: 12px; bottom: 11px;
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+}
+.acc-eng {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 500; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+.acc-eng svg { width: 15px; height: 15px; }
+.acc-eng--heart svg { fill: var(--err); stroke: var(--err); }
+.acc-card__sample {
+  margin-left: auto; font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #fff; background: rgba(0,0,0,0.55); border-color: rgba(255,255,255,0.25);
+  padding: 1px 7px;
+}
+.acc-card__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+  padding: var(--s3) var(--s3) var(--s2);
+}
+.acc-card__who { font-size: 12.5px; font-weight: 550; color: var(--text); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-card__grow { display: inline-flex; align-items: center; gap: 4px; flex: none;
+  font-size: 12px; font-weight: 600; color: var(--ok); }
+.acc-card__status { display: flex; flex-wrap: wrap; gap: var(--s2); padding: 0 var(--s3) var(--s3); }
+.acc-card__manage {
+  display: flex; flex-wrap: wrap; gap: var(--s2); align-items: flex-end;
+  padding: var(--s3); border-top: 1px solid var(--border); background: var(--surface-2);
+}
+.acc-card__manage .account-ref-form { margin: 0; flex: 1; min-width: 180px; }
+.acc-card__manage form { margin: 0; }
+.acct-note { display: flex; gap: 6px; align-items: flex-start; color: var(--text-3);
+  font-size: 11.5px; margin-top: var(--s3); line-height: 1.5; }
+
+/* (3) login branding (centered shell from base.php) */
+.login-brand {
+  display: flex; align-items: center; gap: var(--s2); justify-content: center;
+  margin-bottom: var(--s4); font-size: 18px; font-weight: 650; letter-spacing: -0.02em;
+}
+.login-brand__mark {
+  display: inline-grid; place-items: center; width: 32px; height: 32px;
+  border-radius: var(--r-ctl); background: linear-gradient(135deg, var(--accent), var(--accent-press));
+  color: var(--accent-ink); font-weight: 700; box-shadow: 0 0 22px var(--glow);
+}
+.center-shell .login-tagline { color: var(--text-2); font-size: 13px; margin-bottom: var(--s4); text-align: center; }
+.center-shell h1 { text-align: center; }
+
+/* queue approval preview: the inline player as a portrait 9:16 tile (replaces the
+   old raw <video> that showed a broken red block when its source was missing) */
+.approve-card__player {
+  width: 100%; max-width: 220px; aspect-ratio: 9 / 16; margin-top: var(--s2);
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+}

@@ -18,7 +18,6 @@ use Kuyash\Trend\TrendFeed;
     <p class="screen-sub"><?= View::t('trends.subtitle') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--faint mono"><?= View::t('trends.source_label') ?> <?= View::e($feed->source) ?></span>
     <form method="post" action="/trends/refresh">
       <?= $csrfField ?>
       <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('trends.refresh') ?></button>
@@ -94,7 +93,6 @@ use Kuyash\Trend\TrendFeed;
     <div class="trend-card__meta">
       <span class="chip chip--faint mono"><?= View::e((string) $trend['niche']) ?></span>
       <span class="chip chip--faint mono"><?= View::e((string) $trend['region']) ?></span>
-      <span class="chip chip--faint mono"><?= View::e((string) $trend['source']) ?></span>
     </div>
     <form method="post" action="/trends/create" class="trend-card__action">
       <?= $csrfField ?>

@@ -25,7 +25,6 @@ use Kuyash\Core\View;
   <a class="wf-card" href="/workflows/<?= (int) $wf['id'] ?>">
     <div class="wf-card__top">
       <h3><?= View::e($wf['name']) ?></h3>
-      <span class="chip chip--neutral mono"><?= View::e($wf['template']) ?></span>
     </div>
     <p class="wf-card__desc">
       <?= $wf['template'] === 'distribution' ? View::t('wf.desc_distribution') : View::t('wf.desc_full') ?>

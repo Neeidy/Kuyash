@@ -15,7 +15,7 @@ use Kuyash\Core\View;
 <?php if (($workerAlive ?? true) === false): ?>
 <div class="callout callout--warn callout--banner" role="alert">
   <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2L1.5 13.5h13z"/><path d="M8 6.5V10M8 12h.01"/></svg></span>
-  <div><strong><?= View::t('dash.worker_down_title') ?></strong> <?= View::t('queue.worker_down_body') ?> <span class="mono">php bin/worker.php</span>.</div>
+  <div><strong><?= View::t('dash.worker_down_title') ?></strong> <?= View::t('queue.worker_down_body') ?></div>
 </div>
 <?php endif; ?>
 <div class="screen-head">
@@ -38,16 +38,9 @@ use Kuyash\Core\View;
       <?php foreach ($awaiting as $job): ?>
       <article class="approve-card">
         <div class="approve-card__main">
-          <h3 class="mono"><?= View::e($job['node']) ?> · <?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?></h3>
+          <h3><?= View::e(Messages::jobType((string) $job['type'])) ?> · <?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?></h3>
           <div class="approve-card__meta">
-            <span class="chip chip--neutral mono"><?= View::e($job['type']) ?></span>
             <span class="chip chip--warn"><span class="dot"></span><?= View::t('status.awaiting_approval') ?></span>
-            <?php if ($job['provider'] !== null): ?>
-            <span class="chip chip--faint mono"><?= View::e((string) $job['provider']) ?></span>
-            <?php endif; ?>
-            <?php if (isset($job['result']['prompt_version'])): ?>
-            <span class="chip chip--faint mono"><?= View::e((string) $job['result']['prompt_version']) ?></span>
-            <?php endif; ?>
             <?php if (isset($job['result']['word_count'], $job['result']['estimated_duration_s'])): ?>
             <span class="chip chip--neutral num"><?= (int) $job['result']['word_count'] ?> <?= View::t('queue.words') ?> · ~<?= View::e((string) $job['result']['estimated_duration_s']) ?>s</span>
             <?php endif; ?>
@@ -67,10 +60,22 @@ use Kuyash\Core\View;
           <blockquote class="approve-card__quote"><?= nl2br(View::e(mb_substr((string) $job['result']['script'], 0, 400))) ?></blockquote>
           <?php elseif ($job['type'] === 'render_review'): ?>
             <?php $draftId = $job['result']['draft_render_id'] ?? null; $libId = $job['result']['library_asset_id'] ?? null; ?>
-            <?php if ($draftId !== null): ?>
-            <video class="approve-card__video" src="/render/<?= (int) $draftId ?>" poster="/render/<?= (int) $draftId ?>/poster" controls preload="metadata" playsinline></video>
-            <?php elseif ($libId !== null): ?>
-            <video class="approve-card__video" src="/media/<?= (int) $libId ?>" controls preload="metadata" playsinline></video>
+            <?php if ($draftId !== null || $libId !== null): ?>
+            <?php $src = $draftId !== null ? '/render/' . (int) $draftId : '/media/' . (int) $libId; ?>
+            <div class="inline-player approve-card__player" data-inline-player>
+              <?php if ($draftId !== null): ?><img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy"><?php endif; ?>
+              <video class="inline-player__video" src="<?= $src ?>" preload="none" playsinline></video>
+              <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+              <span class="inline-player__badge"><span class="inline-player__badge-dot"></span><?= View::t('player.playing') ?></span>
+              <span class="inline-player__progress"></span>
+            </div>
+            <?php else: ?>
+            <div class="inline-player inline-player--pending approve-card__player">
+              <span class="inline-player__ph-type"><?= View::e(Messages::jobType('render_review')) ?></span>
+              <span class="inline-player__ph-note"><?= View::t('player.preview_pending') ?></span>
+            </div>
             <?php endif; ?>
             <?php if (isset($job['result']['summary'])): ?>
             <p class="approve-card__note"><?= View::e((string) $job['result']['summary']) ?><?= ($job['result']['ai_label_required'] ?? false) ? ' · ' . View::t('queue.ai_label_required') : '' ?></p>
@@ -120,8 +125,8 @@ use Kuyash\Core\View;
       <?php foreach ($jobs as $job): ?>
       <li class="job-row">
         <div class="job-row__main">
-          <span class="job-row__type mono"><?= View::e($job['type']) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity"><?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?> · <?= View::e($job['node']) ?><?= $job['provider'] !== null ? ' · ' . View::e((string) $job['provider']) : '' ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
+          <span class="job-row__type"><?= View::e(Messages::jobType((string) $job['type'])) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
+          <span class="job-row__entity"><?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?> · <?= View::e($job['node']) ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
           <?php if ($job['status'] === 'failed' && $job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?><?php if (str_starts_with((string) $job['error_message'], 'non-retryable:')): ?> <?= View::t('queue.no_auto_retry') ?><?php else: ?> <?= View::t('queue.retry_xy', ['x' => $job['retry_count'], 'y' => $job['max_retries']]) ?><?php endif; ?></span>
           <?php elseif ($job['status'] === 'queued' && str_starts_with((string) $job['error_message'], 'deferred:')): ?>
@@ -153,7 +158,7 @@ use Kuyash\Core\View;
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= View::t('common.run_n', ['n' => (int) $run['id']]) ?> — <?= View::e($run['workflow_name']) ?></span>
-          <span class="job-row__entity mono"><?= View::e($run['workflow_template']) ?><?= $run['current_node'] !== null ? ' · ' . View::t('dash.at') . ' ' . View::e((string) $run['current_node']) : '' ?></span>
+          <span class="job-row__entity mono"><?= $run['current_node'] !== null ? View::t('dash.at') . ' ' . View::e((string) $run['current_node']) : '' ?></span>
         </div>
         <span class="chip chip--<?= Format::statusTone((string) $run['status']) ?>"><span class="dot dot--<?= Format::statusTone((string) $run['status']) ?>"></span><?= View::e(Messages::status((string) $run['status'])) ?></span>
         <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $run['id'] ?>"><?= View::t('dash.timeline') ?></a>

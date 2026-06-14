@@ -20,7 +20,6 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
       <?= $isDistribution ? View::t('wf.show_sub_distribution') : View::t('wf.show_sub_full') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--neutral mono"><?= View::e($workflow['template']) ?></span>
     <a class="btn btn--ghost btn--sm" href="/workflows"><?= View::t('wf.all_workflows') ?></a>
   </div>
 </div>
@@ -76,8 +75,7 @@ $isDistribution = $workflow['template'] === Nodes::TEMPLATE_DISTRIBUTION;
         <?php foreach ($workflow['nodes'] as $node): ?>
         <div class="node-wrap">
           <div class="node<?= ($node['locked'] ?? false) ? ' node--locked' : '' ?>">
-            <span class="node__name mono"><?= View::e($node['node']) ?><?php if ($node['locked'] ?? false): ?><span class="icon node__lock" role="img" aria-label="<?= View::t('wf.locked_compliance') ?>" title="<?= View::t('wf.locked_compliance') ?>"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="7" width="9" height="6" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg></span><?php endif; ?></span>
-            <span class="node__desc mono"><?= View::e(implode(' + ', Nodes::NODE_JOBS[$node['node']] ?? [])) ?></span>
+            <span class="node__name"><?= View::e($node['node']) ?><?php if ($node['locked'] ?? false): ?><span class="icon node__lock" role="img" aria-label="<?= View::t('wf.locked_compliance') ?>" title="<?= View::t('wf.locked_compliance') ?>"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="7" width="9" height="6" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg></span><?php endif; ?></span>
           </div>
           <span class="node-connector" aria-hidden="true"></span>
         </div>
