@@ -36,7 +36,7 @@
   --border-strong: #34343b;
   --text: #e4e4e7;
   --text-2: #a1a1aa;
-  --text-3: #7c7c85; /* Phase 15.5: nudged lighter to clear WCAG AA on small text (was #6b6b74); resolves phase-15-followups A11Y-1 */
+  --text-3: #8a8a93; /* Phase 20: nudged again (was #7c7c85) so the faint tier clears WCAG AA on EVERY surface — bg 5.78 / surface 5.51 / surface-2 5.23 / surface-3 4.86 (≥4.5:1); resolves phase-15-followups A11Y-1 AND A11Y-2 */
 
   /* single brand accent — Ops Teal. Primary actions, active nav, focus ring ONLY.
      Phase 16: reconciled to the approved v3 teal (#2ff0d2) — a global value swap,

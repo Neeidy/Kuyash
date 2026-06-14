@@ -6115,6 +6115,34 @@ $p19En = require $basePath . '/lang/en.php';
 $p19Tr = require $basePath . '/lang/tr.php';
 check('p19: live.* keys present in BOTH languages (parity)', isset($p19En['live.label'], $p19En['live.updated'], $p19Tr['live.label'], $p19Tr['live.updated']));
 
+echo "== Phase 20: polish / a11y / honest-copy close-out ==\n";
+$p20Base = (string) file_get_contents($basePath . '/public/assets/css/base.css');
+$p20En = require $basePath . '/lang/en.php';
+$p20Tr = require $basePath . '/lang/tr.php';
+// the faint tier must clear WCAG AA (>=4.5:1) on every surface — compute it
+$p20Lin = static fn (float $c): float => ($c /= 255) <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4;
+$p20L = static fn (string $hex): float => 0.2126 * $p20Lin((float) hexdec(substr($hex, 0, 2))) + 0.7152 * $p20Lin((float) hexdec(substr($hex, 2, 2))) + 0.0722 * $p20Lin((float) hexdec(substr($hex, 4, 2)));
+$p20Ratio = static function (string $a, string $b) use ($p20L): float { $la = $p20L($a); $lb = $p20L($b); return (max($la, $lb) + 0.05) / (min($la, $lb) + 0.05); };
+preg_match('/--text-3:\s*#([0-9a-fA-F]{6})/', $p20Base, $p20m);
+$p20T3 = $p20m[1] ?? '';
+check('p20: faint tier --text-3 clears WCAG AA (>=4.5:1) on bg/surface/surface-2/surface-3 (A11Y-1+A11Y-2)',
+    $p20T3 !== ''
+    && $p20Ratio($p20T3, '0a0a0b') >= 4.5
+    && $p20Ratio($p20T3, '111113') >= 4.5
+    && $p20Ratio($p20T3, '17171a') >= 4.5
+    && $p20Ratio($p20T3, '1e1e22') >= 4.5);
+check('p20: sidebar foot copy is jargon-free (no internal phase label / mock-first / credit-gated)', (static function () use ($p20En, $p20Tr): bool {
+    foreach (['en' => $p20En, 'tr' => $p20Tr] as $map) {
+        foreach (['nav.foot_title', 'nav.foot_text'] as $k) {
+            if (preg_match('/\b(phase|faz|mock|credit-gated|önce-mock|kredi kapılı)\b/i', (string) ($map[$k] ?? ''))) {
+                return false;
+            }
+        }
+    }
+    return true;
+})());
+check('p20: the AI-label fact is kept in the foot copy (truthful, not stripped)', stripos((string) ($p20En['nav.foot_text'] ?? ''), 'AI-labeled') !== false && stripos((string) ($p20Tr['nav.foot_text'] ?? ''), 'AI etiketli') !== false);
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(

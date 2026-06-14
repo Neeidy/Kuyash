@@ -47,6 +47,7 @@ $sttIcon = static function (string $s): string {
     <?php foreach ($pipeline['nodes'] as $i => $n): ?>
     <?php $st = (string) $n['state']; ?>
     <button type="button" class="pl-node pl-node--<?= View::e($st) ?>" data-drawer-open="node-tpl-<?= (int) $i ?>" data-pl-state="<?= View::e($st) ?>"
+            title="<?= View::e((string) $n['name']) ?>"
             aria-label="<?= View::e((string) $n['name']) ?> — <?= View::t($stateKey[$st] ?? 'runs.state_pending') ?>">
       <span class="pl-node__chip"><?= $chipIcon($st) ?></span>
       <span class="pl-node__name"><?= View::e((string) $n['name']) ?></span>
