@@ -6069,6 +6069,52 @@ check('p18: node descriptions carry no UI tech-jargon (no ffmpeg/TTS/queue/job)'
     return true;
 })());
 
+echo "== Phase 19: live SSE endpoint (immediate-close, tenant-scoped, read-only) ==\n";
+$p19Db = migratedDb($basePath);
+[$p19User, $p19Ws] = seedUser($p19Db, 'p19@example.com', $argonHash, 'P19 WS');
+$p19Now = gmdate('Y-m-d\TH:i:s\Z');
+$p19Db->run('INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [$p19Ws, 'F', 'full', '[]', $p19Now, $p19Now]);
+$p19Wf = (int) $p19Db->lastInsertId();
+$p19Db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'awaiting_approval', ?, ?, ?)", [$p19Ws, $p19Wf, $p19User, $p19Now, $p19Now]);
+$p19Db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$p19Ws, $p19Wf, $p19User, $p19Now, $p19Now]);
+$p19Ctx = new WorkspaceContext($p19Db);
+$p19Ctx->set($p19Ws);
+$p19Paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+$p19Cockpit = new \Kuyash\Workflow\Cockpit($p19Db, new AssetCache($p19Db, $p19Paths), new CreditLedger($p19Db), new UsageRepository($p19Db), new AccountRepository($p19Db), new \Kuyash\Workflow\JobRepository($p19Db));
+$p19Live = $p19Cockpit->liveSnapshot($p19Ws);
+check('p19: liveSnapshot counts active (running+awaiting) and awaiting', $p19Live['active'] === 2 && $p19Live['awaiting'] === 1);
+check('p19: liveSnapshot is workspace-scoped — a sibling sees zero', (static function () use ($p19Db, $p19Cockpit, $p19Now): bool {
+    $p19Db->run('INSERT INTO workspaces (name, created_at, updated_at) VALUES (?, ?, ?)', ['Other19', $p19Now, $p19Now]);
+    $other = (int) $p19Db->lastInsertId();
+    $s = $p19Cockpit->liveSnapshot($other);
+    return $s['active'] === 0 && $s['awaiting'] === 0;
+})());
+$p19Auth = new Auth($p19Db, new LoginThrottle($p19Db), $p19Ctx);
+$_SESSION['auth_user_id'] = $p19User;
+$p19Ctx->set($p19Ws); // workspace + auth both live in $_SESSION (as after a real login)
+$p19Ctl = new \Kuyash\Controllers\LiveController($p19Auth, $p19Ctx, $p19Cockpit);
+$p19RunsBefore = (int) ($p19Db->one('SELECT COUNT(*) AS c FROM runs')['c'] ?? 0);
+$p19Res = $p19Ctl->stream([]);
+$p19RunsAfter = (int) ($p19Db->one('SELECT COUNT(*) AS c FROM runs')['c'] ?? 0);
+$p19H = $p19Res->headers();
+check('p19: SSE response is text/event-stream + no-cache', str_contains($p19H['Content-Type'] ?? '', 'text/event-stream') && str_contains($p19H['Cache-Control'] ?? '', 'no-cache'));
+$p19Body = $p19Res->body();
+check('p19: SSE body carries a retry directive + a snapshot event (immediate-close stream)', str_contains($p19Body, 'retry: 5000') && str_contains($p19Body, 'event: snapshot'));
+preg_match('/data: (.+)/', $p19Body, $p19M);
+$p19Data = json_decode($p19M[1] ?? '{}', true);
+check('p19: SSE data is a JSON snapshot with the tenant awaiting count + a timestamp', is_array($p19Data) && ($p19Data['awaiting'] ?? null) === 1 && ($p19Data['active'] ?? null) === 2 && isset($p19Data['ts']));
+check('p19: the live endpoint is READ-ONLY (no rows written by a stream call)', $p19RunsAfter === $p19RunsBefore);
+check('p19: unauthenticated → redirect to /login (route-guard backstop)', (static function () use ($p19Db, $p19Ctx, $p19Cockpit): bool {
+    $auth = new Auth($p19Db, new LoginThrottle($p19Db), $p19Ctx);
+    $_SESSION = [];
+    $res = (new \Kuyash\Controllers\LiveController($auth, $p19Ctx, $p19Cockpit))->stream([]);
+    return $res->status() === 302 && ($res->headers()['Location'] ?? '') === '/login';
+})());
+$_SESSION = [];
+$p19En = require $basePath . '/lang/en.php';
+$p19Tr = require $basePath . '/lang/tr.php';
+check('p19: live.* keys present in BOTH languages (parity)', isset($p19En['live.label'], $p19En['live.updated'], $p19Tr['live.label'], $p19Tr['live.updated']));
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(

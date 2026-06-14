@@ -221,6 +221,9 @@ return [
     'node.desc.compliance' => 'Platform kurallarını kontrol eder ve gerektiğinde AI etiketini ekler.',
     'node.desc.publish' => 'Senin onayından sonra içeriği bağlı hesaplarına gönderir.',
     'node.desc.generic' => 'İçeriğinin üretiminde otomatik bir adım.',
+    // Phase 19 — canlı katman (topbar göstergesi)
+    'live.label' => 'Canlı',
+    'live.updated' => 'Canlı · az önce güncellendi',
     'dash.active_runs' => 'Aktif çalışmalar',
     'dash.nothing_running' => 'Çalışan bir şey yok',
     'dash.start_from' => 'Şuradan bir çalışma başlatın:',

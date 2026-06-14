@@ -1125,3 +1125,21 @@ html:not(.js) .cmdk-trigger { display: none; }
   .pl-node__name { font-size: 12px; white-space: normal; flex: 1; }
   .pl-node__stt { margin: 0; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 19 — live layer indicator (topbar). The heartbeat is an opacity pulse
+   that maps to the real SSE connection state (.is-live, set by live-client.js);
+   reduced-motion zeroes it. JS-only affordance → hidden without JS (honest:
+   no JS = no live stream). Reuses the @keyframes pl-hb from the Phase 18 block.
+   ════════════════════════════════════════════════════════════════════════ */
+html:not(.js) .topbar__live { display: none; }
+.topbar__live {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-3); white-space: nowrap;
+}
+.topbar__live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
+.topbar__live.is-live { color: var(--text-2); }
+.topbar__live.is-live .topbar__live-dot { background: var(--ok); animation: pl-hb 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .topbar__live.is-live .topbar__live-dot { animation: none; } }
+@media (max-width: 640px) { .topbar__live-text { display: none; } }
+@media (max-width: 460px) { .topbar__live { display: none; } }

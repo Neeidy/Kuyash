@@ -225,6 +225,9 @@ return [
     'node.desc.compliance' => 'Checks platform rules and sets the AI label when required.',
     'node.desc.publish' => 'After your approval, sends the content to your connected accounts.',
     'node.desc.generic' => 'An automatic step in producing your content.',
+    // Phase 19 — live layer (topbar indicator)
+    'live.label' => 'Live',
+    'live.updated' => 'Live · updated just now',
     'dash.active_runs' => 'Active runs',
     'dash.nothing_running' => 'Nothing running',
     'dash.start_from' => 'Start a run from',

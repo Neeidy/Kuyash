@@ -131,6 +131,26 @@ final class Cockpit
     }
 
     /**
+     * The tiny live snapshot the SSE endpoint (Phase 19) emits on each (very
+     * short) connection — ONE workspace-scoped count query, read-only. Kept
+     * minimal on purpose: it is polled every few seconds, so it must stay O(1).
+     *
+     * @return array{active: int, awaiting: int}
+     */
+    public function liveSnapshot(int $ws): array
+    {
+        $row = $this->db->one(
+            "SELECT
+                COALESCE(SUM(status IN ('running', 'awaiting_approval')), 0) AS active,
+                COALESCE(SUM(status = 'awaiting_approval'), 0) AS awaiting
+             FROM runs WHERE workspace_id = ?",
+            [$ws],
+        );
+
+        return ['active' => (int) ($row['active'] ?? 0), 'awaiting' => (int) ($row['awaiting'] ?? 0)];
+    }
+
+    /**
      * Business KPI strip — all real. cost-per-content is the all-time average
      * cost per produced render (null when nothing has rendered yet, so the UI
      * shows "—" instead of a divide-by-zero or a fabricated figure).

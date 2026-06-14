@@ -100,6 +100,10 @@ use Kuyash\Core\View;
     </button>
     <span class="mode-chip"><span class="dot"></span><span><?= View::e(($workspaceName ?? '') !== '' ? $workspaceName : I18n::t('nav.workspace')) ?></span></span>
     <div class="topbar__right">
+      <span class="topbar__live" data-live>
+        <span class="topbar__live-dot" aria-hidden="true"></span>
+        <span class="topbar__live-text" data-live-text data-live-updated="<?= View::t('live.updated') ?>"><?= View::t('live.label') ?></span>
+      </span>
       <button type="button" class="cmdk-trigger" data-cmdk-open aria-keyshortcuts="Meta+K Control+K">
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M11 11l3 3"/></svg></span>
         <span class="cmdk-trigger__label"><?= View::t('cmd.trigger') ?></span>
@@ -144,6 +148,7 @@ use Kuyash\Core\View;
 <script src="/assets/js/palette.js" defer></script>
 <script src="/assets/js/inline-player.js" defer></script>
 <script src="/assets/js/node-graph.js" defer></script>
+<script src="/assets/js/live-client.js" defer></script>
 <script src="/assets/js/app.js" defer></script>
 </body>
 </html>

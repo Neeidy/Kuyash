@@ -66,7 +66,7 @@ $healthTone = static fn (string $h): string => match ($h) {
   </div>
   <div class="kpi">
     <span class="kpi__label"><?= View::t('dash.kpi_awaiting') ?></span>
-    <span class="kpi__num num mono"><?= (int) $biz['awaiting'] ?></span>
+    <span class="kpi__num num mono" data-live-awaiting><?= (int) $biz['awaiting'] ?></span>
     <span class="kpi__delta"><?= View::t('dash.needs_review') ?></span>
   </div>
 </div>

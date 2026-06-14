@@ -21,6 +21,7 @@ use Kuyash\Controllers\SettingsController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
 use Kuyash\Controllers\LibraryController;
+use Kuyash\Controllers\LiveController;
 use Kuyash\Controllers\LocaleController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
@@ -137,6 +138,12 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(WorkerHeartbeat::class),
+        $c->get(Cockpit::class),
+    ));
+
+    $container->bind(LiveController::class, static fn (Container $c): LiveController => new LiveController(
+        $c->get(Auth::class),
+        $c->get(WorkspaceContext::class),
         $c->get(Cockpit::class),
     ));
 

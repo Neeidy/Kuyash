@@ -10,6 +10,7 @@ use Kuyash\Controllers\DigestController;
 use Kuyash\Controllers\HealthController;
 use Kuyash\Controllers\HomeController;
 use Kuyash\Controllers\LibraryController;
+use Kuyash\Controllers\LiveController;
 use Kuyash\Controllers\LocaleController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
@@ -51,6 +52,9 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/logout', $protected([AuthController::class, 'logout']));
 
     $router->get('/dashboard', $protected([DashboardController::class, 'index']));
+
+    // Live layer (Phase 19): immediate-close SSE snapshot, auth + tenant scoped.
+    $router->get('/live', $protected([LiveController::class, 'stream']));
 
     // UI language switch (Phase 14): persists users.locale + session, CSRF-gated.
     $router->post('/locale', $protected([LocaleController::class, 'set']));
