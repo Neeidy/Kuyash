@@ -81,8 +81,8 @@ use Kuyash\Trend\TrendFeed;
 </div>
 <?php else: ?>
 <div class="trend-grid">
-  <?php foreach ($feed->items as $trend): ?>
-  <article class="trend-card">
+  <?php foreach ($feed->items as $i => $trend): ?>
+  <article class="trend-card" style="--i:<?= min((int) $i, 7) ?>">
     <div class="trend-card__top">
       <span class="trend-card__score num"><?= (int) $trend['score'] ?></span>
       <span class="chip chip--<?= $trend['format'] === 'face' ? 'info' : 'neutral' ?>">

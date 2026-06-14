@@ -77,8 +77,13 @@ use Kuyash\Core\View;
               <span class="inline-player__ph-note"><?= View::t('player.preview_pending') ?></span>
             </div>
             <?php endif; ?>
-            <?php if (isset($job['result']['summary'])): ?>
-            <p class="approve-card__note"><?= View::e((string) $job['result']['summary']) ?><?= ($job['result']['ai_label_required'] ?? false) ? ' · ' . View::t('queue.ai_label_required') : '' ?></p>
+            <?php /* Phase 21: show a clean, truthful compliance line — never the raw
+                     internal summary ("Render review (mock): … policy mock-v0"). */ ?>
+            <?php $cs = $job['result']['compliance']['status'] ?? null; ?>
+            <?php if ($cs === 'pass' || $cs === 'pass_with_ai_label'): ?>
+            <p class="approve-card__note"><?= View::t('queue.compliance_passed') ?><?= ($job['result']['ai_label_required'] ?? false) ? ' · ' . View::t('queue.ai_label_required') : '' ?></p>
+            <?php elseif (($job['result']['ai_label_required'] ?? false)): ?>
+            <p class="approve-card__note"><?= View::t('queue.ai_label_required') ?></p>
             <?php endif; ?>
           <?php elseif (isset($job['result']['summary'])): ?>
           <p class="approve-card__note"><?= View::e((string) $job['result']['summary']) ?></p>
@@ -126,7 +131,7 @@ use Kuyash\Core\View;
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= View::e(Messages::jobType((string) $job['type'])) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity"><?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?> · <?= View::e($job['node']) ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
+          <span class="job-row__entity"><?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?></span>
           <?php if ($job['status'] === 'failed' && $job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?><?php if (str_starts_with((string) $job['error_message'], 'non-retryable:')): ?> <?= View::t('queue.no_auto_retry') ?><?php else: ?> <?= View::t('queue.retry_xy', ['x' => $job['retry_count'], 'y' => $job['max_retries']]) ?><?php endif; ?></span>
           <?php elseif ($job['status'] === 'queued' && str_starts_with((string) $job['error_message'], 'deferred:')): ?>
@@ -158,7 +163,7 @@ use Kuyash\Core\View;
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= View::t('common.run_n', ['n' => (int) $run['id']]) ?> — <?= View::e($run['workflow_name']) ?></span>
-          <span class="job-row__entity mono"><?= $run['current_node'] !== null ? View::t('dash.at') . ' ' . View::e((string) $run['current_node']) : '' ?></span>
+          <span class="job-row__entity"><?= $run['current_node'] !== null ? View::t('dash.at') . ' ' . View::e(Messages::node((string) $run['current_node'])) : '' ?></span>
         </div>
         <span class="chip chip--<?= Format::statusTone((string) $run['status']) ?>"><span class="dot dot--<?= Format::statusTone((string) $run['status']) ?>"></span><?= View::e(Messages::status((string) $run['status'])) ?></span>
         <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $run['id'] ?>"><?= View::t('dash.timeline') ?></a>

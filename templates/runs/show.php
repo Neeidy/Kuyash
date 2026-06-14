@@ -149,7 +149,12 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= (int) $job['step'] ?>. <?= View::e(Messages::jobType((string) $job['type'])) ?> <span class="muted">#<?= (int) $job['id'] ?></span></span>
-          <span class="job-row__entity"><?= View::e($job['node']) ?><?php if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0): ?> · ~$<?= View::e(number_format((float) $job['result']['cost_usd'], 4)) ?><?php endif; ?><?= $job['finished_at'] !== null ? ' · ' . View::e(Format::utcTime((string) $job['finished_at'])) : '' ?></span>
+          <span class="job-row__entity"><?php
+            $jmeta = [];
+            if (isset($job['result']['cost_usd']) && (float) $job['result']['cost_usd'] > 0) { $jmeta[] = '~$' . number_format((float) $job['result']['cost_usd'], 4); }
+            if ($job['finished_at'] !== null) { $jmeta[] = Format::utcTime((string) $job['finished_at']); }
+            echo View::e(implode(' · ', $jmeta));
+          ?></span>
           <?php if ($job['error_message'] !== null): ?>
           <span class="job-row__error"><?= View::e((string) $job['error_message']) ?></span>
           <?php endif; ?>
@@ -203,7 +208,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
       ?>
       <li class="job-row">
         <div class="job-row__main">
-          <span class="job-row__type mono"><?= View::e($approval['node']) ?></span>
+          <span class="job-row__type"><?= View::e(Messages::node((string) $approval['node'])) ?></span>
           <span class="job-row__entity"><?= View::t('digest.mode_label') ?> <?= View::e($approval['mode']) ?><?php if ($isAuto && isset($scoreSnap['quality']['score'])): ?> · <?= View::t('runs.quality_score_label') ?> <?= (int) $scoreSnap['quality']['score'] ?><?php endif; ?></span>
         </div>
         <?php if ($isAuto): ?>

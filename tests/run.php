@@ -2032,8 +2032,8 @@ check('cli handler: web fallback works without a view', (static function () use 
 
 echo "== Messages dictionary ==\n";
 
-check('messages: event template substitution', Messages::event('job.requeued', ['type' => 'tts', 'retry' => 2, 'max' => 3, 'run' => 7])
-    === 'tts requeued, retry 2/3 (run #7)');
+check('messages: event template substitution + Phase 21 type humanization', Messages::event('job.requeued', ['type' => 'tts', 'retry' => 2, 'max' => 3, 'run' => 7])
+    === 'Voiceover requeued, retry 2/3 (run #7)');
 check('messages: unknown key falls back to the key', Messages::text('no.such.key') === 'no.such.key'
     && Messages::event('no.such.event', []) === 'no.such.event');
 check('messages: missing param left as placeholder', Messages::event('job.created', ['run' => 1])
@@ -2114,7 +2114,7 @@ check('runs ctl: run detail shows truthful approval + timeline', (static functio
     $body = $wfCtl->showRun(['id' => (string) $fullRunId])->body();
 
     return str_contains($body, 'Approved by you') && str_contains($body, 'wf-a@example.com')
-        && str_contains($body, 'append-only') && str_contains($body, 'compliance pass');
+        && str_contains($body, 'append-only') && str_contains($body, 'compliance check passed');
 })());
 check('logs ctl: feed renders with filter chips', (static function () use ($logsCtl): bool {
     $_GET = ['f' => 'warn'];
@@ -4425,7 +4425,9 @@ $settingsCtl = new SettingsController($badgeView, $scSettings, $scQuality, $scGa
 check('settings ctl: index renders mode, policy, quality, auto-slots', (static function () use ($settingsCtl): bool {
     $body = $settingsCtl->index()->body();
 
-    return str_contains($body, 'Approval mode') && str_contains($body, 'kuyash-v1')
+    // Phase 21: the standalone "policy kuyash-v1" info chip is removed from
+    // settings (the policy version stays only on truthful approval RECORDS).
+    return str_contains($body, 'Approval mode') && !str_contains($body, 'kuyash-v1')
         && str_contains($body, 'Quality score') && str_contains($body, 'auto slots used today')
         && str_contains($body, 'Kill switch');
 })());
@@ -6164,6 +6166,11 @@ check('p21: Messages::platform gives proper display names',
     Messages::platform('instagram') === 'Instagram'
     && Messages::platform('tiktok') === 'TikTok'
     && Messages::platform('youtube') === 'YouTube');
+check('p21: Messages::node maps canonical pipeline ids to plain step labels',
+    Messages::node('VOICE') === 'Voiceover'
+    && Messages::node('PUBLISH') === 'Publish'
+    && Messages::node('SCRIPT') === 'Script draft'
+    && Messages::node('NOPE') === 'NOPE'); // unknown → raw fallback
 
 // (2) account live-stream card (§1): deterministic, honest sample framing, humanized platform
 $p21View = new View($basePath . '/templates');
@@ -6190,21 +6197,49 @@ $p21En = require $basePath . '/lang/en.php';
 $p21Tr = require $basePath . '/lang/tr.php';
 check('p21: lang dictionaries are free of UI jargon (commands / worker / mock / Phase / node ids)', (static function () use ($p21En, $p21Tr): bool {
     $re = '#(bin/|worker\.php|render_review|script_draft|script\.v|prompt_version|\bZernio\b|doc-gated|\bmock\b|Phase \d|Faz \d|düğüm|\bnodes\b)#i';
-    // infra words that must never leak into user-facing chrome. The /logs event
-    // feed (event.*) interpolates raw operational tokens (worker id, job type) and
-    // is a documented, separate carry-over — exempt those keys only.
-    $infra = '#(\bworker\b|işçi|\bpipelines?\b)#i';
+    // infra words that must never leak into ANY user-facing string — including the
+    // /logs activity feed (event.*). "zero jargon means zero": the event feed is no
+    // longer exempt; its {type}/{platform}/{slop} tokens are humanized at display
+    // time by Messages::event(), and the literal strings carry no infra words.
+    $infra = '#(\bworker\b|işçi|\bpipelines?\b|\bwatchdog\b)#i';
     foreach ([$p21En, $p21Tr] as $map) {
-        foreach ($map as $k => $v) {
-            if (preg_match($re, (string) $v)) {
-                return false;
-            }
-            if (!str_starts_with((string) $k, 'event.') && preg_match($infra, (string) $v)) {
+        foreach ($map as $v) {
+            if (preg_match($re, (string) $v) || preg_match($infra, (string) $v)) {
                 return false;
             }
         }
     }
     return true;
+})());
+
+// (3b) the /logs activity feed renders humanized — raw job-type enums, worker ids
+// and 0..1 slop never reach the rendered event line (zero-jargon incl. event.*)
+check('p21: event feed humanizes job type + slop percentage (no raw enum/decimal)', (static function (): bool {
+    $claimed = Messages::event('job.claimed', ['type' => 'render_review', 'run' => 5]);
+    $warned = Messages::event('compliance.warned', ['slop' => 0.6102, 'run' => 5]);
+    $approved = Messages::event('approval.approved', ['node' => 'VOICE', 'user' => 'a@b.co', 'run' => 5]);
+    return str_contains($claimed, 'Preview approval') && !str_contains($claimed, 'render_review')
+        && !str_contains($claimed, 'worker')
+        && str_contains($warned, '61%') && !str_contains($warned, '0.61')
+        && str_contains($approved, 'Voiceover') && !str_contains($approved, 'VOICE approved');
+})());
+
+// (3c) the queue render_review note is a clean compliance line — never the raw
+// internal "Render review (mock): compliance pass (policy mock-v0)" summary (A2)
+check('p21: queue render_review shows a clean compliance note, not the raw mock/policy summary', (static function () use ($basePath): bool {
+    $v = new View($basePath . '/templates');
+    $job = [
+        'id' => 1, 'run_id' => 1, 'node' => 'PREVIEW', 'type' => 'render_review',
+        'provider' => 'mock', 'status' => 'awaiting_approval',
+        'result' => [
+            'compliance' => ['status' => 'pass'], 'ai_label_required' => true,
+            'summary' => 'Render review (mock): compliance pass (policy mock-v0)',
+            'draft_render_id' => null,
+        ],
+    ];
+    $body = $v->render('queue/index', ['awaiting' => [$job], 'jobs' => [], 'runs' => [], 'csrfField' => '', 'workerAlive' => true]);
+    return str_contains($body, 'Compliance: passed')
+        && !str_contains($body, 'mock-v0') && !str_contains($body, '(mock)');
 })());
 
 // (4) the new key families exist in BOTH locales (parity already enforced above)

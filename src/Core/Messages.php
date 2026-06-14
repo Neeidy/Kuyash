@@ -45,7 +45,52 @@ final class Messages
      */
     public static function event(string $key, array $params): string
     {
+        // Phase 21: humanize the operational tokens before interpolation so the
+        // activity feed reads in plain user language (the stored event row keeps
+        // the raw params — only the DISPLAY is humanized, audit trail untouched).
+        if (isset($params['type']) && is_string($params['type'])) {
+            $params['type'] = self::jobType($params['type']);
+        }
+        if (isset($params['platform']) && is_string($params['platform'])) {
+            $params['platform'] = self::platform($params['platform']);
+        }
+        if (isset($params['slop']) && is_numeric($params['slop'])) {
+            $params['slop'] = self::slopPercent((float) $params['slop']);
+        }
+        if (isset($params['node']) && is_string($params['node'])) {
+            $params['node'] = self::node($params['node']);
+        }
+
         return I18n::interpolate(I18n::lookup('event.' . $key) ?? $key, $params);
+    }
+
+    /**
+     * Canonical pipeline-node id (TREND / VOICE / PUBLISH …) → a plain step label,
+     * via the node's primary job type. The canonical names stay only in the
+     * dedicated step-graph views; every terse list/feed context shows this label.
+     */
+    public static function node(string $node): string
+    {
+        $primary = self::NODE_PRIMARY[$node] ?? null;
+
+        return $primary !== null ? self::jobType($primary) : $node;
+    }
+
+    /** Node → its primary job type (mirrors the front of Nodes::NODE_JOBS). */
+    private const NODE_PRIMARY = [
+        'TREND' => 'trend_fetch', 'IDEA' => 'idea_generation', 'SCRIPT' => 'script_draft',
+        'VOICE' => 'tts', 'VISUALS' => 'asset_fetch', 'LIBRARY' => 'asset_fetch',
+        'ASSEMBLE' => 'assembly', 'CAPTION' => 'caption_generation', 'HASHTAGS' => 'hashtag_generation',
+        'MUSIC NOTE / STYLE' => 'music_note', 'PREVIEW' => 'preview', 'COMPLIANCE' => 'compliance_check',
+        'PUBLISH' => 'publish',
+    ];
+
+    /** Stored 0..1 similarity → a plain percentage ("61%" / "%61" in TR). */
+    private static function slopPercent(float $slop): string
+    {
+        $pct = $slop <= 1.0 ? (int) round($slop * 100) : (int) round($slop);
+
+        return I18n::locale() === 'tr' ? '%' . $pct : $pct . '%';
     }
 
     /**

@@ -18,14 +18,16 @@ declare(strict_types=1);
  * so login matches), with dev-only defaults. The password is read but NEVER
  * printed — the seeded DB is gitignored and local-only.
  *
- * MEDIA-FREE BY DESIGN: this seed never references render/asset files on disk,
- * so no <img>/<video> points at a missing file → no 404 → no console error →
- * the visual gate's "zero console errors" baseline stays honestly green. Media-
- * bearing screens (library, quick, digest) show their empty states, which the
- * visual gate wants screenshotted anyway.
+ * MOSTLY MEDIA-FREE: the only on-disk media is ONE playable preview render
+ * (Phase 21 D6) — a tiny committed mock clip + poster copied into render storage
+ * so the inline approval player actually plays. Its poster file EXISTS (the gate's
+ * <img> loads it → still no 404); the <video> is preload="none" so it loads only
+ * on click. Everything else stays media-free, so library/quick/digest still show
+ * their empty states (which the visual gate wants screenshotted anyway).
  */
 
 use Kuyash\Core\Database;
+use Kuyash\Media\MediaPaths;
 use Kuyash\Workflow\Nodes;
 
 if (PHP_SAPI !== 'cli') {
@@ -102,9 +104,24 @@ if ($db->one('SELECT id FROM runs WHERE workspace_id = ? LIMIT 1', [$workspaceId
     exit(0);
 }
 
-// --- 2. Content (one short transaction; mock, deterministic, media-free) ----
+// Phase 21 (D6): one PLAYABLE preview render so the inline approval player is not
+// a dead placeholder. A tiny committed mock clip + poster are copied into render
+// storage and the awaiting render_review job links its draft_render_id. The poster
+// file therefore EXISTS (the visual gate's <img> loads it → still 0 × 404); the
+// <video> is preload="none", so it loads only on a real click — where it plays.
+$paths = $container->get(MediaPaths::class);
+$fixtureDir = dirname(__DIR__) . '/tools/visual/fixtures';
+$playableMp4 = str_repeat('c', 32) . '.mp4';      // deterministic, NAME_RE-valid
+$playablePoster = str_repeat('d', 32) . '.jpg';
+$hasPlayable = is_file($fixtureDir . '/preview.mp4') && is_file($fixtureDir . '/preview.jpg');
+if ($hasPlayable) {
+    copy($fixtureDir . '/preview.mp4', $paths->pathFor('render', $workspaceId, $playableMp4));
+    copy($fixtureDir . '/preview.jpg', $paths->pathFor('render', $workspaceId, $playablePoster));
+}
 
-$db->transaction(static function (Database $db) use ($workspaceId, $userId, $now, $ago): void {
+// --- 2. Content (one short transaction; mock, deterministic) ----------------
+
+$db->transaction(static function (Database $db) use ($workspaceId, $userId, $now, $ago, $hasPlayable, $playableMp4, $playablePoster): void {
     // Trend Radar: niche config + a batch of cached signals.
     $db->run(
         'INSERT INTO trend_config (workspace_id, niche, region, updated_at) VALUES (?, ?, ?, ?)',
@@ -192,6 +209,17 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
         $ago(8),
     );
+    // PREVIEW approval — compliance passed; with a PLAYABLE draft render when the
+    // fixture exists (so the inline player actually plays a real mock clip).
+    $reviewResult = ['ai_label_required' => true, 'compliance' => ['status' => 'pass']];
+    if ($hasPlayable) {
+        $db->run(
+            'INSERT INTO renders (workspace_id, run_id, kind, stored_name, poster_name, mime, width, height, duration_s, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$workspaceId, $runAwaiting, 'draft', $playableMp4, $playablePoster, 'video/mp4', 540, 960, 3.0, $ago(6)],
+        );
+        $reviewResult['draft_render_id'] = $db->lastInsertId();
+    }
     $insertJob(
         $db,
         $workspaceId,
@@ -200,10 +228,7 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
         10,
         'render_review',
         'awaiting_approval',
-        json_encode([
-            'ai_label_required' => true,
-            'summary' => 'Draft preview ready for review.',
-        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+        json_encode($reviewResult, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
         $ago(6),
     );
     // Run A's per-node progression — gives the dashboard "production line"
@@ -228,17 +253,19 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
         );
     }
 
-    // Event log (drives /logs): a few truthful transition entries.
+    // Event log (drives /logs): REAL dictionary keys + full params so the feed
+    // renders fully interpolated and humanized — no raw event key, no literal
+    // {run}/{workflow}, no internal job-type enum (Phase 21 zero-jargon /logs).
     $events = [
-        ['info', 'transition', 'run.started', 75],
-        ['info', 'transition', 'job.completed', 60],
-        ['info', 'compliance', 'compliance.passed', 40],
-        ['warn', 'guardrail', 'guardrail.cap_warning', 20],
+        ['info', 'transition', 'run.started', ['run' => $runDone, 'workflow' => 'Distribution'], 75],
+        ['info', 'transition', 'job.finished', ['type' => 'caption_generation', 'run' => $runDone], 60],
+        ['info', 'compliance', 'compliance.passed', ['run' => $runDone], 40],
+        ['warn', 'guardrail', 'guardrail.daily_cap_reached', ['used' => 2, 'cap' => 3, 'run' => $runDone], 20],
     ];
-    foreach ($events as [$level, $kind, $key, $minsAgo]) {
+    foreach ($events as [$level, $kind, $key, $params, $minsAgo]) {
         $db->run(
             'INSERT INTO events (workspace_id, run_id, level, kind, key, params_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [$workspaceId, $runDone, $level, $kind, $key, '{}', $ago($minsAgo)],
+            [$workspaceId, $runDone, $level, $kind, $key, json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago($minsAgo)],
         );
     }
 
@@ -259,6 +286,28 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
             'INSERT INTO accounts (workspace_id, platform, handle, status, health, connected_at, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [$workspaceId, $platform, $handle, $status, $health, $now, $now, $now],
+        );
+    }
+
+    // Library assets — VIDEO kind only (the library INDEX renders a styled tile +
+    // hover play affordance for video, with NO <img>/<video> load → still 0 × 404;
+    // the detail page is out of the gate's route set). Populates the v3 asset grid.
+    $libAssets = [
+        ['own', 'Morning routine reset', 24.0, ['routine', 'morning']],
+        ['own', 'One-pan dinner b-roll', 31.0, ['cooking', 'dinner']],
+        ['face', 'Talking-head intro clip', 18.0, ['face', 'intro']],
+    ];
+    foreach ($libAssets as $idx => [$type, $title, $dur, $tags]) {
+        $db->run(
+            'INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime,
+                size_bytes, sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at)
+             VALUES (?, \'video\', ?, ?, ?, ?, \'video/mp4\', ?, ?, ?, 1080, 1920, \'9:16\', ?, \'ready\', ?, ?)',
+            [
+                $workspaceId, $type, $title, $title . '.mp4',
+                str_pad((string) ($idx + 1), 32, '0', STR_PAD_LEFT) . '.mp4',
+                4_200_000 + $idx * 100_000, str_repeat('0', 64), $dur,
+                json_encode($tags, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(90 - $idx * 5), $ago(90 - $idx * 5),
+            ],
         );
     }
 });

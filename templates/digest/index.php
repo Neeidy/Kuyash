@@ -35,14 +35,13 @@ $next = gmdate('Y-m-d', (int) strtotime($date . 'T00:00:00Z') + 86400);
 </div>
 <?php endif; ?>
 
-<div class="card">
+<div class="card card--primary">
   <div class="card__head"><h2><?= View::t('digest.status') ?></h2></div>
   <div class="card__body">
     <div class="digest-status">
       <span class="chip chip--<?= $digest['approval_mode'] === 'auto' ? 'warn' : 'ok' ?>"><span class="dot"></span><?= View::t('digest.mode_label') ?> <?= View::e((string) $digest['approval_mode']) ?></span>
       <span class="chip chip--<?= $digest['kill_switch'] ? 'err' : 'ok' ?>"><span class="dot"></span><?= View::t('digest.kill_switch_label') ?> <?= $digest['kill_switch'] ? View::t('digest.on') : View::t('digest.off') ?></span>
       <span class="chip chip--neutral num"><?= View::t('digest.quality_label') ?> <?= (int) $digest['quality']['sample'] >= 5 ? (int) $digest['quality']['score'] : '—' ?> (<?= View::t('digest.sample') ?> <?= (int) $digest['quality']['sample'] ?>)</span>
-      <span class="chip chip--faint mono"><?= View::t('digest.policy_label') ?> <?= View::e((string) $digest['quality']['policy']) ?></span>
     </div>
   </div>
 </div>
@@ -62,7 +61,7 @@ $next = gmdate('Y-m-d', (int) strtotime($date . 'T00:00:00Z') + 86400);
         <img class="digest-thumb" src="/render/<?= (int) $item['render']['id'] ?>/poster" alt="" loading="lazy">
         <?php endif; ?>
         <div class="job-row__main">
-          <span class="job-row__type mono"><?= View::e((string) $item['node']) ?> · <?= View::t('common.run_n', ['n' => (int) $item['run_id']]) ?></span>
+          <span class="job-row__type"><?= View::e(Messages::node((string) $item['node'])) ?> · <?= View::t('common.run_n', ['n' => (int) $item['run_id']]) ?></span>
           <span class="job-row__entity"><?= View::t('digest.approved_by_agent', ['policy' => (string) $item['policy_version']]) ?>
             · <?= View::e(Format::utcTime((string) $item['decided_at'])) ?>
             <?php if (isset($item['score']['quality']['score'])): ?> · <?= View::t('digest.score_label') ?> <?= (int) $item['score']['quality']['score'] ?><?php endif; ?></span>

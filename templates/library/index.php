@@ -105,6 +105,7 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
       <img src="/media/<?= (int) $item['id'] ?>" alt="" loading="lazy">
       <?php else: ?>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" width="26" height="26"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>
+      <span class="asset-card__play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
       <?php endif; ?>
       <?php if ($item['duration_s'] !== null): ?>
       <span class="asset-thumb__dur"><?= View::e(Format::duration($item['duration_s'])) ?></span>

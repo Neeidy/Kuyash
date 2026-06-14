@@ -21,7 +21,6 @@ $killOn = $settings['kill_switch'];
   </div>
   <div class="screen-head__actions">
     <span class="chip chip--<?= $isAuto ? 'warn' : 'ok' ?>"><span class="dot"></span><?= View::t('digest.mode_label') ?> <?= View::e($settings['approval_mode']) ?></span>
-    <span class="chip chip--faint mono"><?= View::t('digest.policy_label') ?> <?= View::e($policyVersion) ?></span>
   </div>
 </div>
 
@@ -53,7 +52,7 @@ $killOn = $settings['kill_switch'];
   </div>
 </div>
 
-<div class="card">
+<div class="card card--primary">
   <div class="card__head"><h2><?= View::t('settings.mode_card') ?></h2></div>
   <div class="card__body">
     <form method="post" action="/settings" class="settings-form">
@@ -91,9 +90,7 @@ $killOn = $settings['kill_switch'];
 </div>
 
 <div class="card">
-  <div class="card__head"><h2><?= View::t('settings.quality_score') ?></h2>
-    <span class="card__action"><span class="chip chip--faint mono"><?= View::t('digest.policy_label') ?> <?= View::e($policyVersion) ?></span></span>
-  </div>
+  <div class="card__head"><h2><?= View::t('settings.quality_score') ?></h2></div>
   <div class="card__body">
     <?php $hasSample = (int) $quality['sample'] >= 5; ?>
     <div class="quality-row">

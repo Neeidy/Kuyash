@@ -192,7 +192,7 @@ $biz = $cockpit['business'];
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= View::t('dash.run_n', ['n' => (int) $run['id']]) ?> — <?= View::e((string) $run['workflow_name']) ?></span>
-          <span class="job-row__entity mono"><?= $run['current_node'] !== null ? View::t('dash.at') . ' ' . View::e((string) $run['current_node']) : '' ?></span>
+          <span class="job-row__entity"><?= $run['current_node'] !== null ? View::t('dash.at') . ' ' . View::e(Messages::node((string) $run['current_node'])) : '' ?></span>
         </div>
         <span class="chip chip--<?= \Kuyash\Core\Format::statusTone((string) $run['status']) ?>"><span class="dot dot--<?= \Kuyash\Core\Format::statusTone((string) $run['status']) ?>"></span><?= View::e(\Kuyash\Core\Messages::status((string) $run['status'])) ?></span>
         <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $run['id'] ?>"><?= View::t('dash.timeline') ?></a>

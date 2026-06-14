@@ -34,9 +34,13 @@
   --surface-3: #1e1e22;
   --border: #26262b;
   --border-strong: #34343b;
-  --text: #e4e4e7;
-  --text-2: #a1a1aa;
-  --text-3: #8a8a93; /* Phase 20: nudged again (was #7c7c85) so the faint tier clears WCAG AA on EVERY surface — bg 5.78 / surface 5.51 / surface-2 5.23 / surface-3 4.86 (≥4.5:1); resolves phase-15-followups A11Y-1 AND A11Y-2 */
+  /* Phase 21: a whisper of teal in the neutral text ramp — a pure HUE shift
+     (green-cyan, G ≥ B > R, leaning toward the brand teal) with luminance held
+     or RAISED, so WCAG AA is preserved/improved. Replaces the old cool-blue zinc
+     (R = G < B). Kept subtle (≈5-7 points) per the "fısıltı tint" brief. */
+  --text: #e3e9e7;     /* near-white, ~15:1 on surface */
+  --text-2: #9ea6a3;   /* ~7.6:1 on surface */
+  --text-3: #888f8c; /* faint tier STILL clears WCAG AA on EVERY surface — measured bg 5.99 / surface 5.71 / surface-2 5.41 / surface-3 5.03 (≥4.5:1, all ≥ the old #8a8a93); resolves phase-15-followups A11Y-1 + A11Y-2 */
 
   /* single brand accent — Ops Teal. Primary actions, active nav, focus ring ONLY.
      Phase 16: reconciled to the approved v3 teal (#2ff0d2) — a global value swap,
@@ -120,6 +124,11 @@
 * { margin: 0; }
 
 html { -webkit-text-size-adjust: 100%; }
+
+/* the [hidden] attribute must win over component display rules (e.g. .note is
+   display:flex, which otherwise leaves a [hidden] warning visible). Only applies
+   WHILE hidden — once JS clears the attribute the element's own display returns. */
+[hidden] { display: none !important; }
 
 body {
   font-family: var(--font-ui);

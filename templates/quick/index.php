@@ -28,7 +28,7 @@ use Kuyash\Core\View;
   <div><strong><?= View::t('quick.ai_callout_1') ?></strong> <?= View::t('quick.ai_callout_2') ?> <strong><?= View::t('quick.ai_callout_strong') ?></strong> <?= View::t('quick.ai_callout_3') ?> <a href="/usage"><?= View::t('nav.usage') ?></a><?= View::t('quick.ai_callout_4') ?></div>
 </div>
 
-<form class="card" method="post" action="/quick" enctype="multipart/form-data">
+<form class="card card--primary" method="post" action="/quick" enctype="multipart/form-data">
   <?= $csrfField ?>
   <div class="card__head"><h2><?= View::t('quick.photo_prompt') ?></h2>
     <span class="card__action"><span class="chip chip--ai"><?= View::t('quick.ai_always_on') ?></span></span>
