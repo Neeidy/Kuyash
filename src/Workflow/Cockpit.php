@@ -39,7 +39,7 @@ final class Cockpit
     /**
      * @return array{
      *   kpis: array{active: int, awaiting: int, completed: int, renders: int, cache_hits: int},
-     *   business: array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, cost_per_content_cents: int|null, awaiting: int},
+     *   business: array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, budget_cap_cents: int|null, remaining_budget_cents: int|null, cost_per_content_cents: int|null, awaiting: int},
      *   pipeline: array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null,
      *   activeRuns: list<array<string, mixed>>,
      *   awaiting: list<array<string, mixed>>,
@@ -163,28 +163,46 @@ final class Cockpit
     }
 
     /**
-     * Business KPI strip — all real. cost-per-content is the all-time average
-     * cost per produced render (null when nothing has rendered yet, so the UI
-     * shows "—" instead of a divide-by-zero or a fabricated figure).
+     * Business KPI strip — all real, BYO-key budget model. The headline is
+     * REMAINING BUDGET = monthly cap − month-to-date spend (null when no cap is
+     * set → the UI says "no limit"); the cap is the same value Settings writes to
+     * workspaces.budget_cap_cents and the Phase 11 PreflightGate enforces.
+     * Month-to-date spend is the live usage ledger. cost-per-content is the
+     * all-time average REAL spend per produced render — null (→ "no data") when
+     * there is no recorded spend OR no render yet (never a divide-by-zero, never a
+     * misleading "$0.00 per render"). balance_cents/granted_week_cents stay for the
+     * Usage screen's credit-ledger view; the dashboard no longer surfaces them.
      *
-     * @return array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, cost_per_content_cents: int|null, awaiting: int}
+     * @return array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, budget_cap_cents: int|null, remaining_budget_cents: int|null, cost_per_content_cents: int|null, awaiting: int}
      */
     private function business(int $ws, string $now, int $awaiting, int $renders): array
     {
-        $totals = $this->ledger->totals($ws);
         $weekAgo = gmdate('Y-m-d\TH:i:s\Z', (strtotime($now . ' -7 days')) ?: time());
         $grantedWeek = $this->db->one(
             "SELECT COALESCE(SUM(amount_cents), 0) AS c FROM credit_transactions
              WHERE workspace_id = ? AND type = 'grant' AND created_at >= ?",
             [$ws, $weekAgo],
         );
+        $spentMtd = $this->usage->monthToDateSpendCents($ws, $now);
+        // the budget cap Settings saved (NULL = no monthly limit); read straight
+        // from the tenant row, the same column PreflightGate consults.
+        $capRow = $this->db->one('SELECT budget_cap_cents FROM workspaces WHERE id = ?', [$ws]);
+        $cap = isset($capRow['budget_cap_cents']) && $capRow['budget_cap_cents'] !== null
+            ? (int) $capRow['budget_cap_cents'] : null;
+        // all-time REAL spend (usage ledger) for the honest per-content average
+        $spentAll = (int) ($this->db->one(
+            'SELECT COALESCE(SUM(cost_cents), 0) AS c FROM usage_events WHERE workspace_id = ?',
+            [$ws],
+        )['c'] ?? 0);
 
         return [
             'balance_cents' => $this->ledger->balanceCents($ws),
-            'spent_mtd_cents' => $this->usage->monthToDateSpendCents($ws, $now),
+            'spent_mtd_cents' => $spentMtd,
             'charges_mtd' => $this->usage->monthToDateEventCount($ws, $now),
             'granted_week_cents' => (int) ($grantedWeek['c'] ?? 0),
-            'cost_per_content_cents' => $renders > 0 ? intdiv($totals['spent'], $renders) : null,
+            'budget_cap_cents' => $cap,
+            'remaining_budget_cents' => $cap === null ? null : max(0, $cap - $spentMtd),
+            'cost_per_content_cents' => ($renders > 0 && $spentAll > 0) ? intdiv($spentAll, $renders) : null,
             'awaiting' => $awaiting,
         ];
     }

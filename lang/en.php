@@ -191,6 +191,9 @@ return [
     'dash.kpi_cache' => 'cache reuses',
     // Phase 17 — business KPI strip + accounts widget + inline player
     'dash.kpi_balance' => 'remaining balance',
+    'dash.kpi_budget' => 'remaining budget',
+    'dash.budget_of' => 'of {amount} cap this month',
+    'dash.no_budget_cap' => 'no monthly limit set',
     'dash.kpi_spent' => 'spent this month',
     'dash.kpi_cost_per' => 'cost per content',
     'dash.added_week' => '+{amount} added this week',

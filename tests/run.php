@@ -5307,6 +5307,17 @@ check('preflight: exception carries estimate / remaining / cap + flash key', (st
 })());
 $pfSettings->setBudgetCapCents($pfWs, 100); // remaining 100c > estimate 10c
 check('preflight: cap above estimate → run starts again', $pfEngine->startRun($pfCtx, $pfWf, null, $pfUser) > 0);
+// the user's scenario: a $1 cap blocks an EXPENSIVE run (quick_create AI-video,
+// ~$7.02 estimate) even with $0 spent — PreflightGate consults the SAME
+// budget_cap_cents Settings writes, on the estimate alone (no photo/Engine needed).
+check('preflight: $1 cap blocks a quick_create (AI-video ~$7) run on the estimate alone', (static function () use ($pfCfg, $pfDb, $pfSettings, $pfEvents, $pfWs): bool {
+    $cap = $pfSettings->compliance($pfWs)['budget_cap_cents'];
+    $gate = new PreflightGate(new CostEstimator($pfCfg), new UsageRepository($pfDb), $pfSettings, $pfEvents);
+    return $cap === 100 && throws(
+        static fn () => $gate->check($pfWs, 'quick_create', \Kuyash\Workflow\Nodes::defaultNodes('quick_create'), '2026-06-12T12:00:00Z'),
+        BudgetExceededException::class,
+    );
+})());
 $_SESSION = [];
 
 echo "== Usage: recording via Engine::finalize (real cost vs mock) ==\n";
@@ -6029,6 +6040,39 @@ $p17Tr = require $basePath . '/lang/tr.php';
 $p17Keys = ['dash.kpi_balance', 'dash.kpi_spent', 'dash.kpi_cost_per', 'dash.added_week', 'dash.charges_mtd', 'dash.no_data_yet', 'dash.accounts_title', 'dash.accounts_none', 'player.play', 'player.playing', 'player.preview_pending'];
 check('p17: new dashboard/player keys present in en.php', array_filter($p17Keys, static fn(string $k): bool => !isset($p17En[$k])) === []);
 check('p17: new dashboard/player keys present in tr.php (parity, both languages)', array_filter($p17Keys, static fn(string $k): bool => !isset($p17Tr[$k])) === []);
+
+echo "== Dashboard: BYO-key budget KPI (remaining budget = cap − spent; honest no-data) ==\n";
+$budDb = migratedDb($basePath);
+[$budUser, $budWs] = seedUser($budDb, 'bud@example.com', $argonHash, 'Budget WS');
+$budNow = gmdate(NOW_ISO);
+$budCtx = new WorkspaceContext($budDb); $budCtx->set($budWs);
+$budPaths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+$budCockpit = new \Kuyash\Workflow\Cockpit($budDb, new AssetCache($budDb, $budPaths), new CreditLedger($budDb), new UsageRepository($budDb), new AccountRepository($budDb), new \Kuyash\Workflow\JobRepository($budDb));
+$budSettings = new WorkspaceSettings($budDb);
+// minimal FK-valid chain (workflow → run → job) so a real usage_event + render attach
+$budDb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'F','full','[]',?,?)", [$budWs, $budNow, $budNow]);
+$budWf = (int) $budDb->lastInsertId();
+$budDb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'trend','[]','running',?,?,?)", [$budWs, $budWf, $budUser, $budNow, $budNow]);
+$budRun = (int) $budDb->lastInsertId();
+$budDb->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,payload_json,result_json,run_after,priority,created_at) VALUES (?,?,'IDEA',1,'idea_generation','ready','{}','{}',?,100,?)", [$budWs, $budRun, $budNow, $budNow]);
+$budJob = (int) $budDb->lastInsertId();
+// no cap → both budget fields null ("no monthly limit")
+$budBiz0 = $budCockpit->snapshot($budCtx, $budNow)['business'];
+check('dash/budget: no cap → budget_cap_cents + remaining_budget_cents are NULL (UI shows "no limit")',
+    $budBiz0['budget_cap_cents'] === null && $budBiz0['remaining_budget_cents'] === null);
+// cost-per-content with a render but ZERO spend → "no data", not a misleading $0.00
+$budDb->run("INSERT INTO renders (workspace_id,run_id,kind,stored_name,mime,width,height,duration_s,created_at) VALUES (?,?,'final',?,'video/mp4',1080,1920,20.0,?)", [$budWs, $budRun, str_repeat('1',32).'.mp4', $budNow]);
+$budBizR = $budCockpit->snapshot($budCtx, $budNow)['business'];
+check('dash/budget: render present but zero real spend → cost-per-content is NULL ("no data", not $0.00)',
+    $budBizR['cost_per_content_cents'] === null);
+// set a $5 cap via the SAME setter SettingsController::save calls, then spend $1.20 this month
+$budSettings->setBudgetCapCents($budWs, 500);
+$budDb->run("INSERT INTO usage_events (workspace_id,run_id,job_id,provider,category,units,cost_cents,created_at) VALUES (?,?,?,'openai','ai_text',1,120,?)", [$budWs, $budRun, $budJob, $budNow]);
+$budBiz1 = $budCockpit->snapshot($budCtx, $budNow)['business'];
+check('dash/budget: remaining budget = cap − month-to-date spend (500 − 120 = 380c)',
+    $budBiz1['budget_cap_cents'] === 500 && $budBiz1['spent_mtd_cents'] === 120 && $budBiz1['remaining_budget_cents'] === 380);
+check('dash/budget: with real spend + a render, cost-per-content becomes a real average (120c / 1 render)',
+    $budBiz1['cost_per_content_cents'] === 120);
 
 echo "== Phase 18: production-line node-graph (real job status → node state) ==\n";
 $p18Db = migratedDb($basePath);

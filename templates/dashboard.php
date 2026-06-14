@@ -15,7 +15,7 @@ use Kuyash\Core\View;
 /**
  * @var array{
  *   kpis: array<string,int>,
- *   business: array{balance_cents:int, spent_mtd_cents:int, charges_mtd:int, granted_week_cents:int, cost_per_content_cents:int|null, awaiting:int},
+ *   business: array{balance_cents:int, spent_mtd_cents:int, charges_mtd:int, granted_week_cents:int, budget_cap_cents:int|null, remaining_budget_cents:int|null, cost_per_content_cents:int|null, awaiting:int},
  *   activeRuns: list<array<string,mixed>>,
  *   awaiting: list<array<string,mixed>>,
  *   accounts: list<array<string,mixed>>
@@ -44,10 +44,13 @@ $biz = $cockpit['business'];
 
 <div class="kpi-strip">
   <div class="kpi">
-    <span class="kpi__label"><?= View::t('dash.kpi_balance') ?></span>
-    <span class="kpi__num num mono" data-count="<?= number_format($biz['balance_cents'] / 100, 2, '.', '') ?>" data-count-prefix="$" data-count-decimals="2"><?= View::e(Format::cents($biz['balance_cents'])) ?></span>
-    <?php if ($biz['granted_week_cents'] > 0): ?>
-    <span class="kpi__delta kpi__delta--up"><?= View::t('dash.added_week', ['amount' => Format::cents($biz['granted_week_cents'])]) ?></span>
+    <span class="kpi__label"><?= View::t('dash.kpi_budget') ?></span>
+    <?php if ($biz['remaining_budget_cents'] !== null): ?>
+    <span class="kpi__num num mono" data-count="<?= number_format($biz['remaining_budget_cents'] / 100, 2, '.', '') ?>" data-count-prefix="$" data-count-decimals="2"><?= View::e(Format::cents($biz['remaining_budget_cents'])) ?></span>
+    <span class="kpi__delta"><?= View::t('dash.budget_of', ['amount' => Format::cents((int) $biz['budget_cap_cents'])]) ?></span>
+    <?php else: ?>
+    <span class="kpi__num num mono">—</span>
+    <span class="kpi__delta"><?= View::t('dash.no_budget_cap') ?></span>
     <?php endif; ?>
   </div>
   <div class="kpi">

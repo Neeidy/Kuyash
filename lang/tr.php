@@ -187,6 +187,9 @@ return [
     'dash.kpi_cache' => 'önbellek isabeti',
     // Phase 17 — business KPI strip + accounts widget + inline player
     'dash.kpi_balance' => 'kalan bakiye',
+    'dash.kpi_budget' => 'kalan bütçe',
+    'dash.budget_of' => 'bu ay {amount} limitten',
+    'dash.no_budget_cap' => 'aylık limit ayarlanmadı',
     'dash.kpi_spent' => 'bu ay harcanan',
     'dash.kpi_cost_per' => 'içerik başı maliyet',
     'dash.added_week' => 'bu hafta +{amount} eklendi',
