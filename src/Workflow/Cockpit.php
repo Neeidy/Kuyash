@@ -40,6 +40,7 @@ final class Cockpit
      * @return array{
      *   kpis: array{active: int, awaiting: int, completed: int, renders: int, cache_hits: int},
      *   business: array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, cost_per_content_cents: int|null, awaiting: int},
+     *   pipeline: array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null,
      *   activeRuns: list<array<string, mixed>>,
      *   awaiting: list<array<string, mixed>>,
      *   accounts: list<array<string, mixed>>
@@ -53,10 +54,80 @@ final class Cockpit
         return [
             'kpis' => $kpis,
             'business' => $this->business($ws, $now, $kpis['awaiting'], $kpis['renders']),
+            'pipeline' => $this->pipeline($ws),
             'activeRuns' => $this->activeRuns($ws),
             'awaiting' => array_slice($this->jobs->awaitingApproval($ctx), 0, 4),
             'accounts' => array_slice($this->accountRepo->listFor($ctx, 6), 0, 4),
         ];
+    }
+
+    /**
+     * The "production line" node-graph for the most-recently-active run: the
+     * ordered nodes, each tagged with a display state derived from REAL job
+     * status (done / active / wait / failed). Pure VISUALIZE — the engine stays
+     * linear; this never changes a run. Null when nothing is in production.
+     *
+     * @return array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null
+     */
+    private function pipeline(int $ws): ?array
+    {
+        $run = $this->db->one(
+            "SELECT r.id, r.nodes_json, w.template
+             FROM runs r JOIN workflows w ON w.id = r.workflow_id
+             WHERE r.workspace_id = ? AND r.status IN ('running', 'awaiting_approval')
+             ORDER BY r.updated_at DESC, r.id DESC LIMIT 1",
+            [$ws],
+        );
+        if ($run === null) {
+            return null;
+        }
+        $nodes = json_decode((string) $run['nodes_json'], true);
+        if (!is_array($nodes) || $nodes === []) {
+            return null;
+        }
+        $jobs = $this->db->all('SELECT node, status FROM jobs WHERE workspace_id = ? AND run_id = ?', [$ws, (int) $run['id']]);
+        $byNode = [];
+        foreach ($jobs as $j) {
+            $byNode[(string) $j['node']][] = (string) $j['status'];
+        }
+        $out = [];
+        foreach ($nodes as $n) {
+            $name = (string) ($n['node'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $out[] = ['name' => $name, 'state' => $this->nodeGraphState($name, $byNode[$name] ?? [])];
+        }
+
+        return ['run_id' => (int) $run['id'], 'template' => (string) $run['template'], 'nodes' => $out];
+    }
+
+    /**
+     * Map a node's REAL job statuses to a graph state. Same precedence the run
+     * timeline uses (failed > awaiting/active > done > waiting); collapsed to the
+     * four states the node-graph draws.
+     *
+     * @param list<string> $statuses
+     */
+    private function nodeGraphState(string $node, array $statuses): string
+    {
+        if ($statuses === []) {
+            return 'wait';
+        }
+        if (in_array('failed', $statuses, true)) {
+            return 'failed';
+        }
+        if (in_array('awaiting_approval', $statuses, true)
+            || in_array('processing', $statuses, true)
+            || in_array('queued', $statuses, true)) {
+            return 'active';
+        }
+        if (in_array('cancelled', $statuses, true)) {
+            return 'wait';
+        }
+        $expected = count(Nodes::NODE_JOBS[$node] ?? []);
+
+        return count($statuses) >= max(1, $expected) ? 'done' : 'active';
     }
 
     /**

@@ -1040,3 +1040,88 @@ html:not(.js) .cmdk-trigger { display: none; }
 .acct-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .acct-row__handle { font-size: 13px; font-weight: 550; }
 .acct-row__plat { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 18 — Pipeline / Workflow node-graph (production line). Each node's
+   state is real job status. node-graph.js draws the connectors; the active
+   node carries a static glow + opacity heartbeat (§1.2-approved active cue) and
+   the feeding segment animates stroke-dashoffset. transform/opacity/dashoffset
+   ONLY; no blur, no spinner. Mobile = stacked cards (connectors hidden).
+   ════════════════════════════════════════════════════════════════════════ */
+@keyframes pl-hb { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+.pipeline-flow { position: relative; padding: var(--s2) var(--s1) var(--s1); }
+.pipeline-conns {
+  position: absolute; left: var(--s1); right: var(--s1); top: var(--s2);
+  width: calc(100% - 2 * var(--s1)); height: 60px; pointer-events: none; overflow: visible;
+}
+.pipeline-nodes { display: flex; justify-content: space-between; gap: var(--s1); position: relative; z-index: 2; }
+.pl-node {
+  flex: 1 1 0; min-width: 0; max-width: 84px; text-align: center; cursor: pointer;
+  background: none; border: 0; padding: 0; color: inherit;
+  display: flex; flex-direction: column; align-items: center;
+}
+.pl-node__chip {
+  width: 100%; max-width: 60px; height: 56px; border-radius: 13px;
+  border: 1px solid var(--border-strong); background: var(--surface-2);
+  display: grid; place-items: center; position: relative; margin-bottom: var(--s2);
+  transition: transform var(--dur-quick) var(--ease-out), border-color var(--dur-quick) var(--ease-out);
+}
+.pl-node__chip svg { width: 24px; height: 24px; color: var(--text-3); }
+.pl-node:hover .pl-node__chip { transform: translateY(-2px); border-color: var(--accent); }
+.pl-node__name { font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-2); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.pl-node__stt { margin-top: 4px; display: inline-flex; }
+.pl-node__stt svg { width: 14px; height: 14px; }
+
+/* done */
+.pl-node--done .pl-node__chip { border-color: rgba(74, 222, 128, 0.4); background: var(--ok-dim); }
+.pl-node--done .pl-node__chip svg, .pl-node--done .pl-node__stt svg { color: var(--ok); }
+/* active — static glow + opacity heartbeat (maps to a processing node) */
+.pl-node--active .pl-node__chip { border-color: var(--accent); background: var(--accent-dim); box-shadow: 0 0 18px var(--accent-dim); }
+.pl-node--active .pl-node__chip::after {
+  content: ""; position: absolute; inset: -1px; border-radius: 13px;
+  border: 1px solid var(--accent); animation: pl-hb 2s ease-in-out infinite;
+}
+.pl-node--active .pl-node__chip svg, .pl-node--active .pl-node__stt svg { color: var(--accent); }
+.pl-node--active .pl-node__stt svg { animation: pl-hb 1.6s ease-in-out infinite; }
+/* wait */
+.pl-node--wait .pl-node__chip { opacity: 0.5; }
+.pl-node--wait .pl-node__name { color: var(--text-3); }
+/* failed */
+.pl-node--failed .pl-node__chip { border-color: rgba(244, 63, 94, 0.45); }
+.pl-node--failed .pl-node__chip svg, .pl-node--failed .pl-node__stt svg { color: var(--err); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-node--active .pl-node__chip::after, .pl-node--active .pl-node__stt svg { animation: none; }
+}
+
+/* drawer content rendered for a node (Phase 18 templates) */
+.nodestat {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: var(--r-ctl); font-size: 12px; font-weight: 600;
+  text-transform: capitalize; margin-bottom: var(--s4);
+}
+.nodestat--done { background: var(--ok-dim); color: var(--ok); }
+.nodestat--active { background: var(--accent-dim); color: var(--accent); }
+.nodestat--wait { background: var(--surface-2); color: var(--text-3); }
+.nodestat--failed { background: var(--err-dim); color: var(--err); }
+.drawer-desc { color: var(--text-2); font-size: 13.5px; line-height: 1.6; margin-bottom: var(--s4); }
+.drawer-flow {
+  display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+  font-size: 12px; color: var(--text-2); margin-bottom: var(--s4);
+}
+.drawer-flow__arrow { color: var(--text-3); }
+
+/* mobile: hide connectors, stack the nodes into rows (frontend node-graph rule) */
+@media (max-width: 720px) {
+  .pipeline-conns { display: none; }
+  .pipeline-nodes { flex-direction: column; gap: var(--s2); }
+  .pl-node {
+    flex-direction: row; align-items: center; gap: var(--s3); max-width: none; text-align: left;
+    border: 1px solid var(--border); border-radius: var(--r-ctl); padding: var(--s2) var(--s3); background: var(--surface-2);
+  }
+  .pl-node__chip { width: 38px; height: 38px; margin: 0; flex: none; }
+  .pl-node__chip svg { width: 18px; height: 18px; }
+  .pl-node__name { font-size: 12px; white-space: normal; flex: 1; }
+  .pl-node__stt { margin: 0; }
+}

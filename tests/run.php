@@ -6021,6 +6021,54 @@ $p17Keys = ['dash.kpi_balance', 'dash.kpi_spent', 'dash.kpi_cost_per', 'dash.add
 check('p17: new dashboard/player keys present in en.php', array_filter($p17Keys, static fn(string $k): bool => !isset($p17En[$k])) === []);
 check('p17: new dashboard/player keys present in tr.php (parity, both languages)', array_filter($p17Keys, static fn(string $k): bool => !isset($p17Tr[$k])) === []);
 
+echo "== Phase 18: production-line node-graph (real job status → node state) ==\n";
+$p18Db = migratedDb($basePath);
+[$p18User, $p18Ws] = seedUser($p18Db, 'p18@example.com', $argonHash, 'P18 WS');
+$p18Now = gmdate('Y-m-d\TH:i:s\Z');
+$p18Db->run('INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [$p18Ws, 'Full', 'full', json_encode(\Kuyash\Workflow\Nodes::defaultNodes('full')), $p18Now, $p18Now]);
+$p18Wf = (int) $p18Db->lastInsertId();
+$p18Db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, current_node, created_by, created_at, updated_at) VALUES (?, ?, 'trend', ?, 'running', 'VOICE', ?, ?, ?)",
+    [$p18Ws, $p18Wf, json_encode(\Kuyash\Workflow\Nodes::defaultNodes('full')), $p18User, $p18Now, $p18Now]);
+$p18Run = (int) $p18Db->lastInsertId();
+$p18Job = static function (string $node, int $step, string $type, string $status) use ($p18Db, $p18Ws, $p18Run, $p18Now): void {
+    $p18Db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, result_json, run_after, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, '{}', '{}', ?, 100, ?)",
+        [$p18Ws, $p18Run, $node, $step, $type, $status, $p18Now, $p18Now]);
+};
+$p18Job('TREND', 1, 'trend_fetch', 'ready');
+$p18Job('IDEA', 2, 'idea_generation', 'ready');
+$p18Job('VOICE', 4, 'tts', 'processing');
+$p18Ctx = new WorkspaceContext($p18Db);
+$p18Ctx->set($p18Ws);
+$p18Paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+$p18Cockpit = new \Kuyash\Workflow\Cockpit($p18Db, new AssetCache($p18Db, $p18Paths), new CreditLedger($p18Db), new UsageRepository($p18Db), new AccountRepository($p18Db), new \Kuyash\Workflow\JobRepository($p18Db));
+$p18Pipe = $p18Cockpit->snapshot($p18Ctx, $p18Now)['pipeline'];
+$p18ByName = [];
+foreach (($p18Pipe['nodes'] ?? []) as $n) { $p18ByName[$n['name']] = $n['state']; }
+check('p18: completed-job nodes map to done', ($p18ByName['TREND'] ?? null) === 'done' && ($p18ByName['IDEA'] ?? null) === 'done');
+check('p18: a processing job maps the node to active', ($p18ByName['VOICE'] ?? null) === 'active');
+check('p18: a node with no job maps to wait', ($p18ByName['VISUALS'] ?? null) === 'wait' && ($p18ByName['PUBLISH'] ?? null) === 'wait');
+check('p18: pipeline tracks the canonical full node order', ($p18Pipe['nodes'][0]['name'] ?? null) === 'TREND' && count($p18Pipe['nodes']) === count(\Kuyash\Workflow\Nodes::FULL));
+check('p18: no active run → pipeline is null (honest empty, no fabricated graph)', (static function () use ($p18Db, $p18Cockpit, $p18Now): bool {
+    $idle = new WorkspaceContext($p18Db);
+    $p18Db->run('INSERT INTO workspaces (name, created_at, updated_at) VALUES (?, ?, ?)', ['Idle', $p18Now, $p18Now]);
+    $idle->set((int) $p18Db->lastInsertId());
+    return $p18Cockpit->snapshot($idle, $p18Now)['pipeline'] === null;
+})());
+$p18En = require $basePath . '/lang/en.php';
+$p18Tr = require $basePath . '/lang/tr.php';
+$p18Keys = ['pipeline.title', 'pipeline.flow_in', 'pipeline.flow_process', 'pipeline.flow_out', 'node.desc.trend', 'node.desc.voice', 'node.desc.compliance', 'node.desc.publish'];
+check('p18: pipeline/node-desc keys present in BOTH languages (parity)', array_filter($p18Keys, static fn(string $k): bool => !isset($p18En[$k]) || !isset($p18Tr[$k])) === []);
+check('p18: node descriptions carry no UI tech-jargon (no ffmpeg/TTS/queue/job)', (static function () use ($p18En, $p18Tr): bool {
+    foreach (['en' => $p18En, 'tr' => $p18Tr] as $map) {
+        foreach ($map as $k => $v) {
+            if (!str_starts_with((string) $k, 'node.desc.')) { continue; }
+            if (preg_match('/\b(ffmpeg|tts|queue|cron|sql|webhook)\b/i', (string) $v)) { return false; }
+        }
+    }
+    return true;
+})());
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(

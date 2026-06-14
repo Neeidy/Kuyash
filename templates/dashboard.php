@@ -71,6 +71,18 @@ $healthTone = static fn (string $h): string => match ($h) {
   </div>
 </div>
 
+<?php if ($cockpit['pipeline'] !== null): ?>
+<div class="card pipeline-card">
+  <div class="card__head">
+    <h2><?= View::t('pipeline.title') ?></h2>
+    <span class="card__action"><span class="chip chip--neutral mono"><?= View::t('pipeline.content_n', ['n' => (int) $cockpit['pipeline']['run_id']]) ?></span></span>
+  </div>
+  <div class="card__body">
+    <?php $pipeline = $cockpit['pipeline']; require __DIR__ . '/partials/pipeline.php'; ?>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="cockpit-grid">
   <div class="card card--primary">
     <div class="card__head">

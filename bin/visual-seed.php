@@ -206,6 +206,14 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
         $ago(6),
     );
+    // Run A's per-node progression — gives the dashboard "production line"
+    // node-graph a real done → done → done → active → waiting shape (the early
+    // nodes finished, VOICE is processing now). Media-free (no renders linked).
+    $insertJob($db, $workspaceId, $runRunning, 'TREND', 1, 'trend_fetch', 'ready', '{}', $ago(16));
+    $insertJob($db, $workspaceId, $runRunning, 'IDEA', 2, 'idea_generation', 'ready', '{}', $ago(14));
+    $insertJob($db, $workspaceId, $runRunning, 'SCRIPT', 3, 'script_draft', 'ready', '{}', $ago(12));
+    $insertJob($db, $workspaceId, $runRunning, 'VOICE', 4, 'tts', 'processing', '{}', $ago(4));
+
     // A couple of finished jobs on the completed run (flat list texture).
     $insertJob($db, $workspaceId, $runDone, 'CAPTION', 2, 'caption_generation', 'ready', '{}', $ago(150));
     $insertJob($db, $workspaceId, $runDone, 'PUBLISH', 7, 'publish', 'published', '{}', $ago(120));

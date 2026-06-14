@@ -7,34 +7,40 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-13
-- Güncelleyen: Claude (**`/go` SÜREKLİ LOOP ÇALIŞIYOR — FAZ 16 + 17 KABUL + commit'li (her biri kendi branch'inde,
-  stack). SIRADA: FAZ 18 (loop devam).** Faz 17 = İmza Dashboard, GERÇEK dev-DB verisine bağlı, DÜRÜST (uydurma
-  metrik YOK). Değişen: `Cockpit` (business KPI [balance/spent-MTD/cost-per-content null→"—"/awaiting] + connected
-  accounts [yalnız platform/handle/health, fabricate YOK] + rich awaiting [JobRepo reuse]; salt-okuma, tenant-scope;
-  ölü `awaiting()` silindi), `web.php` binding (+4 servis), `DashboardController` ($now), `dashboard.php` (KPI strip
-  count-up + inline-player onay kartları + accounts widget), yeni `inline-player.js` (play-in-card, gerçek
-  timeupdate→scaleX, preload=none → seed'de 404 yok, drawer AÇMAZ), `motion.js` (count-up money data-count),
-  `app.css` (F17 bloğu), `lang/en+tr` (+16 `dash.*`/`player.*` parite), `AccountRepository::listFor` (JOIN
-  workspace-scope hardening), `tests/run.php` (+8). **746 PASS/0 FAIL**; visual **69 PNG / 0 err / 0 overflow /
-  exit 0**. **4 gate PASS/0 blocker** (ux, qa, security [2 LOW pre-existing → takip], **compliance GATE: dürüst
-  rozet + AI label + 0 fabricated metric EN&TR**). Branch `feat/phase-17-signature-dashboard` (F16'dan stack).
-  [F16 `8a6f561`, F15.9 `42a7bda`, F15.5 `840d1bb`].)
+- Güncelleyen: Claude (**`/go` SÜREKLİ LOOP — FAZ 16+17+18 KABUL + commit'li (her biri kendi branch'inde, stack).
+  SIRADA: FAZ 19 (SSE canlı, loop devam).** Faz 18 = Pipeline/Workflow node-graph, GERÇEK job state'inden,
+  ENGINE DOKUNULMADI (salt visualize). Yeni `Cockpit::pipeline()` + `nodeGraphState()` (top active run'ın
+  ordered node'ları → done/active/wait/failed; salt-okuma SELECT, tenant-scope; idle→null), `templates/partials/
+  pipeline.php` (SVG + node chip'leri + her node için ESCAPED `<template>` drawer içeriği — sade açıklama,
+  jargonsuz), `node-graph.js` (SVG connector çiz: done kanal / active fill-flow [stroke-dashoffset SMIL,
+  reduced-motion'da skip] / wait dashes; click→drawer Faz16 `data-drawer-open` ile, XSS-safe template). `app.css`
+  (F18 bloğu: pl-node done/active[statik glow + opacity heartbeat]/wait/failed, mobil STACKED fallback [SVG
+  display:none]). `dashboard.php` ("Üretim hattı" kartı, pipeline null→kart gizli). `lang/en+tr` (+21 `pipeline.*`/
+  `node.desc.*` parite, PLAIN dil). `bin/visual-seed.php` (Run A'ya done×3+active×1 job — dev-seed, media-free).
+  `tests/run.php` (+7: state-mapping/canonical-order/idle-null/parite/jargon-free). **753 PASS/0 FAIL**; visual
+  **69 PNG / 0 err / 0 overflow / exit 0**. **3 gate PASS/0 blocker** (ux: jargonsuz teyit + mobil stacked; qa:
+  ENGINE UNTOUCHED + scope/parite/build-free; security: 0 HIGH, drawer innerHTML invariant KORUNDU [escaped
+  template], `$st` enum View::e hardening UYGULANDI). Branch `feat/phase-18-pipeline-viz` (F17'den stack).
+  [F17 `231b709`, F16 `8a6f561`, F15.9 `42a7bda`].)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **`/go` SÜREKLİ LOOP — FAZ 16 + 17 KABUL + commit'li** (her faz kendi branch'inde, STACK; push YOK).
-  Loop branch'leri STACK eder: F18 → `feat/phase-17-signature-dashboard`'tan branch'lenir (önceki fazlar temel).
+- Aşama: **`/go` SÜREKLİ LOOP — FAZ 16+17+18 KABUL + commit'li** (her faz kendi branch'inde, STACK; push YOK).
+  Loop branch'leri STACK eder: F19 → `feat/phase-18-pipeline-viz`'ten branch'lenir (önceki fazlar temel).
   Run sonunda kullanıcı tüm stack'i inceler, beğenmediği fazı `git revert <faz-commit>` ile geri alır.
-  Branch'ler: F17 `feat/phase-17-signature-dashboard` (F16'dan), F16 `feat/phase-16-motion-core` (main'den).
-  Faz feat commit'leri: F16 `8a6f561`. origin/main = `ec795ba` (loop push yapmaz).
-- **Faz 16 özeti** (Motion & Interaction Core; salt client-side): global teal `#2ff0d2`, statik ambient gradient,
-  kayan-pill sidebar, ⌘K palette + genel drawer (display:none modal, backdrop-filter yalnız bunlarda), KPI
-  count-up, `.main>*` CSS giriş. Plan `phase-16-plan.md`.
-- **Faz 17 özeti** (İmza Dashboard; GERÇEK veri + DÜRÜST): business KPI strip + inline-player onay kartları
-  (placeholder media-free seed'de; gerçek render'la oynar) + connected-accounts widget (fabricate YOK). Plan
-  `phase-17-plan.md`. Açık takip (genel): pre-existing jargon (`nav.foot_title`, worker banner, node-id mono
-  etiketler) → F20 honest-copy; drawer `innerHTML` invariant → F18 (dinamik içerik escaped); JobRepo `SELECT *`
-  read-model (LOW, latent) → F20; inline `<video>` no-native-controls JS-off (view-run linki var, kabul).
+  Branch'ler: F18 `feat/phase-18-pipeline-viz` (F17'den), F17 `feat/phase-17-signature-dashboard` (F16'dan),
+  F16 `feat/phase-16-motion-core` (main'den). Commit'ler: F18 `feat/phase-18-pipeline-viz` tip, F17 `231b709`,
+  F16 `8a6f561`. origin/main `ec795ba` (loop push yapmaz).
+- **F16** (Motion Core): teal `#2ff0d2`, ambient gradient, kayan-pill, ⌘K palette + genel drawer, KPI count-up,
+  `.main>*` CSS giriş. Plan `phase-16-plan.md`.
+- **F17** (İmza Dashboard; GERÇEK+DÜRÜST): business KPI strip + inline-player onay kartları + connected-accounts
+  widget (fabricate YOK). `Cockpit` business/accounts/rich-awaiting. Plan `phase-17-plan.md`.
+- **F18** (Pipeline node-graph; GERÇEK job state, ENGINE DOKUNULMADI): `Cockpit::pipeline()` + node-graph partial
+  + `node-graph.js` (fill-flow) + drawer (escaped template, jargonsuz desc) + mobil stacked. Plan `phase-18-plan.md` YOK
+  (spec `experience-layer-plan.md` §6).
+- **Açık takip (genel):** pre-existing jargon (`nav.foot_title` "Phase 12 · …", worker banner, node-id mono
+  etiketler queue/runs'ta) → F20 honest-copy; JobRepo `SELECT *` read-model (LOW) → F20; 768px chip-adı truncation
+  (cosmetic) → F20; inline `<video>` no-native-controls JS-off (view-run linki var, kabul).
 - Faz 15.9 özeti (salt DEV ARAÇ; ürün PHP/DB/route/template/CSS DOKUNULMADI): `go.md`'in dayandığı görsel-gate
   altyapısı. **Yeni dosyalar:** `tools/visual/shot.mjs` (sıfır-bağımlılık Node CDP driver — sistem Chrome'u
   `--remote-debugging-port` ile sürer, salt Node built-in `WebSocket`/`fetch`; login→route×{375/768/1280}×{en/tr}→
@@ -99,14 +105,15 @@
 
 ## Sıradaki adım
 
-0. **`/go` LOOP DEVAM → SIRADA FAZ 18** (Pipeline/Workflow görselleştirme: node-graph + aktif aşamaya akan
-   **fill-flow** [stroke-dashoffset] + durum simgeleri [✓/⚡/kesik halka] + kutuya-tıkla → **drawer** [sade,
-   jargonsuz "Gelen→İşlem→Çıktı"]; mobil **stacked kart** fallback; GERÇEK job state'inden aktif indeks; ENGINE
-   DOKUNULMAZ [sadece visualize]). Spec: `experience-layer-plan.md` §6. **Branch:
-   `feat/phase-17-signature-dashboard`'tan `feat/phase-18-<slug>` aç** (stack). Görsel kaynak: `prototype-v3.html`
-   (`.flow`/`.nodes`/`.conns` SVG + `openNodeDrawer` sade panel). F16 drawer mekanizmasını KULLAN (drawer.js
-   `PL.drawer.open`/`openTemplate`); dinamik içerik ESCAPED olmalı (security takip). UI'da ffmpeg/TTS/queue jargonu
-   YOK. Reviewer: ux + qa + security (compliance gerekmez — rozet/AI-label yüzeyi yok).
+0. **`/go` LOOP DEVAM → SIRADA FAZ 19** (Canlı Katman / SSE: F17-18 statik bileşenleri GERÇEK dev-DB state'iyle
+   **canlandır**. Pure-PHP **SSE** endpoint + tek event-arayüzünü paylaşan JS canlı-client [mock-first: ticker ya
+   da gerçek SSE'den beslenir]. Canlı: tıkan KPI'lar, akan aktivite, render-kuyruğu ilerlemesi, **nabız atan job
+   durumu** [pipeline aktif kutusu], **topbar "NEXT UP — mm:ss"** geri sayım + heartbeat noktası. **Tenant-scoped
+   stream; YALNIZ kısa SQLite okuması [stream'de UZUN TRANSACTION YOK]; zarif reconnect; JS/SSE yoksa statik
+   render'a düşer**). Spec: `experience-layer-plan.md` §7. **Branch: `feat/phase-18-pipeline-viz`'ten
+   `feat/phase-19-<slug>` aç** (stack). **Tek gerçek backend yüzeyi — izole tut**; yeni route + okuma, YAZMA YOK.
+   **GÜVENLİK AĞIR**: tenant izolasyon + stream yetki + kaynak/timeout limiti + secret yok. Reviewer: **security +
+   ux ZORUNLU** (qa da). Bu fazda topbar heartbeat artık canlı state'e bağlı (P16'da bilinçli ertelendi).
 0b. **Loop akışı (her faz):** READ→PLAN(`phase-<N>-plan.md`)→BUILD→3 gate PARALEL (ux görsel / qa kod / security)
    [+compliance F17/F20]→hepsi PASS ise VERDICT→branch commit (push YOK)→checkpoint+log→/clear→sonraki faz.
    Gate FAIL → düzelt + yalnız düşen gate'i tekrar, max 2 deneme; aşılırsa `/stop-and-report` + DUR (commit yok).
@@ -139,6 +146,7 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-06-13 — **`/go` LOOP — FAZ 18 KABUL (Pipeline/Workflow node-graph).** GERÇEK job state'inden, **ENGINE DOKUNULMADI** (salt visualize). Yeni `Cockpit::pipeline()` (top active run [running/awaiting], `nodes_json` decode + jobsByNode → her node done/active/wait/failed; salt-okuma SELECT workspace-scope; idle→`null`) + `nodeGraphState()` (runs/show.php `$nodeState` precedence'ını 4 state'e fold: failed>awaiting/processing/queued>cancelled>count>=expected?done:active). `templates/partials/pipeline.php` (`.pipeline-flow` SVG#pipeline-conns + `.pipeline-nodes` button chip'leri [chip ikonu + canonical ad + status ikonu ✓/⚡/dashed-ring] + her node için `<template id=node-tpl-{i}>` drawer içeriği: `nodestat` + PLAIN `node.desc.*` + "Gelen→İşlem→Çıktı" + auto-note; `$st` View::e). `node-graph.js` (vanilla IIFE: chip rect'lerinden SVG line çiz — done→done solid-green kanal, done→active **fill-flow** stroke-dashoffset SMIL + leading dot [reduced-motion'da skip], rest faint dashes; token renkleri hexA(); resize redraw; mobil SVG display:none→bail). `app.css` F18 bloğu (pl-node done[ok]/active[accent + statik glow box-shadow + `@keyframes pl-hb` opacity heartbeat + reduced-motion override]/wait[opacity.5]/failed[err]; `.nodestat`/`.drawer-desc`/`.drawer-flow`; **mobil ≤720px STACKED rows**, conns hidden). `dashboard.php` ("Üretim hattı · içerik #N" kartı KPI ile grid arası; `pipeline===null`→kart gizli). `app.php` (+node-graph.js script). `lang/en+tr` +21 `pipeline.*`/`node.desc.*` (PLAIN dil, jargonsuz; canonical node adları çevrilmedi; `runs.state_*` reuse). `bin/visual-seed.php` Run A'ya TREND/IDEA/SCRIPT(ready=done)+VOICE(processing=active) job — dev-seed, **media-free**. Drawer içeriği Faz16 `data-drawer-open`→`openTemplate` (escaped template, XSS-safe — drawer innerHTML invariant KORUNDU). `tests/run.php` +7 (done/active/wait mapping, canonical-order, **idle→null honest empty**, parite, **jargon-free desc**). **753 PASS/0 FAIL**; visual **69 PNG / 0 err / 0 overflow / exit 0**; CC gözüyle 1280-EN (yatay graph: done-yeşil/active-teal-glow/wait-faint + connectors/fill-flow) + 375-TR (STACKED: TREND✓ IDEA✓ SCRIPT✓ VOICE⚡ → dashed-ring wait, canonical adlar). **3 gate PASS/0 blocker**: ux (jargonsuz teyit, mobil stacked, §1.2 temiz; should_fix 768px chip truncation cosmetic), qa (753, **engine untouched** doğrulandı, scope/parite/build-free/JS-off), security (0 HIGH; 2 LOW: `$st` enum [View::e UYGULANDI] + statik SVG glyph [safe]). Branch `feat/phase-18-pipeline-viz` (F17'den stack). LOOP DEVAM → Faz 19 (SSE).
 - 2026-06-13 — **`/go` LOOP — FAZ 17 KABUL (İmza Dashboard).** GERÇEK dev-DB verisine bağlı + DÜRÜST (uydurma metrik YOK). `Cockpit` genişletildi (+CreditLedger/UsageRepository/AccountRepository/JobRepository; `snapshot($ctx,$now)` → `business` [balance_cents/spent_mtd/charges_mtd/granted_week/cost_per_content_cents NULL→"—"/awaiting] + `accounts` [listFor, yalnız platform/handle/health/reference] + rich `awaiting` [JobRepo::awaitingApproval reuse]; salt-okuma tenant-scope; ölü `awaiting()` silindi). `web.php` binding +4 servis; `DashboardController` $now passthrough. `dashboard.php` baştan yazıldı: business KPI strip (count-up money `data-count`, gerçek delta) + 2-col grid (inline-player onay kartları | connected-accounts widget) + active-runs. Yeni `inline-player.js` (overlay→video.play, gerçek timeupdate→progress scaleX, `<video preload=none>` → media-free seed'de 404 YOK, **drawer AÇMAZ** [eski bug structurally imkânsız: data-drawer-open yok + type=button]). `motion.js` count-up money modu (data-count/prefix/decimals; reduced-motion bail korundu). `app.css` F17 bloğu (inline-player/appr-card/acct-row; transform/opacity, yeni backdrop YOK). `lang/en+tr` +16 `dash.*`/`player.*` parite (eski "scheduling arrives in Phase 10" jargon satırı KALDIRILDI). `AccountRepository::listFor` JOIN'e `asset.workspace_id` hardening (security LOW). `tests/run.php` +8 (balance/cost-null/granted-week/rich-awaiting/accounts-no-fabricate/**tenant-isolation sibling-empty**/parite). **746 PASS/0 FAIL**; visual **69 PNG / 0 err / 0 overflow / exit 0**; CC gözüyle 1280-EN (KPI $43.90 +grant delta / inline-player placeholder / accounts health) + 375-TR (stacked, tam Türkçe, truthful onay notu "kayıtlar hiçbir şekilde sahte tutulmaz"). **4 gate PASS/0 blocker**: ux (jargon node-id → P20), qa (746, scope/parite/build-free/JS-off), security (0 HIGH; 2 LOW: listFor JOIN [UYGULANDI] + JobRepo SELECT* [P20]), **compliance GATE: truthful records + AI label + 0 fabricated metric EN&TR**. Branch `feat/phase-17-signature-dashboard` (F16'dan stack). LOOP DEVAM → Faz 18.
 - 2026-06-13 — **`/go` LOOP — FAZ 16 KABUL (Motion & Interaction Core).** Salt client-side enhancement; PHP/DB/route/screen DOKUNULMADI. Yeni: `motion.js` (PL namespace: `durOf` token okur, kayan-pill sidebar [mouseenter/focus → aktife döner], integer-only KPI count-up rAF), `palette.js` (⌘K palette: aç/filtrele/ok-Enter-Esc/focus-trap+restore, pure nav window.location), `drawer.js` (genel sağ panel `PL.drawer.open/openTemplate`, innerHTML yalnız escaped `<template>`'ten), `command-palette.php` + `drawer.php` partial'ları. Değişen: `base.css` (teal `#2dd4bf`→`#2ff0d2` global + `--glow`/`--accent-line` + statik ambient gradient [teal+violet radial, animasyonsuz, attach fixed] + overflow-x hidden), `app.css` (Faz 16 bloğu +~140: `.main>*` CSS giriş [reduced-motion sıfır, flash-free], pill, kpi hover-lift, ⌘K trigger, cmdk + drawer CSS [backdrop-filter YALNIZ bunların scrim'inde]), `app.php` (head'de `html.js` sync script + topbar ⌘K trigger + 2 partial require + 3 script defer), `lang/en+tr` (+9 `cmd.*`/`help.*` parite), `tests/run.php` (+6 p16 testi). Doğrulama: **738 PASS/0 FAIL**; visual gate **69 PNG / 0 console-error / 0 overflow / exit 0**; CC gözüyle dashboard 1280-EN (pill+brighter-teal+ambient+count-up) ve 375-TR (hamburger, icon-only ⌘K, tam Türkçe, stacked, no-overflow) teyit. §1.2 motion temiz: yalnız transform/opacity keyframe (pl-rise/fade/pop), backdrop-filter sadece `.cmdk`+`.drawer__scrim`, spinner/animasyonlu-blur/kalıcı-backdrop YOK, her animasyon state'e bağlı, reduced-motion tüm token sıfır, no-JS güvenli (html.js gate, content JS'e bağımlı gizlenmiyor). 3 gate **PASS/0 blocker**: ux (pill height-transition should_fix UYGULANDI → yalnız transform/opacity), qa (738 PASS, scope temiz, parite, build-free, JS-off fallback), security (0 HIGH, 2 LOW: drawer innerHTML invariant F17/18 + data-label F17). Branch `feat/phase-16-motion-core` (main'den). LOOP DEVAM → Faz 17.
 - 2026-06-13 — START PHASE 15.9: Loop & Visual-Test Infra İNŞA EDİLDİ (Experience Layer altyapı fazı; ürün kodu DOKUNULMADI). `go.md`'in dayandığı GERÇEK görsel-gate altyapısı kuruldu. Karar: **sıfır-bağımlılık Node CDP harness** (sistem Chrome `/Applications/...` + Node v26 built-in `WebSocket`/`fetch` → npm/package.json/Playwright YOK; app build-free kaldı) + **izole visual DB** (`DB_PATH=storage/database/kuyash-visual.sqlite`, `APP_ENV=dev` → cookie non-Secure, http login çalışır). Yeni: `tools/visual/shot.mjs` (CDP driver: login→form-submit, locale-switch CSRF-form-submit, route×{375/768/1280}×{en/tr}, console-error[favicon hariç]+overflow yakala, full-page PNG, exit 1/2/0), `tools/visual/gate.sh` (seed→`php -S` 8099→/health→shot→teardown), `tools/visual/routes.json` (11 nav+login), `bin/visual-seed.php` (idempotent, MEDIA-FREE seed: awaiting job result_json'da draft_render_id YOK → 0 broken-media 404; `Nodes::defaultNodes()` ile doğru nodes_json), `tools/visual/README.md`, `.claude/docs/loop-gates.md` (3-gate görev şablonları). `.gitignore`(+storage/visual/) + `Caddyfile`(+/tools/* blok) ±2. Doğrulama: self-test `--only /dashboard`→6 PNG; tam baseline→**69 PNG, 0 console-error/0 overflow/exit 0**; fail-path (3000px overflow + console.error)→**exit 1**; **732 PASS**; ürün dosyası 0; package.json/node_modules YOK. Görsel teyit (CC gözüyle): dashboard EN/TR gerçek render (KPI 2/1/1/2/0, awaiting strip card--primary accent band, AI rozet), TR/375 tam Türkçe+responsive (hamburger, stacked, "ÖNBELLEK İSABETİ"). 3 reviewer **GO/0 blocker**: qa (scope/idempotent/exit-logic), security (0 blocker, 2 LOW), ux (baseline dürüstçe yeşil, gerçek i18n/responsive/empty-state/dürüst-rozet). Hardening UYGULANDI: visual-seed DB_PATH 'visual' guard (bare-run→exit 2) + Caddy /tools/* parity. Commit YAPILMADI — kabul bekliyor.
@@ -148,4 +156,3 @@
 - 2026-06-13 — START PHASE 15: Design Foundation (konsolidasyon) İNŞA EDİLDİ. Keşif premisi çürüttü → premium karanlık sistem app'te zaten vardı; iş = salt CSS **drift-fix** (yalnız `base.css`+`app.css`, +~18; template DEĞİŞMEDİ). 5 düzeltme: tanımsız `var(--radius)`→`--r-card` (trend/KPI kare köşe); off-palette `var(--text-dim,#8b949e)`→`--text-3` ×6; `var(--surface-2,#0d1117)`→`--surface-2`; ölü selektör base.css `.kpi__value`→`.kpi__num`+quality+trend (tabular-nums); 3 sayı idiomu (kpi/quality/trend) → mono+500 (JetBrains yalnız 400/500 yüklü, 700 faux-bold'du). Audit: 0 off-palette fallback, her `var(--token)` çözülüyor (yalnız inline `--i` stagger hariç), kalan raw hex sadece kasıtlı `#000` letterbox + `#fff` danger. 732 PASS. HTTP smoke: 11 ekran 200/0-hata, error sayfaları 404/302, 0 harici istek, TR toggle `lang="tr"` %100. ux-reviewer KOŞULLU-GO (0 blocker, 1 should-fix): `--text-3` (#6b6b74) faint tier küçük metinde WCAG AA altı (~3.4-3.8:1) — UYGULANDI: talimat metni `.field__hint`→`--text-2` (AA geçer); kalan faint-tier app-geneli pre-existing borç açıkça kaydedildi → `phase-15-followups.md` A11Y-1 (elevation 16/18). KABUL: kullanıcı ayrıca dark temada beyaz gelen native date/time input fix'ini istedi → `input[type=datetime-local/date/time]` `color-scheme:dark` + token-uyumlu form stili (yalnız app.css; queue'da 4 canlı publish-schedule input'a uygulanıyor; served-CSS+/queue 200 smoke OK; 732 PASS korundu). feat `3fda7d0` commit + `git push origin main` (auto-push). phase-plan.md'ye **Elevation Decision Gate** notu eklendi (chore) → kullanıcı ekrana bakıp elevation kararını ŞİMDİ verir: gerekmez→F16, gerekir→F15.5 ("sonra bakılır" yok).
 - 2026-06-13 — chore(state) push (`2ac3a4f`): Experience Layer fazları (15-18) phase-plan.md'ye + checkpoint Faz 15'e işaretlendi. Sonra **/next-phase → Faz 15 planı** (Plan Mode): keşif premisi çürüttü — premium karanlık tasarım sistemi GERÇEK app'te ZATEN var (`base.css`/`app.css` demo'dan faz faz portlandı, app düz değil). Kullanıcı **"konsolide et şimdi, sonra yükselt"** seçti → Faz 15 restyle DEĞİL = **drift-fix + tutarlılık denetimi** (tanımsız `--radius`, off-palette `--text-dim`/`#0d1117`, ölü `.kpi__value` selektörü, 3 sayı idiomu). Plan ONAYLANDI → `~/.claude/plans/lovely-spinning-cupcake.md`. Dokunulan: yalnız 2 CSS dosyası; ux-reviewer ZORUNLU. Kod YAZILMADI — `START PHASE 15` bekleniyor.
 - 2026-06-13 — PLAN GENİŞLETİLDİ: kullanıcı phase-plan.md'ye **Experience Layer fazları (15-18)** ekledi — 15 Design Foundation (look, salt restyle/token/komponent, 21 template; PHP/DB/route+i18n DOKUNULMAZ), 16 Motion & Interaction (feel; View Transitions, Cmd+K, drawer, reduced-motion), 17 Live Ops/SSE (alive; pure-PHP SSE, tenant-scoped, **tek gerçek backend yüzeyi**, security+ux ZORUNLU), 18 Signature Visualizations (distinctive; node graph read-only, platform-skin preview, ticker — additive). Checkpoint "Sıradaki adım" güncellendi → **SIRADA Faz 15**. Bir sonraki adım: `/next-phase` ile Faz 15 planı (Plan Mode). Kod YAZILMADI; bu sadece plan+checkpoint güncellemesi (faz token'ı YOK).
-- 2026-06-13 — FAZ 14 KABUL: kullanıcı kabul + commit + push onayı verdi. Güvenlik kapısı (secret grep temiz) → Faz 14 feat `2e4bd41` commit + `git push origin main` (auto-push). Faz 14 implementasyon detayı `architecture-decisions.md`'ye taşındı (ADR-020), "Mevcut durum" ~4 satıra indirildi (~1 sayfa kuralı). V1 sonrası rota: operatör enable-time / V2 parking lot / followups.
