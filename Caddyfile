@@ -36,7 +36,7 @@
 
 	# never serve dotfiles or any non-public directory (defense in depth: the
 	# app already routes everything through public/index.php)
-	@blocked path /.* /storage/* /src/* /config/* /templates/* /database/* /bin/* /tests/*
+	@blocked path /.* /storage/* /src/* /config/* /templates/* /database/* /bin/* /tests/* /tools/*
 	respond @blocked 404
 
 	php_fastcgi 127.0.0.1:9000

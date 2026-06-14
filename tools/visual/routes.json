@@ -1,0 +1,19 @@
+{
+  "_comment": "Phase 15.9 visual-test screen inventory. shot.mjs renders each page at every width x locale. 'auth' false = reachable without login (skipped during the authenticated pass). Detail routes (/workflows/{id}, /runs/{id}, /library/asset/{id}) are intentionally excluded — they need a stable seeded id and are covered indirectly by their index pages.",
+  "screens": [
+    { "path": "/login", "name": "login", "auth": false },
+    { "path": "/dashboard", "name": "dashboard", "auth": true },
+    { "path": "/quick", "name": "quick-create", "auth": true },
+    { "path": "/trends", "name": "trends", "auth": true },
+    { "path": "/library", "name": "library", "auth": true },
+    { "path": "/workflows", "name": "workflows", "auth": true },
+    { "path": "/queue", "name": "queue", "auth": true },
+    { "path": "/accounts", "name": "accounts", "auth": true },
+    { "path": "/logs", "name": "logs", "auth": true },
+    { "path": "/digest", "name": "digest", "auth": true },
+    { "path": "/usage", "name": "usage", "auth": true },
+    { "path": "/settings", "name": "settings", "auth": true }
+  ],
+  "widths": [375, 768, 1280],
+  "locales": ["en", "tr"]
+}

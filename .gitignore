@@ -47,3 +47,8 @@ storage/cache/
 storage/work/
 storage/_test_media/
 storage/logs/
+
+# Phase 15.9 visual-test harness output (screenshots; dev-only, never committed).
+# The isolated visual DB (storage/database/kuyash-visual.sqlite) is already
+# covered by *.sqlite + storage/database/ above.
+storage/visual/
