@@ -92,7 +92,7 @@ Her bileşen tekrar kullanılır PHP partial + CSS/JS modülü olur:
 
 ---
 
-## 2. Otonom Loop Sistemi (`/goal`)
+## 2. Otonom Loop Sistemi (`/go`)
 
 ### 2.1 Döngü akışı
 
@@ -143,22 +143,25 @@ Her bileşen tekrar kullanılır PHP partial + CSS/JS modülü olur:
 
 Bir subagent "ekranı göremez", kod okur. Görsel gate'in **gerçek** olması için lokal render + screenshot altyapısı şart. Yoksa görsel test sahtedir — bu da seni koruyan tek otomatik kapıyı çürütür. Bu altyapı Faz 15.9'da kurulur (aşağıda).
 
-### 2.5 İnsan kapısı politikası (kritik)
+### 2.5 Çalışma modu — SÜREKLİ, faz-arası durak YOK (kullanıcı kararı 2026-06-13)
 
-Loop senin manuel "tarayıcıda görürüm" kapını bir **AI görsel-gate'iyle** değiştiriyor. AI kapısı *kırık layout / regresyon / kural ihlali* yakalar; **zevk** ("premium mi, istediğim hava var mı") otomatikleşmez. Bu yüzden:
+Loop **tek seferde** 16 → 17 → 18 → 19 → 20 koşar. Faz-arası **insan onayı yok**; CC fazlar arasında
+durup sormaz, bir fazı bitirince commit + checkpoint + `/clear` yapıp **hemen sonrakine** geçer.
 
-| Faz | İnsan kapısı | Gerekçe |
-|---|---|---|
-| 15.9 (altyapı) | **EVET** | loop'un temeli; bir kez doğru kurulmalı |
-| 16 (motion) | **EVET** | his/zevk kritik |
-| 17 (dashboard) | **EVET** | görünüm vitrini |
-| 18 (pipeline) | **EVET** | imza bileşen, zevk kritik |
-| 19 (SSE/canlı) | opsiyonel | çoğu mantık; istersen bak |
-| 20 (cila/perf) | opsiyonel | düşük risk |
+Senin manuel "tarayıcıda görürüm" kapın kaldırıldı; yerine **sonunda toplu inceleme** geldi: her faz kendi
+branch'ine commit'lenir (push yok), run bitince sen tüm fazları birden inceler ve beğenmediğin fazı `git revert`
+ile geri alırsın. Tek otomatik kalite koruması **3-agent gate**'tir — bu yüzden gate sert kalır, asla sahte PASS yok.
 
-"İnsan kapısı EVET" = loop o fazı yapar, verdict + screenshot üretir, **DURUR**; sen tarayıcıda bakıp `START PHASE <N+1>` ile devam ettirirsin. İlk fazları izleyerek koş; agent kalitesine güvendikçe 19–20'yi tam otonom bırak.
+**Loop yalnız şu sert koşullarda durur (onay için değil, emniyet için):**
+- **(H1)** Bir gate 2 düzeltme denemesinden sonra hâlâ FAIL → `stop-and-report`, o faz commit edilmez, **tüm loop durur.**
+- **(H2)** Görsel araç render edemiyor → DUR (kod-okuma görsel testin yerine geçmez, gate sahtelenmez).
+- **(H3)** Faz 20 tamamlandı → tüm fazların verdict + branch listesini sun, dur.
+- **(H4)** Context/token bütçesi run ortasında biter → checkpoint zaten güncel; temiz dur, kullanıcı bir kez daha
+  `/go` yazıp kalan fazdan devam ettirir. (Bu teknik bir devam noktasıdır, onay kapısı DEĞİL.)
 
----
+> **Dürüst sınır:** "tek mesaj, sonuna kadar hiç dokunma" yalnız context bütçesi yettiği sürece tam garanti.
+> Pratikte birkaç faz kesintisiz gider; context dolarsa (H4) tek kelimeyle devam ettirilir. Tam gözetimsiz
+> uçtan-uca tek-koşu istiyorsan headless harness gerekir (ayrı kurulum) — interaktif modda en yakın hâli budur.
 
 ## 3. Faz 15.9 — Loop & Görsel-Test Altyapısı · token: `START PHASE 15.9`
 
@@ -167,13 +170,13 @@ Loop senin manuel "tarayıcıda görürüm" kapını bir **AI görsel-gate'iyle*
 **Kapsam:**
 - Lokal çalıştırma scripti: Caddy+PHP'yi dev modda ayağa kaldır, dev-DB seed (mock veri), sağlık kontrolü.
 - Headless screenshot aracı: Playwright **veya** sistemde mevcut Chrome ile script — verilen route listesini 375/768/1280 + EN/TR açıp PNG kaydeder, console error toplar. (Node bağımlılığı dev-only; ürün bağımlılığı DEĞİL — `package.json` yalnız dev-tooling, app hâlâ build-free.)
-- `/goal` slash komutu (`.claude/commands/goal.md`): §2.1 akışını, fail-cap'i, branch-commit'i, `/clear` disiplinini, insan-kapısı tablosunu içerir.
+- `/go` slash komutu (`.claude/commands/go.md`): §2.1 akışını, fail-cap'i, branch-commit'i, `/clear` disiplinini, insan-kapısı tablosunu içerir.
 - Orchestrator talimatı + 3 gate çağrısının nasıl yapılacağı (mevcut `ux-reviewer`/`qa-reviewer`/`security-auditor` agent'larına görev şablonları).
 - `stop-and-report` ile entegrasyon (fail-cap aşımında).
 
 **Kapsam dışı:** ürün UI/DB/route değişikliği; CI/CD; uzaktan deploy.
 
-**Acceptance:** `/goal` boş bir deneme fazında uçtan uca koşuyor (plan→kur(noop)→3 gate→verdict→branch commit→/clear); görsel araç gerçekten 6 screenshot üretiyor; fail senaryosu 2 denemeden sonra duruyor.
+**Acceptance:** `/go` boş bir deneme fazında uçtan uca koşuyor (plan→kur(noop)→3 gate→verdict→branch commit→/clear); görsel araç gerçekten 6 screenshot üretiyor; fail senaryosu 2 denemeden sonra duruyor.
 
 **Test:** görsel = araç gerçek PNG üretiyor mu (kendini test); kod = script'ler hatasız + app hâlâ build-free + 732 PASS; güvenlik = script secret basmıyor, dev-only ayrımı net.
 
@@ -295,8 +298,8 @@ Loop senin manuel "tarayıcıda görürüm" kapını bir **AI görsel-gate'iyle*
 ## 9. Özet
 
 - **6 token'lı adım:** 15.9 (altyapı) → 16 (motion) → 17 (dashboard) → 18 (pipeline) → 19 (canlı) → 20 (cila).
-- **Loop:** `/goal` her fazı plan→kur→test(3 paralel gate)→verdict→branch-commit→/clear ile yapar; fail-cap 2 → hard-stop; insan kapısı 15.9/16/17/18'de zorunlu, 19/20'de opsiyonel.
+- **Loop:** `/go` her fazı plan→kur→test(3 paralel gate)→verdict→branch-commit→/clear ile yapar; fail-cap 2 → hard-stop; insan kapısı 15.9/16/17/18'de zorunlu, 19/20'de opsiyonel.
 - **v3 prototipi** repoya kopyalanıp her fazın görsel referansı olur; çelişkide token-isim ui-style-guide'dan, değer+davranış v3'ten.
 - **Mimari dokunulmaz:** Pure PHP, build-free, vanilla JS, progressive enhancement, mobil fallback, dürüst rozet, jargonsuz UI, reduced-motion.
 
-**Onaylanan kararlar (2026-06-13):** (1) teal accent global değişim — EVET; (2) Faz 15.9 ayrı altyapı fazı — EVET; (3) plan repoya entegre edildi (phase-plan.md + bu doküman + prototype-v3 + /goal komutu).
+**Onaylanan kararlar (2026-06-13):** (1) teal accent global değişim — EVET; (2) Faz 15.9 ayrı altyapı fazı — EVET; (3) plan repoya entegre edildi (phase-plan.md + bu doküman + prototype-v3 + /go komutu).
