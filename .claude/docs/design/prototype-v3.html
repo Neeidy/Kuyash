@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kuyash — Prototip v3 (hafif)</title>
+<style>
+:root{
+  --bg:#050507; --bg2:#08080c; --s1:#0d0e14; --s2:#13141c; --s3:#1c1e28;
+  --line:#1e2029; --line2:#2a2d3a;
+  --txt:#f4f6fb; --txt-soft:#cfd5e2; --meta:#7b8395;
+  --acc:#2ff0d2; --acc2:#13c4a8; --glow:rgba(47,240,210,.4);
+  --violet:#b794ff; --ok:#3ee594; --warn:#ffc24b; --danger:#ff6b6b; --ai:#b794ff;
+  --r:16px; --r2:11px;
+  --e:cubic-bezier(.22,1,.36,1); --spring:cubic-bezier(.34,1.56,.64,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+html{scroll-behavior:smooth}
+/* STATIC ambient gradient — painted once, zero animation, zero GPU cost */
+body{
+  background:
+    radial-gradient(680px 480px at 82% -8%,rgba(47,240,210,.10),transparent 60%),
+    radial-gradient(560px 460px at 8% 108%,rgba(183,148,255,.08),transparent 60%),
+    var(--bg);
+  background-attachment:fixed;
+  color:var(--txt);font:14.5px/1.55 'Inter',-apple-system,'Segoe UI',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;letter-spacing:-.005em;
+}
+.mono{font-family:ui-monospace,'SF Mono','JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
+.app{display:flex;min-height:100vh}
+/* SIDEBAR — solid, no backdrop-filter */
+.side{width:236px;flex-shrink:0;padding:22px 14px;border-right:1px solid var(--line);position:sticky;top:0;height:100vh;display:flex;flex-direction:column;background:rgba(8,8,12,.65)}
+.brand{display:flex;align-items:center;gap:11px;padding:0 10px 24px;font-weight:700;font-size:18px;letter-spacing:-.02em}
+.brand .logo{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;color:#04221d;font-weight:800;box-shadow:0 0 22px var(--glow)}
+.nav{position:relative;display:flex;flex-direction:column;gap:3px}
+.nav .pill{position:absolute;left:0;width:100%;height:40px;border-radius:11px;background:linear-gradient(90deg,rgba(47,240,210,.16),rgba(47,240,210,.03));border:1px solid rgba(47,240,210,.22);transition:transform .3s var(--spring);z-index:0}
+.nav a{position:relative;z-index:1;display:flex;align-items:center;gap:12px;padding:0 13px;height:40px;border-radius:11px;color:var(--txt-soft);text-decoration:none;font-size:14px;font-weight:500;transition:color .18s,transform .18s var(--e);cursor:pointer}
+.nav a:hover{color:#fff;transform:translateX(3px)}
+.nav a.on{color:var(--acc)}
+.nav a svg{width:18px;height:18px;flex-shrink:0}
+.side-foot{margin-top:auto;padding:13px 11px;color:var(--meta);font-size:11.5px}
+.side-foot .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:7px;box-shadow:0 0 8px var(--ok)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{display:flex;align-items:center;gap:14px;padding:17px 32px;border-bottom:1px solid var(--line)}
+.ws{display:flex;align-items:center;gap:9px;padding:8px 14px;border:1px solid var(--line2);border-radius:11px;font-size:13.5px;font-weight:500;background:var(--s1);cursor:pointer;transition:border-color .18s}
+.ws:hover{border-color:var(--acc2)}
+.ws .av{width:21px;height:21px;border-radius:7px;background:linear-gradient(135deg,#2ff0d2,#60a5fa)}
+.top .sp{flex:1}
+.kbd{padding:7px 13px;border:1px solid var(--line2);border-radius:10px;font-size:12.5px;color:var(--txt-soft);background:var(--s1);cursor:pointer;display:flex;gap:8px;align-items:center;transition:.16s}
+.kbd:hover{border-color:var(--acc2);color:#fff}
+.kbd b{font-family:monospace;color:var(--meta)}
+.live{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-soft)}
+/* single cheap heartbeat via opacity (compositor) */
+.live .ld{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);animation:hb 2.4s ease-in-out infinite}
+@keyframes hb{0%,100%{opacity:1}50%{opacity:.45}}
+.uav{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#b794ff,#2ff0d2);cursor:pointer;box-shadow:0 0 0 2px var(--s1),0 0 0 3px var(--line2)}
+.wrap{padding:30px 32px 70px;max-width:1300px}
+.h1{font-size:32px;font-weight:700;letter-spacing:-.03em;line-height:1.1;margin-bottom:6px;background:linear-gradient(180deg,#fff 35%,#9aa3b6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.sub{color:var(--txt-soft);font-size:14.5px;margin-bottom:28px}
+.sub b{color:var(--acc);font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:26px}
+.kpi{background:linear-gradient(165deg,var(--s1),var(--bg2));border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;transition:transform .28s var(--spring),border-color .28s}
+.kpi:hover{transform:translateY(-3px);border-color:var(--line2)}
+.kpi::before{content:"";position:absolute;top:0;left:20%;right:20%;height:1px;background:linear-gradient(90deg,transparent,var(--acc),transparent);opacity:.5}
+.kpi .kl{font-size:12px;color:var(--txt-soft);font-weight:500;margin-bottom:11px}
+.kpi .kv{font-size:32px;font-weight:700;letter-spacing:-.03em;line-height:1;color:#fff}
+.kpi .kv.acc{color:var(--acc)} .kpi .kv.violet{color:var(--violet)}
+.kpi .delta{font-size:12px;font-weight:500;margin-top:9px;display:flex;align-items:center;gap:5px}
+.kpi .delta.up{color:var(--ok)} .kpi .delta.dn{color:var(--danger)} .kpi .delta.n{color:var(--txt-soft)}
+.spark{position:absolute;right:16px;bottom:16px;width:68px;height:30px;opacity:.85}
+.card{background:linear-gradient(165deg,var(--s1),var(--bg2));border:1px solid var(--line);border-radius:var(--r);margin-bottom:26px;overflow:hidden}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:17px 22px;border-bottom:1px solid var(--line)}
+.card-h h2{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.card-h .tag{font-size:11.5px;color:var(--txt-soft);padding:5px 11px;border:1px solid var(--line2);border-radius:8px;display:flex;align-items:center;gap:7px}
+.card-h .tag .sp2{width:6px;height:6px;border-radius:50%;background:var(--acc);box-shadow:0 0 7px var(--acc);animation:hb 2.4s ease-in-out infinite}
+.flow{padding:30px 22px 26px;position:relative}
+.flow svg.conns{position:absolute;inset:30px 22px auto;width:calc(100% - 44px);height:78px;pointer-events:none;overflow:visible}
+.nodes{display:flex;justify-content:space-between;position:relative;z-index:2}
+.node{width:72px;flex:none;text-align:center;cursor:pointer}
+.node:hover .chip{border-color:var(--acc2);transform:translateY(-2px)}
+.node .chip{height:70px;border-radius:14px;border:1px solid var(--line2);background:rgba(19,20,28,.7);display:grid;place-items:center;position:relative;transition:.3s var(--e);margin-bottom:10px}
+.node .ico{width:30px;height:30px}
+.node.done .chip{border-color:rgba(62,229,148,.45);background:rgba(62,229,148,.07);box-shadow:0 0 14px rgba(62,229,148,.1)}
+.node.done .ico circle{stroke:var(--ok)} .node.done .ico path{stroke:var(--ok)}
+/* active = static glow + gentle opacity heartbeat (NO spin, NO blur) */
+.node.active .chip{border-color:var(--acc);background:rgba(47,240,210,.1);box-shadow:0 0 26px var(--glow)}
+.node.active .chip::after{content:"";position:absolute;inset:-1px;border-radius:14px;border:1px solid var(--acc);animation:hb 2s ease-in-out infinite}
+/* aktif kutu "doluyor" — alttan yükselen teal fill, sadece opacity nabzı (GPU-dostu) */
+.node.active .chip::before{content:"";position:absolute;left:0;right:0;bottom:0;height:100%;border-radius:14px;background:linear-gradient(180deg,transparent 45%,rgba(47,240,210,.2));animation:hb 2s ease-in-out infinite;pointer-events:none}
+.node.active .ico circle{stroke:var(--acc)}
+.node.wait .chip{opacity:.45}
+.node.wait .ico{stroke:var(--meta)}
+.node .nm{font-size:11px;font-weight:600;color:var(--txt);white-space:nowrap}
+.node.wait .nm{color:var(--meta)}
+.node .stt{margin-top:5px;display:inline-flex;align-items:center;justify-content:center}
+.node .si{width:17px;height:17px}
+.node.done .si{color:var(--ok);filter:drop-shadow(0 0 4px rgba(62,229,148,.7))}
+.node.active .si{color:var(--acc);filter:drop-shadow(0 0 5px var(--glow));animation:hb 1.5s ease-in-out infinite}
+.node.wait .si{color:var(--meta);opacity:.5}
+.flow-dot{fill:#3ee594;filter:drop-shadow(0 0 4px rgba(62,229,148,.9))}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+@media(max-width:1080px){.cols{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
+.appr{padding:16px}
+.acard{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:16px;background:var(--bg2);transition:border-color .25s}
+.acard:hover{border-color:var(--line2)}
+.aplayer{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden;cursor:pointer}
+/* video: gentle slow ken-burns, transform-only (compositor) */
+.aplayer .vid,.acc-vid .v{position:absolute;inset:0;background-size:cover;will-change:transform;animation:kb 18s ease-in-out infinite alternate}
+@keyframes kb{0%{transform:scale(1.05)}100%{transform:scale(1.12)}}
+.aplayer .scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.25),transparent 35%,transparent 60%,rgba(0,0,0,.7))}
+.aplayer .play{position:absolute;inset:0;margin:auto;width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.16);border:1.5px solid rgba(255,255,255,.55);display:grid;place-items:center;transition:.25s var(--spring)}
+.aplayer:hover .play{transform:scale(1.12);background:rgba(47,240,210,.25);border-color:var(--acc)}
+/* inline oynatma: play → kart içinde oynat (yan pencere açmaz) */
+.aplayer.playing .play{opacity:0;transform:scale(.6);pointer-events:none;transition:.3s var(--e)}
+.aplayer .prog{position:absolute;left:0;bottom:0;height:3px;width:100%;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,var(--acc2),var(--acc));box-shadow:0 0 10px var(--glow);z-index:4}
+.aplayer.playing .prog{animation:prog 24s linear forwards}
+@keyframes prog{to{transform:scaleX(1)}}
+.aplayer .npill{position:absolute;left:12px;top:12px;display:none;align-items:center;gap:6px;font-size:10.5px;font-weight:600;color:#04221d;background:var(--acc);padding:4px 9px;border-radius:8px;z-index:4;box-shadow:0 0 12px var(--glow)}
+.aplayer.playing .npill{display:inline-flex}
+.aplayer.playing .top-tag{display:none}
+.aplayer .dur{position:absolute;right:10px;bottom:10px;font-size:11px;background:rgba(0,0,0,.65);padding:3px 8px;border-radius:6px}
+.aplayer .top-tag{position:absolute;left:12px;top:12px;font-size:10.5px;padding:4px 10px;border-radius:8px;background:rgba(0,0,0,.55);font-weight:500}
+.aplayer .ttl{position:absolute;left:14px;bottom:12px;right:90px}
+.aplayer .ttl .t{font-size:15px;font-weight:600;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.aplayer .ttl .d{font-size:12px;color:#d4d8e2;margin-top:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;text-shadow:0 1px 4px rgba(0,0,0,.7)}
+.abar{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;gap:12px}
+.abar .meta{display:flex;gap:7px;flex-wrap:wrap}
+.pillb{font-size:11px;padding:4px 10px;border-radius:7px;font-weight:500}
+.pillb.warn{background:rgba(255,194,75,.14);color:var(--warn)}
+.pillb.ai{background:rgba(183,148,255,.16);color:var(--ai)}
+.pillb.ok{background:rgba(62,229,148,.14);color:var(--ok)}
+.acts{display:flex;gap:8px;flex-shrink:0}
+.btn{padding:9px 15px;border-radius:10px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:.18s var(--e);white-space:nowrap}
+.btn.pri{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#04221d;box-shadow:0 0 16px var(--glow)}
+.btn.pri:hover{transform:translateY(-1px)}
+.btn.gh{background:var(--s2);color:var(--txt-soft)}
+.btn.gh:hover{background:var(--s3);color:#fff}
+.acc{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:16px;background:var(--bg2);transition:border-color .25s}
+.acc:hover{border-color:var(--line2)}
+.acc-vid{aspect-ratio:16/10;position:relative;overflow:hidden;background:#000}
+.acc-vid .v{animation:kb 22s ease-in-out infinite alternate}
+.acc-vid .ov{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.2),transparent 35%,rgba(0,0,0,.78))}
+.acc-vid .hd{position:absolute;top:11px;left:12px;right:12px;display:flex;align-items:center;gap:9px}
+.acc-vid .pf{width:28px;height:28px;border-radius:50%;border:2px solid #fff;background-size:cover}
+.acc-vid .hn{font-size:13px;font-weight:600;color:#fff;text-shadow:0 1px 5px rgba(0,0,0,.6)}
+.acc-vid .plt{margin-left:auto;font-size:10.5px;background:rgba(0,0,0,.5);padding:4px 9px;border-radius:8px;color:#fff;font-weight:500}
+.acc-vid .cap{position:absolute;left:13px;right:13px;bottom:46px;font-size:12px;color:#fff;text-shadow:0 1px 5px rgba(0,0,0,.75);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.eng{position:absolute;left:13px;right:13px;bottom:12px;display:flex;gap:18px;align-items:center}
+.eng .e{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+.eng .e svg{width:16px;height:16px}
+.eng .e.heart svg{fill:var(--danger);stroke:var(--danger)}
+.acc-foot{display:flex;align-items:center;justify-content:space-between;padding:12px 14px}
+.acc-foot .who{font-size:13px;font-weight:600}
+.acc-foot .grow{font-size:12px;font-weight:600;color:var(--ok);display:flex;align-items:center;gap:5px}
+.health{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--txt-soft)}
+.health .hr{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 9px var(--ok)}
+/* command palette — backdrop-filter only here (on-demand, brief) */
+.cmdk{position:fixed;inset:0;z-index:50;display:none;align-items:flex-start;justify-content:center;padding-top:13vh;background:rgba(3,3,6,.72)}
+.cmdk.on{display:flex;animation:fade .2s var(--e)}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.cmdbox{width:580px;max-width:90vw;background:rgba(17,18,25,.97);border:1px solid var(--line2);border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(47,240,210,.1);overflow:hidden;animation:pop .24s var(--spring)}
+@keyframes pop{from{opacity:0;transform:translateY(-12px) scale(.97)}to{opacity:1;transform:none}}
+.cmdbox input{width:100%;background:transparent;border:none;padding:19px 22px;color:#fff;font-size:16px;outline:none;border-bottom:1px solid var(--line)}
+.cmdbox input::placeholder{color:var(--meta)}
+.cmditem{display:flex;align-items:center;gap:13px;padding:13px 22px;color:var(--txt-soft);font-size:14px;cursor:pointer;transition:.12s}
+.cmditem:hover,.cmditem.sel{background:rgba(47,240,210,.1);color:#fff}
+.cmditem svg{width:17px;height:17px;opacity:.8}
+.cmditem .k{margin-left:auto;font-size:11px;color:var(--meta);font-family:monospace;border:1px solid var(--line2);border-radius:5px;padding:1px 6px}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:460px;max-width:92vw;z-index:45;background:rgba(13,14,20,.98);border-left:1px solid var(--line2);box-shadow:-30px 0 80px rgba(0,0,0,.5);transform:translateX(100%);transition:transform .4s var(--spring)}
+.drawer.on{transform:none}
+.drawer-h{display:flex;align-items:center;justify-content:space-between;padding:22px;border-bottom:1px solid var(--line)}
+.drawer-h h3{font-size:17px;font-weight:600}
+.drawer-h .x{cursor:pointer;color:var(--meta);width:30px;height:30px;display:grid;place-items:center;border-radius:9px;transition:.15s}
+.drawer-h .x:hover{background:var(--s2);color:#fff}
+.drawer-b{padding:22px;overflow-y:auto;height:calc(100% - 73px)}
+.score{font-size:48px;font-weight:700;color:var(--acc);letter-spacing:-.03em}
+.bar{height:7px;border-radius:4px;background:var(--s3);overflow:hidden;margin:6px 0}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:4px;width:0;transition:width 1s var(--e)}
+.tl{display:flex;gap:11px;align-items:center;padding:9px 0;font-size:13px}
+.tl .d{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.tl .d.w{background:var(--s3);box-shadow:none}
+.note{margin-top:34px;padding:16px 18px;border:1px solid var(--line2);border-radius:12px;background:rgba(47,240,210,.03);color:var(--txt-soft);font-size:12.5px;line-height:1.7}
+.note b{color:var(--acc)}
+.nodestat{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:10px;font-size:13px;font-weight:600;margin-bottom:18px}
+.nodestat .si{width:16px;height:16px}
+.nodestat.done{background:rgba(62,229,148,.14);color:var(--ok)}
+.nodestat.active{background:rgba(47,240,210,.12);color:var(--acc)}
+.nodestat.wait{background:var(--s2);color:var(--meta)}
+.drawer-b p.desc{color:var(--txt-soft);font-size:14px;line-height:1.7;margin-bottom:22px}
+.reveal{opacity:0;transform:translateY(14px)}
+.reveal.in{opacity:1;transform:none;transition:opacity .55s var(--e),transform .55s var(--e)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="logo">K</span> Kuyash</div>
+    <nav class="nav" id="nav">
+      <div class="pill" id="pill"></div>
+      <a class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> Panel</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3.5"/></svg> Oluştur</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l5-5 4 4 8-8"/><path d="M16 8h5v5"/></svg> Trendler</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2.5"/><path d="M10 9l5 3-5 3z" fill="currentColor" stroke="none"/></svg> Kütüphane</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8 12h6M16 7l-6 4M16 17l-6-4"/></svg> Akışlar</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg> Kuyruk</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg> Hesaplar</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-5"/></svg> Analitik</a>
+    </nav>
+    <div class="side-foot"><span class="dot"></span>Tüm sistemler çalışıyor</div>
+  </aside>
+  <div class="main">
+    <div class="top">
+      <div class="ws"><span class="av"></span> AI Trendleri <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div>
+      <div class="sp"></div>
+      <div class="live"><span class="ld"></span> Canlı · az önce güncellendi</div>
+      <div class="kbd" onclick="openCmd()">Ara <b>⌘K</b></div>
+      <div class="uav"></div>
+    </div>
+    <div class="wrap">
+      <div class="h1">Günaydın — fabrikan tam gaz çalışıyor</div>
+      <div class="sub"><b>AI Trendleri</b> çalışma alanı · 3 hesap bağlı · bugün 4 içerik planlandı</div>
+      <div class="kpis">
+        <div class="kpi reveal"><div class="kl">Kalan bakiye</div><div class="kv acc mono">$<span class="ct" data-to="48.5" data-dec="2">0</span></div><div class="delta up">▲ 18 kredi bu hafta eklendi</div><canvas class="spark" data-d="20,18,22,19,24,23,26"></canvas></div>
+        <div class="kpi reveal"><div class="kl">Bu ay harcanan</div><div class="kv mono">$<span class="ct" data-to="12.4" data-dec="2">0</span></div><div class="delta up">▲ %9 geçen aya göre</div><canvas class="spark" data-d="4,6,5,8,7,11,12"></canvas></div>
+        <div class="kpi reveal"><div class="kl">İçerik başı maliyet</div><div class="kv mono">$<span class="ct" data-to="0.31" data-dec="2">0</span></div><div class="delta dn">▼ %22 daha verimli</div><canvas class="spark" data-d="8,7,6,5,4,3,3"></canvas></div>
+        <div class="kpi reveal"><div class="kl">Onayını bekleyen</div><div class="kv violet mono"><span class="ct" data-to="6">0</span></div><div class="delta n">2 yenisi az önce geldi</div><canvas class="spark" data-d="2,3,2,4,3,5,6" data-c="violet"></canvas></div>
+      </div>
+      <div class="card reveal">
+        <div class="card-h"><h2>Üretim hattı · içerik #17</h2><span class="tag"><span class="sp2"></span>3 aşama tamamlandı · 1 işleniyor</span></div>
+        <div class="flow">
+          <svg class="conns" id="conns" preserveAspectRatio="none"></svg>
+          <div class="nodes" id="nodes"></div>
+        </div>
+      </div>
+      <div class="cols">
+        <div class="card reveal">
+          <div class="card-h"><h2>Onayını bekleyenler · buradan izle</h2><span class="tag">6 içerik</span></div>
+          <div class="appr">
+            <div class="acard">
+              <div class="aplayer">
+                <div class="vid" style="background-image:linear-gradient(135deg,#1e3a5f,#0f5132,#3a1e5f)"></div>
+                <div class="scrim"></div>
+                <span class="top-tag">Senaryo onayı</span>
+                <div class="play"><svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg></div>
+                <span class="dur mono">0:24</span>
+                <div class="ttl"><div class="t">Sabah rutini sıfırlama</div><div class="d">Sonuçla başla, sonra geri sar — izleyiciyi aksiyonun ortasına düşür.</div></div>
+              </div>
+              <div class="abar"><div class="meta"><span class="pillb warn">İncelemeni bekliyor</span></div><div class="acts"><button class="btn pri">Onayla</button><button class="btn gh">Reddet</button></div></div>
+            </div>
+            <div class="acard">
+              <div class="aplayer">
+                <div class="vid" style="background-image:linear-gradient(135deg,#2a1a2a,#1a2a3a,#3a2a1a)"></div>
+                <div class="scrim"></div>
+                <span class="top-tag">Önizleme onayı</span>
+                <div class="play"><svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg></div>
+                <span class="dur mono">0:31</span>
+                <div class="ttl"><div class="t">Tek tavada akşam yemeği</div><div class="d">Final önizleme hazır — uyumluluk geçti, AI etiketi eklendi.</div></div>
+              </div>
+              <div class="abar"><div class="meta"><span class="pillb ok">Uyumlu</span><span class="pillb ai">AI etiketli</span></div><div class="acts"><button class="btn pri">Yayınla</button><button class="btn gh">Reddet</button></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="card reveal">
+          <div class="card-h"><h2>Hesaplar · canlı akış</h2><span class="tag"><span class="sp2"></span>3 bağlı</span></div>
+          <div class="appr">
+            <div class="acc">
+              <div class="acc-vid">
+                <div class="v" style="background-image:linear-gradient(135deg,#1e3a5f,#0f5132,#3a1e5f)"></div>
+                <div class="ov"></div>
+                <div class="hd"><span class="pf" style="background-image:linear-gradient(135deg,#2ff0d2,#60a5fa)"></span><span class="hn">@ai.neeidy</span><span class="plt">Instagram</span></div>
+                <div class="cap">3 AI aracı iş akışını 10× hızlandırıyor — kaydet, sonra dene 🚀</div>
+                <div class="eng">
+                  <span class="e heart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 8c0-2.5-2-4-4-4-1.5 0-3 1-4 2.5C11 5 9.5 4 8 4 6 4 4 5.5 4 8c0 4 8 9 8 9s8-5 8-9z"/></svg> 1.5K</span>
+                  <span class="e"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M21 11.5a8 8 0 01-12 7L3 20l1.5-6A8 8 0 1121 11.5z"/></svg> 17</span>
+                  <span class="e"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 12l16-8-6 16-3-7-7-1z"/></svg> 2.1K</span>
+                </div>
+              </div>
+              <div class="acc-foot"><span class="who">@ai.neeidy · 5.1K takipçi</span><span class="grow">▲ +19 bugün</span></div>
+            </div>
+            <div class="acc">
+              <div class="acc-vid">
+                <div class="v" style="background-image:linear-gradient(135deg,#5f1e3a,#32510f,#1e2a5f)"></div>
+                <div class="ov"></div>
+                <div class="hd"><span class="pf" style="background-image:linear-gradient(135deg,#b794ff,#ff6b6b)"></span><span class="hn">@neeidy.tt</span><span class="plt">TikTok</span></div>
+                <div class="cap">Bekle... sabah rutini — soruyla başla 👀</div>
+                <div class="eng">
+                  <span class="e heart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 8c0-2.5-2-4-4-4-1.5 0-3 1-4 2.5C11 5 9.5 4 8 4 6 4 4 5.5 4 8c0 4 8 9 8 9s8-5 8-9z"/></svg> 8.4K</span>
+                  <span class="e"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M21 11.5a8 8 0 01-12 7L3 20l1.5-6A8 8 0 1121 11.5z"/></svg> 124</span>
+                  <span class="e"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 12l16-8-6 16-3-7-7-1z"/></svg> 9.7K</span>
+                </div>
+              </div>
+              <div class="acc-foot"><span class="who">@neeidy.tt · 94K takipçi</span><span class="health"><span class="hr"></span> Sağlıklı</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="note"><b>Prototip v3 — hafifletilmiş.</b> Görünüm aynı kaldı ama GPU yükü kaldırıldı: animasyonlu blur'lar → statik gradient; her yerdeki backdrop-blur → kaldırıldı (sadece ⌘K/drawer'da, o da anlık); dönen ring → hafif glow heartbeat; ken-burns yavaşlatıldı. Yalnızca <b>transform/opacity</b> animasyonu (GPU-dostu). Lokalde rahat çalışır.</div>
+    </div>
+  </div>
+</div>
+<div class="cmdk" id="cmdk" onclick="if(event.target.id==='cmdk')closeCmd()">
+  <div class="cmdbox">
+    <input placeholder="Ne yapmak istersin?  ('yeni içerik', 'trendler', 'onayla'…)">
+    <div class="cmditem sel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Yeni içerik oluştur <span class="k">C</span></div>
+    <div class="cmditem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l5-5 4 4 8-8"/></svg> Trend Radar'ı aç <span class="k">T</span></div>
+    <div class="cmditem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> Bekleyen onayları izle <span class="k">A</span></div>
+    <div class="cmditem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg> Hesap bağla <span class="k">H</span></div>
+  </div>
+</div>
+<div class="drawer" id="drawer">
+  <div class="drawer-h"><h3 id="drTitle">Sabah rutini sıfırlama</h3><span class="x" onclick="closeDrawer()">✕</span></div>
+  <div class="drawer-b" id="drBody">
+    <div style="display:flex;align-items:baseline;gap:11px;margin-bottom:6px"><span class="score">94</span><span style="color:var(--meta);font-size:13.5px">/ 100 uygunluk skoru</span></div>
+    <div style="margin:16px 0 20px">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--txt-soft);margin-bottom:2px"><span>Özgünlük</span><span style="color:#fff;font-weight:600">92</span></div><div class="bar"><i style="width:92%"></i></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--txt-soft);margin:9px 0 2px"><span>Hook gücü</span><span style="color:#fff;font-weight:600">88</span></div><div class="bar"><i style="width:88%"></i></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--txt-soft);margin:9px 0 2px"><span>Format uyumu</span><span style="color:#fff;font-weight:600">100</span></div><div class="bar"><i style="width:100%"></i></div>
+    </div>
+    <div style="font-size:12px;color:var(--meta);font-weight:500;margin-bottom:8px">Durum akışı</div>
+    <div class="tl"><span class="d"></span> Trend yakalandı · 09:41</div>
+    <div class="tl"><span class="d"></span> Senaryo üretildi · 09:42</div>
+    <div class="tl"><span class="d w"></span> Önizleme onayı bekleniyor</div>
+    <div class="tl"><span class="d w"></span> Yayın</div>
+    <div style="display:flex;gap:10px;margin-top:24px"><button class="btn pri">Onayla &amp; yayınla</button><button class="btn gh">Reddet</button></div>
+  </div>
+</div>
+<script>
+const nav=document.getElementById('nav'),pill=document.getElementById('pill'),links=[...nav.querySelectorAll('a')];
+function movePill(el){pill.style.transform='translateY('+el.offsetTop+'px)'}
+movePill(links[0]);
+links.forEach(a=>a.addEventListener('click',()=>{links.forEach(x=>x.classList.remove('on'));a.classList.add('on');movePill(a)}));
+const CHECK='<svg class="ico" viewBox="0 0 24 24" fill="none" stroke-width="2.2"><circle cx="12" cy="12" r="10" opacity=".4"/><path d="M7.5 12.5l3 3 6-6.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const DOTI='<svg class="ico" viewBox="0 0 24 24" fill="none" stroke-width="2.2"><circle cx="12" cy="12" r="10" opacity=".5"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>';
+const WAITI='<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" opacity=".5"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" opacity=".5"/></svg>';
+const NODES=[['TREND','done'],['FİKİR','done'],['SENARYO','done'],['SES','active'],['GÖRSEL','wait'],['MONTAJ','wait'],['AÇIKLAMA','wait'],['ETİKET','wait'],['MÜZİK','wait'],['YAYIN','wait']];
+// durum simgeleri (yazı yerine) — done: tik, active: yıldırım, wait: kesik halka
+const SICON={
+  done:'<svg class="si" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l4 4 10-11" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  active:'<svg class="si" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>',
+  wait:'<svg class="si" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8" stroke-dasharray="3 3.5"/></svg>'
+};
+const nodesEl=document.getElementById('nodes');
+nodesEl.innerHTML=NODES.map(n=>{
+  let ic=n[1]==='done'?CHECK:n[1]==='active'?DOTI:WAITI;
+  return '<div class="node '+n[1]+'"><div class="chip">'+ic+'</div><div class="nm">'+n[0]+'</div><div class="stt">'+SICON[n[1]]+'</div></div>';
+}).join('');
+const NS='http://www.w3.org/2000/svg';
+const svg=document.getElementById('conns');
+const ACTIVE=NODES.findIndex(n=>n[1]==='active'); // aktif aşamanın indeksi
+function mkl(x1,y,x2,w,stroke,extra){const l=document.createElementNS(NS,'line');l.setAttribute('x1',x1);l.setAttribute('y1',y);l.setAttribute('x2',x2);l.setAttribute('y2',y);l.setAttribute('stroke',stroke);l.setAttribute('stroke-width',w);l.setAttribute('stroke-linecap','round');if(extra)for(const k in extra)l.setAttribute(k,extra[k]);return l;}
+function smil(attr,values,dur){const a=document.createElementNS(NS,'animate');a.setAttribute('attributeName',attr);a.setAttribute('values',values);a.setAttribute('dur',dur);a.setAttribute('repeatCount','indefinite');a.setAttribute('calcMode','spline');a.setAttribute('keyTimes','0;1');a.setAttribute('keySplines','.4 0 .2 1');return a;}
+function drawConns(){
+  const chips=[...nodesEl.querySelectorAll('.chip')];const box=svg.getBoundingClientRect();svg.innerHTML='';
+  for(let i=0;i<chips.length-1;i++){
+    const a=chips[i].getBoundingClientRect(),b=chips[i+1].getBoundingClientRect();
+    const x1=a.right-box.left,x2=b.left-box.left,y=(a.top+a.bottom)/2-box.top;
+    if(i<ACTIVE-1){
+      // TAMAMLANAN segment: yumuşak kanal + dolu parlak yeşil çizgi
+      svg.appendChild(mkl(x1,y,x2,6,'rgba(62,229,148,.15)'));
+      svg.appendChild(mkl(x1,y,x2,2.6,'rgba(62,229,148,.85)'));
+    }else if(i===ACTIVE-1){
+      // AKTİF aşamaya akan FILL — enerji soldan sağa doluyor, kutuyu besliyor
+      svg.appendChild(mkl(x1,y,x2,6,'rgba(62,229,148,.12)'));
+      const len=Math.abs(x2-x1);
+      const fill=mkl(x1,y,x2,2.8,'rgba(62,229,148,.95)',{'stroke-dasharray':len,'stroke-dashoffset':len});
+      fill.appendChild(smil('stroke-dashoffset',len+';0','1.8s'));
+      svg.appendChild(fill);
+      // dolumun önünde parlayan nokta
+      const dot=document.createElementNS(NS,'circle');dot.setAttribute('r','3.5');dot.setAttribute('class','flow-dot');dot.setAttribute('cy',y);dot.setAttribute('cx',x1);
+      dot.appendChild(smil('cx',x1+';'+x2,'1.8s'));
+      svg.appendChild(dot);
+    }else{
+      // BEKLEYEN segment: sönük kesik çizgi
+      svg.appendChild(mkl(x1,y,x2,2,'rgba(42,45,58,.9)',{'stroke-dasharray':'4 5'}));
+    }
+  }
+}
+setTimeout(drawConns,140);window.addEventListener('resize',drawConns);
+function countUp(el){const to=+el.dataset.to,dec=+(el.dataset.dec||0);let s=null;
+  function f(t){if(!s)s=t;const p=Math.min((t-s)/1100,1);const e=1-Math.pow(1-p,3);el.textContent=(to*e).toFixed(dec);if(p<1)requestAnimationFrame(f)}requestAnimationFrame(f)}
+setTimeout(()=>document.querySelectorAll('.ct').forEach(countUp),350);
+document.querySelectorAll('.spark').forEach(c=>{const d=c.dataset.d.split(',').map(Number);c.width=136;c.height=60;const ctx=c.getContext('2d');const mn=Math.min(...d),mx=Math.max(...d);const col=c.dataset.c==='violet'?'#b794ff':'#2ff0d2';
+  ctx.scale(2,2);ctx.beginPath();d.forEach((v,i)=>{const x=i/(d.length-1)*64,y=28-((v-mn)/(mx-mn||1))*22-3;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+  ctx.strokeStyle=col;ctx.lineWidth=2;ctx.lineJoin='round';ctx.stroke();
+  const g=ctx.createLinearGradient(0,0,0,30);g.addColorStop(0,col+'40');g.addColorStop(1,col+'00');
+  ctx.lineTo(64,30);ctx.lineTo(0,30);ctx.closePath();ctx.fillStyle=g;ctx.fill();});
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.12});
+document.querySelectorAll('.reveal').forEach((el,i)=>{el.style.transitionDelay=(i*55)+'ms';io.observe(el)});
+function openCmd(){document.getElementById('cmdk').classList.add('on');setTimeout(()=>{const i=document.querySelector('.cmdbox input');if(i)i.focus()},50)}
+function closeCmd(){document.getElementById('cmdk').classList.remove('on')}
+function showDrawer(){document.getElementById('drawer').classList.add('on')}
+function closeDrawer(){document.getElementById('drawer').classList.remove('on')}
+// pipeline kutusuna tıkla → yan detay paneli (teknik detay YOK, sade dil)
+const NDESC={
+ 'TREND':'Senin niş\'inde yükselen konuları izler ve en güçlü fırsatı seçer.',
+ 'FİKİR':'Seçilen trendi somut, çekilebilir bir içerik fikrine dönüştürür.',
+ 'SENARYO':'Fikri 15–45 saniyelik akıcı bir kurguya yazar; ilk saniyeyi güçlü tutar.',
+ 'SES':'Senaryoyu doğal bir anlatıma dönüştürür.',
+ 'GÖRSEL':'Sahnelere uygun görselleri toplar ve hazırlar.',
+ 'MONTAJ':'Görsel ve sesi tek bir dikey videoda birleştirir.',
+ 'AÇIKLAMA':'Her platforma uygun açıklama metnini yazar.',
+ 'ETİKET':'İçeriğe en uygun etiketleri seçer.',
+ 'MÜZİK':'İçeriğin tonuna uygun müzik atmosferi önerir.',
+ 'YAYIN':'Senin onayından sonra içeriği bağlı hesaplara gönderir.'
+};
+const SLABEL={done:'Tamamlandı',active:'Şu an işleniyor',wait:'Sırada bekliyor'};
+function openNodeDrawer(name,status){
+  document.getElementById('drTitle').textContent=name.charAt(0)+name.slice(1).toLocaleLowerCase('tr')+' aşaması';
+  const steps=['Gelen','İşlem','Çıktı'];
+  let tl='';steps.forEach((s,i)=>{const filled=status==='done'||(status==='active'&&i===0);tl+='<div class="tl"><span class="d'+(filled?'':' w')+'"></span> '+s+'</div>';});
+  const noteTxt=status==='active'?'Şu an üzerinde çalışılıyor; bittiğinde bir sonraki aşamaya geçer.':status==='done'?'Tamamlandı, çıktısı bir sonraki aşamaya aktarıldı.':'Önceki aşamalar bitince sırası gelecek.';
+  document.getElementById('drBody').innerHTML=
+    '<span class="nodestat '+status+'">'+SICON[status]+' '+SLABEL[status]+'</span>'+
+    '<p class="desc">'+NDESC[name]+'</p>'+
+    '<div style="font-size:12px;color:var(--meta);font-weight:500;margin-bottom:6px">Akış</div>'+tl+
+    '<div class="note">Bu aşama otomatik çalışır. '+noteTxt+'</div>';
+  showDrawer();
+}
+document.querySelectorAll('#nodes .node').forEach((el,i)=>el.addEventListener('click',()=>openNodeDrawer(NODES[i][0],NODES[i][1])));
+// onay kartı: play → kart İÇİNDE oynat (yan pencere AÇMAZ)
+document.querySelectorAll('.aplayer').forEach(p=>{
+  const bar=document.createElement('div');bar.className='prog';p.appendChild(bar);
+  const pill=document.createElement('span');pill.className='npill';pill.innerHTML='<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg> Oynuyor';p.appendChild(pill);
+  p.addEventListener('click',()=>{const on=p.classList.toggle('playing');bar.style.animation='none';if(on){void bar.offsetWidth;bar.style.animation=''}});
+});
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openCmd()}if(e.key==='Escape'){closeCmd();closeDrawer()}});
+</script>
+</body>
+</html>
