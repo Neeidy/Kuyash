@@ -372,3 +372,45 @@ lang-parity + template-key coverage scan, Auth locale cache + LocaleController).
 TR shortened APPLIED; aria-current/colon nits deferred — cosmetic). **Deferred (cosmetic):** SR label on the
 active language span; a few enum values (account status/health, asset type/kind, tx type) left as data, not
 translated. Commit `2e4bd41`.
+
+## ADR-021: Zernio real adapter + per-platform AI disclosure (Phase 10 enable, 2026-06-14)
+
+**Context.** Phase 10 shipped a doc-gated Zernio STUB. With the live spec now in hand
+(`https://zernio.com/openapi.yaml` + docs.zernio.com), we built the REAL
+`ZernioPublishProvider` behind the existing `PublishProvider` seam. Every field/path is
+taken VERBATIM from the spec (no fabrication): base `https://zernio.com/api` + `/v1/...`,
+`Authorization: Bearer sk_…`; `POST /v1/media/presign {filename,contentType}` →
+`{uploadUrl,publicUrl}` → PUT the render (unauthenticated, presigned) →
+`POST /v1/posts {content, mediaItems:[{url,type}], platforms:[{platform,accountId,
+platformSpecificData}], publishNow|scheduledFor+timezone}`; status via `GET /v1/posts/{id}`;
+read-only `GET /v1/accounts`; webhook HMAC-SHA256 raw-body / `X-Zernio-Signature`, dedup on
+`payload.id` / `X-Zernio-Event-Id`. Outcomes map to the taxonomy
+(published/accepted/rejected/auth-failed/rate-limited); 429 → bounded backoff; the
+`{error,code,reason}` envelope → terminal failure (402 PAYMENT_REQUIRED / 4xx) or
+transient (`PublishProviderException` on 5xx/transport).
+
+**AI-label — corrected finding.** An earlier note said Zernio exposes NO AI field. WRONG
+(a truncated-fetch artifact). The raw spec defines native AI-disclosure flags: **YouTube
+`containsSyntheticMedia`**, **TikTok `videoMadeWithAi`** (also Twitter `madeWithAi`, out of
+scope). **Instagram has NO native field.**
+
+**Decision.** HYBRID disclosure with FULL operator control:
+- `aiLabelApplied` (set when the compliance check sees realistic AI media) drives disclosure.
+- **YouTube/TikTok** → set the native flag. **Instagram** → append a localized
+  "Made with AI" / "AI ile üretildi" caption line on its own final line (owner locale).
+- A per-platform toggle lives in **Settings → AI disclosure** (migration 0013:
+  `ai_disclose_{instagram,youtube,tiktok}`, **default 1/ON** — compliance-first). Turning one
+  off is honored but writes a truthful `compliance.ai_disclosure_suppressed` audit event at
+  publish time (never silent); the UI shows a risk warning. The post's `ai_label_applied`
+  records the EFFECTIVE per-platform decision (truthful).
+
+**Why platform-native over caption-everywhere.** A platform's own AI label is stronger and
+truer than caption text (the platform renders the official disclosure). Caption text is the
+honest fallback only where no field exists (Instagram).
+
+**Constraint honored.** `ZERNIO_MOCK` stays `true` — NO live publish. The only real call made
+during this phase was a read-only `GET /v1/accounts` (lists the connected Instagram account).
+The real publish path is exercised by unit tests against fakes (all 8 documented modes).
+
+**Verification.** 821 PASS / 0 FAIL (+adapter mapping ×13, AI disclosure ×5, webhook event-id
+×2, settings/migration). Schemas cross-checked against the committed raw `openapi.yaml`.

@@ -6,9 +6,11 @@ namespace Kuyash\Publish;
 
 use Closure;
 use Kuyash\Core\Database;
+use Kuyash\Core\I18n;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\JobExecutor;
 use Kuyash\Workflow\JobResult;
+use Kuyash\Workspace\WorkspaceSettings;
 
 /**
  * The inner `publish` executor (Phase 10) — supersedes MockExecutor's publish
@@ -38,6 +40,7 @@ final class ZernioPublishExecutor implements JobExecutor
         private readonly AccountRepository $accounts,
         private readonly PostRepository $posts,
         private readonly EventLog $events,
+        private readonly WorkspaceSettings $settings,
         ?Closure $clock = null,
     ) {
         $this->clock = $clock ?? static fn (): string => gmdate('Y-m-d\TH:i:s\Z');
@@ -78,6 +81,24 @@ final class ZernioPublishExecutor implements JobExecutor
             $platform = (string) $account['platform'];
             $key = "run:{$runId}:acct:{$accountId}:publish";
 
+            // Per-platform AI disclosure (toggle-gated, default ON). The content
+            // is realistic AI media (aiLabel) → disclose UNLESS the operator turned
+            // this platform off. Suppression is audited, never silent. The HOW
+            // differs: YouTube/TikTok carry a native flag (set in the adapter from
+            // request.aiLabelApplied); Instagram has no native field, so we append
+            // a caption disclosure line here. (ADR-021)
+            $discloseOn = $this->settings->aiDiscloses($wsId, $platform);
+            $effectiveAi = $aiLabel && $discloseOn;
+            if ($aiLabel && !$discloseOn) {
+                $this->events->record($wsId, 'warn', 'compliance', 'compliance.ai_disclosure_suppressed', [
+                    'platform' => $platform, 'run' => $runId,
+                ], $runId, $jobId);
+            }
+            $caption = (string) ($captions[$platform] ?? '');
+            if ($platform === 'instagram' && $effectiveAi) {
+                $caption = $this->withDisclosure($caption, $wsId);
+            }
+
             $existing = $this->posts->findByKey($wsId, $key);
             if ($existing !== null && in_array((string) $existing['status'], ['published', 'failed', 'cancelled'], true)) {
                 // terminal target — idempotent skip on a re-attempt
@@ -87,7 +108,7 @@ final class ZernioPublishExecutor implements JobExecutor
 
             $postId = $existing !== null
                 ? (int) $existing['id']
-                : $this->posts->insertPublishing($wsId, $runId, $jobId, $accountId, $platform, $aiLabel, $scheduledFor, $key, $now);
+                : $this->posts->insertPublishing($wsId, $runId, $jobId, $accountId, $platform, $effectiveAi, $scheduledFor, $key, $now);
             if ($existing !== null) {
                 $this->posts->markPublishing($postId, $jobId, $now);
             }
@@ -97,11 +118,12 @@ final class ZernioPublishExecutor implements JobExecutor
                 (string) $account['handle'],
                 $account['external_ref'] === null ? null : (string) $account['external_ref'],
                 $key,
-                $aiLabel,
+                $effectiveAi,
                 $scheduledFor,
                 $renderId,
-                (string) ($captions[$platform] ?? ''),
+                $caption,
                 $hashtags,
+                $wsId,
             );
 
             try {
@@ -115,7 +137,7 @@ final class ZernioPublishExecutor implements JobExecutor
             }
 
             match ($outcome->status) {
-                PublishOutcome::PUBLISHED => $this->onPublished($wsId, $runId, $jobId, $postId, $platform, $aiLabel, $outcome, $now, $published),
+                PublishOutcome::PUBLISHED => $this->onPublished($wsId, $runId, $jobId, $postId, $platform, $effectiveAi, $outcome, $now, $published),
                 PublishOutcome::ACCEPTED => $this->onAccepted($wsId, $runId, $jobId, $postId, $platform, $outcome, $now, $accepted),
                 PublishOutcome::REJECTED => $this->onFailed($wsId, $runId, $jobId, $postId, $platform, $outcome, 'warn', false, $now, $failed),
                 PublishOutcome::AUTH_FAILED => $this->onFailed($wsId, $runId, $jobId, $postId, $platform, $outcome, 'error', true, $now, $failed, $accountId),
@@ -181,6 +203,45 @@ final class ZernioPublishExecutor implements JobExecutor
         $this->events->record($wsId, 'warn', 'transition', 'publish.attempt', [
             'platform' => $platform, 'result' => 'rate_limited', 'run' => $runId,
         ], $runId, $jobId);
+    }
+
+    /**
+     * Append the AI-disclosure line on its own line at the end of the caption
+     * (Instagram only — no native API field). Idempotent-ish: a blank caption
+     * becomes just the line. Wording is the workspace owner's locale.
+     */
+    private function withDisclosure(string $caption, int $wsId): string
+    {
+        $line = $this->disclosureText($wsId);
+        $caption = rtrim($caption);
+
+        return $caption === '' ? $line : $caption . "\n" . $line;
+    }
+
+    /** Localized AI-disclosure text ("Made with AI" / "AI ile üretildi"), owner's locale. */
+    private function disclosureText(int $wsId): string
+    {
+        $locale = $this->ownerLocale($wsId);
+        $prev = I18n::locale();
+        I18n::setLocale($locale);
+        $line = I18n::t('compliance.ai_disclosure');
+        I18n::setLocale($prev);
+
+        return $line;
+    }
+
+    /** The workspace owner's UI locale (best proxy for the content language); defaults to en. */
+    private function ownerLocale(int $wsId): string
+    {
+        $row = $this->db->one(
+            "SELECT u.locale FROM users u
+             JOIN workspace_users wu ON wu.user_id = u.id
+             WHERE wu.workspace_id = ?
+             ORDER BY (wu.role = 'owner') DESC, wu.id ASC LIMIT 1",
+            [$wsId],
+        );
+
+        return (string) ($row['locale'] ?? 'en');
     }
 
     /** The run's scheduled publish time, set at approval; null = immediate. */

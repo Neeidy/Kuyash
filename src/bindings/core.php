@@ -189,12 +189,20 @@ return static function (Container $container, string $basePath): void {
     ));
 
     // PublishProvider (Phase 10): the deterministic mock by default. Setting
-    // ZERNIO_MOCK=false builds the real client — a DOC-GATED stub that throws on
-    // any call (no docs/creds; integration rule). Swap = one config line.
+    // ZERNIO_MOCK=false builds the REAL Zernio adapter (schemas verified against
+    // the live openapi.yaml: presign+upload, POST /v1/posts, native AI flags).
+    // Default stays mock-first — no live publish. Swap = one config line.
     $container->bind(PublishProvider::class, static function (Container $c): PublishProvider {
         $cfg = (array) $c->get(Config::class)->get('zernio');
         if (($cfg['mock'] ?? true) === false) {
-            return new ZernioPublishProvider(new CurlHttpClient(), $cfg); // flag-off, throws "doc-gated"
+            return new ZernioPublishProvider(
+                new CurlHttpClient(),
+                new CurlBlobClient(),
+                $c->get(RenderRepository::class),
+                $c->get(StorageManager::class),
+                $c->get(MediaPaths::class),
+                $cfg,
+            );
         }
 
         return new MockPublishProvider();
@@ -206,6 +214,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(AccountRepository::class),
         $c->get(PostRepository::class),
         $c->get(EventLog::class),
+        $c->get(WorkspaceSettings::class),
     ));
 
     $container->bind(WebhookInbox::class, static fn (Container $c): WebhookInbox => new WebhookInbox(

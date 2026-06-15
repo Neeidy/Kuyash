@@ -21,8 +21,9 @@ final class PublishRequest
      * @param bool                  $aiLabelApplied  set the platform AI label/content flag (truthful: only when required)
      * @param ?string               $scheduledFor    ISO-8601 UTC publish time, or null = now
      * @param ?int                  $renderId        the final render to publish (null in distribution = library asset)
-     * @param string                $caption         per-platform caption (already variation-controlled upstream)
+     * @param string                $caption         per-platform caption (already variation-controlled + AI-disclosure-resolved upstream)
      * @param list<string>          $hashtags        per-platform hashtags
+     * @param int                   $workspaceId     tenant scope — the real adapter needs it to resolve the render file (mock ignores it)
      */
     public function __construct(
         public readonly string $platform,
@@ -34,6 +35,7 @@ final class PublishRequest
         public readonly ?int $renderId = null,
         public readonly string $caption = '',
         public readonly array $hashtags = [],
+        public readonly int $workspaceId = 0,
     ) {
     }
 }

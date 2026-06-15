@@ -52,6 +52,7 @@ final class SettingsController
             'csrfField' => $this->csrf->field(),
             'flashes' => Messages::resolveFlashes($this->flash),
             'settings' => $this->settings->compliance($wsId),
+            'aiDisclosure' => $this->settings->aiDisclosure($wsId),
             'quality' => $this->quality->compute($wsId),
             'policyVersion' => CompliancePolicy::VERSION,
             'autoUsedToday' => $this->gate->autoApprovalsToday($wsId, $now),
@@ -116,6 +117,24 @@ final class SettingsController
         }
 
         return $this->back('success', 'settings.name_saved');
+    }
+
+    /**
+     * Per-platform AI-disclosure toggles (Phase 10). A checkbox sends its name
+     * only when checked → absent = OFF. Default ON; turning one off is honored
+     * (and audited at publish time when a disclosure is actually suppressed).
+     * CSRF is enforced globally; the workspace is the session-resolved tenant.
+     *
+     * @param array<string, string> $params
+     */
+    public function saveAiDisclosure(array $params = []): Response
+    {
+        $wsId = $this->workspace->id();
+        foreach (WorkspaceSettings::AI_DISCLOSE_PLATFORMS as $platform) {
+            $this->settings->setAiDisclosure($wsId, $platform, isset($_POST['ai_' . $platform]));
+        }
+
+        return $this->back('success', 'settings.ai_saved');
     }
 
     /** @param array<string, string> $params */

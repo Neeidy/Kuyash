@@ -21,6 +21,15 @@ final class WorkspaceSettings
 
     public const NAME_MAX = 60;
 
+    /** Platforms with a per-workspace AI-disclosure toggle (Phase 10). */
+    public const AI_DISCLOSE_PLATFORMS = ['instagram', 'youtube', 'tiktok'];
+
+    private const AI_DISCLOSE_COLUMNS = [
+        'instagram' => 'ai_disclose_instagram',
+        'youtube' => 'ai_disclose_youtube',
+        'tiktok' => 'ai_disclose_tiktok',
+    ];
+
     private const ISO = 'Y-m-d\TH:i:s\Z';
 
     public function __construct(private readonly Database $db)
@@ -114,6 +123,48 @@ final class WorkspaceSettings
         $this->db->run(
             'UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?',
             [$name, gmdate(self::ISO), $workspaceId],
+        );
+
+        return true;
+    }
+
+    /**
+     * Per-platform AI-disclosure toggles (Phase 10). Default ON everywhere
+     * (compliance-first). Realistic AI media is disclosed via the platform's
+     * native flag (YouTube/TikTok) or a caption line (Instagram, no native field).
+     *
+     * @return array{instagram: bool, youtube: bool, tiktok: bool}
+     */
+    public function aiDisclosure(int $workspaceId): array
+    {
+        $row = $this->db->one(
+            'SELECT ai_disclose_instagram, ai_disclose_youtube, ai_disclose_tiktok FROM workspaces WHERE id = ?',
+            [$workspaceId],
+        ) ?? [];
+
+        return [
+            'instagram' => (int) ($row['ai_disclose_instagram'] ?? 1) === 1,
+            'youtube' => (int) ($row['ai_disclose_youtube'] ?? 1) === 1,
+            'tiktok' => (int) ($row['ai_disclose_tiktok'] ?? 1) === 1,
+        ];
+    }
+
+    /** Is AI disclosure ON for this platform? Unknown platform → true (fail-safe: disclose). */
+    public function aiDiscloses(int $workspaceId, string $platform): bool
+    {
+        return $this->aiDisclosure($workspaceId)[$platform] ?? true;
+    }
+
+    /** Set one platform's AI-disclosure toggle. Returns false for an unknown platform. */
+    public function setAiDisclosure(int $workspaceId, string $platform, bool $on): bool
+    {
+        $col = self::AI_DISCLOSE_COLUMNS[$platform] ?? null; // fixed whitelist — never user-interpolated
+        if ($col === null) {
+            return false;
+        }
+        $this->db->run(
+            "UPDATE workspaces SET {$col} = ?, updated_at = ? WHERE id = ?",
+            [$on ? 1 : 0, gmdate(self::ISO), $workspaceId],
         );
 
         return true;

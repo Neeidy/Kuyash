@@ -307,9 +307,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 12);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 13);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -1210,7 +1210,7 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
         $pubAccounts = new \Kuyash\Publish\AccountRepository($db);
         $pubPosts = new \Kuyash\Publish\PostRepository($db);
         $pubExec = new \Kuyash\Publish\ZernioPublishExecutor(
-            $db, new \Kuyash\Publish\MockPublishProvider(), $pubAccounts, $pubPosts, $events, $clock,
+            $db, new \Kuyash\Publish\MockPublishProvider(), $pubAccounts, $pubPosts, $events, new WorkspaceSettings($db), $clock,
         );
         $registry->register('publish', new \Kuyash\Compliance\PublishGateExecutor(
             $db, $pubExec, new \Kuyash\Publish\PublishCounter($db), $pubAccounts, $clock,
@@ -4564,12 +4564,90 @@ check('mock provider: timeout marker → throws PublishProviderException', throw
     \Kuyash\Publish\PublishProviderException::class,
 ));
 check('mock provider: status() converges an accepted post to published', $mock->status('zp_abc')->status === PublishOutcome::PUBLISHED);
-check('zernio stub: flag-off real client throws "doc-gated", never calls out', (static function (): bool {
-    $stub = new ZernioPublishProvider(new FakeHttpClient([]), ['endpoint' => 'x', 'timeout' => 5]);
+// ── Real Zernio adapter (Phase 10) — schemas taken VERBATIM from the live
+//    openapi.yaml, exercised with fakes (ZERO network). Maps every documented
+//    response to the PublishOutcome taxonomy + sets the native AI flags that
+//    YouTube/TikTok expose; Instagram (no native field) carries no AI flag.
+$zdb = migratedDb($basePath);
+[$zUser, $zWs] = seedUser($zdb, 'zern@x.com', $argonHash, 'Zern WS');
+$zNow = '2026-06-13T10:00:00Z';
+$zdb->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$zWs, $zNow, $zNow]);
+$zWf0 = (int) $zdb->lastInsertId();
+$zdb->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',?,?,?)", [$zWs, $zWf0, $zUser, $zNow, $zNow]);
+$zRun0 = (int) $zdb->lastInsertId();
+$zPaths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/za", 'cache' => "$TEST_MEDIA_ROOT/zc", 'render' => "$TEST_MEDIA_ROOT/zr", 'work' => "$TEST_MEDIA_ROOT/zw"]);
+$zRenderName = str_repeat('e', 32) . '.mp4';
+$zRenderPath = $zPaths->resolve($zPaths->ref('render', $zWs, $zRenderName));
+@mkdir(dirname($zRenderPath), 0777, true);
+file_put_contents($zRenderPath, 'fake-mp4-bytes');
+$zdb->run("INSERT INTO renders (workspace_id,run_id,kind,stored_name,mime,width,height,duration_s,storage_disk,created_at) VALUES (?,?,'final',?,'video/mp4',1080,1920,28.0,'local',?)", [$zWs, $zRun0, $zRenderName, $zNow]);
+$zRenderId = (int) $zdb->lastInsertId();
+$zStorage = new StorageManager(['local' => new LocalStorageProvider(['render' => "$TEST_MEDIA_ROOT/zr"])], 'local');
+$zCfg = ['endpoint' => 'https://zernio.test/api', 'api_key' => 'sk_test', 'timeout' => 5];
+$mkZernio = static function (FakeHttpClient $http, int $uploadStatus = 200) use ($zdb, $zStorage, $zPaths, $zCfg): ZernioPublishProvider {
+    $blob = new FakeBlobClient();
+    $blob->uploadStatus = $uploadStatus;
+    return new ZernioPublishProvider($http, $blob, new \Kuyash\Media\RenderRepository($zdb), $zStorage, $zPaths, $zCfg, static fn (int $ms) => null);
+};
+$zReq = static fn (string $platform, bool $ai = false): PublishRequest => new PublishRequest($platform, '@acct', 'acc_zzz', "k:{$platform}", $ai, null, $zRenderId, 'Hello caption', ['#a'], $zWs);
+$zPresign = static fn (): HttpResponse => new HttpResponse(200, (string) json_encode(['uploadUrl' => 'https://up.zernio.test/x', 'publicUrl' => 'https://media.zernio.com/temp/x.mp4', 'key' => 'temp/x.mp4', 'expiresIn' => 3600]));
+// PostCreateResponse = { message, post: { _id, status, platforms:[PlatformTarget] } };
+// PlatformTarget (verbatim spec) = { platform, status, platformPostUrl, errorMessage, errorCategory }.
+$zPost = static fn (string $platform, string $st, string $url = '', string $errMsg = '', string $errCat = ''): HttpResponse => new HttpResponse(201, (string) json_encode(['message' => 'ok', 'post' => ['_id' => 'p_1', 'status' => $st, 'platforms' => [array_filter(['platform' => $platform, 'status' => $st, 'platformPostUrl' => $url, 'errorMessage' => $errMsg, 'errorCategory' => $errCat], static fn ($v) => $v !== '')]]]));
 
-    return throws(static fn () => $stub->publish(new PublishRequest('tiktok', '@h', 'r', 'k')), \Kuyash\Publish\PublishProviderException::class)
-        && throws(static fn () => $stub->status('zp_x'), \Kuyash\Publish\PublishProviderException::class);
-})());
+$o = $mkZernio(new FakeHttpClient([$zPresign(), $zPost('instagram', 'published', 'https://instagram.com/p/abc')]))->publish($zReq('instagram'));
+check('zernio: published response → PUBLISHED + external id/url', $o->status === PublishOutcome::PUBLISHED && $o->externalPostId === 'p_1' && $o->externalUrl === 'https://instagram.com/p/abc');
+$o = $mkZernio(new FakeHttpClient([$zPresign(), $zPost('instagram', 'pending')]))->publish($zReq('instagram'));
+check('zernio: pending/scheduled response → ACCEPTED (webhook/reconcile)', $o->status === PublishOutcome::ACCEPTED && $o->externalPostId === 'p_1');
+$o = $mkZernio(new FakeHttpClient([$zPresign(), new HttpResponse(400, (string) json_encode(['error' => 'invalid media', 'code' => 'BAD_MEDIA']))]))->publish($zReq('instagram'));
+check('zernio: 4xx error envelope → REJECTED (terminal) + sanitized code', $o->status === PublishOutcome::REJECTED && str_contains((string) $o->error, 'BAD_MEDIA'));
+$o = $mkZernio(new FakeHttpClient([$zPresign(), $zPost('instagram', 'failed', '', 'Instagram access token expired', 'auth_expired')]))->publish($zReq('instagram'));
+check('zernio: per-platform errorCategory=auth_expired → AUTH_FAILED (account reauth)', $o->status === PublishOutcome::AUTH_FAILED && str_contains((string) $o->error, 'token expired'));
+$o = $mkZernio(new FakeHttpClient([$zPresign(), $zPost('instagram', 'failed', '', 'Caption too long', 'user_content')]))->publish($zReq('instagram'));
+check('zernio: per-platform non-auth failure → REJECTED (terminal) with errorMessage', $o->status === PublishOutcome::REJECTED && str_contains((string) $o->error, 'Caption too long'));
+$o = $mkZernio(new FakeHttpClient([$zPresign(), new HttpResponse(429, '{}'), new HttpResponse(429, '{}'), new HttpResponse(429, '{}')]))->publish($zReq('instagram'));
+check('zernio: 429 after bounded retry → RATE_LIMITED (queue backs off)', $o->status === PublishOutcome::RATE_LIMITED);
+$o = $mkZernio(new FakeHttpClient([$zPresign(), new HttpResponse(402, (string) json_encode(['error' => 'tier', 'code' => 'PAYMENT_REQUIRED', 'reason' => 'free_tier_exceeded']))]))->publish($zReq('instagram'));
+check('zernio: 402 PAYMENT_REQUIRED → REJECTED (terminal, not retried)', $o->status === PublishOutcome::REJECTED && str_contains((string) $o->error, 'free_tier_exceeded'));
+check('zernio: transport throw → PublishProviderException (transient)', throws(
+    static fn () => $mkZernio(new FakeHttpClient([new HttpTransportException('timeout')]))->publish($zReq('instagram')),
+    \Kuyash\Publish\PublishProviderException::class,
+));
+check('zernio: presigned upload non-2xx → PublishProviderException', throws(
+    static fn () => $mkZernio(new FakeHttpClient([$zPresign()]), 500)->publish($zReq('instagram')),
+    \Kuyash\Publish\PublishProviderException::class,
+));
+// native AI flags: set ONLY where the platform exposes a field, from request.aiLabelApplied
+$ytHttp = new FakeHttpClient([$zPresign(), $zPost('youtube', 'published', 'https://youtu.be/x')]);
+$mkZernio($ytHttp)->publish($zReq('youtube', true));
+$ytBody = (array) json_decode($ytHttp->calls[1]['body'], true);
+check('zernio: YouTube AI flag → platformSpecificData.containsSyntheticMedia=true (verbatim openapi field)',
+    ($ytBody['platforms'][0]['platformSpecificData']['containsSyntheticMedia'] ?? null) === true
+    && isset($ytBody['title']));
+$ttHttp = new FakeHttpClient([$zPresign(), $zPost('tiktok', 'published', 'https://tiktok.com/x')]);
+$mkZernio($ttHttp)->publish($zReq('tiktok', true));
+$ttBody = (array) json_decode($ttHttp->calls[1]['body'], true);
+check('zernio: TikTok AI flag → platformSpecificData.videoMadeWithAi=true (verbatim openapi field)',
+    ($ttBody['platforms'][0]['platformSpecificData']['videoMadeWithAi'] ?? null) === true);
+$igHttp = new FakeHttpClient([$zPresign(), $zPost('instagram', 'published', 'https://ig/p')]);
+$mkZernio($igHttp)->publish($zReq('instagram', true));
+$igBody = (array) json_decode($igHttp->calls[1]['body'], true);
+$igPsd = (array) ($igBody['platforms'][0]['platformSpecificData'] ?? []);
+check('zernio: Instagram sends shareToFeed + NO contentType (enum is [story]; Reels auto-detected) + NO native AI field',
+    ($igPsd['shareToFeed'] ?? null) === true
+    && !isset($igPsd['contentType'])
+    && !isset($igPsd['containsSyntheticMedia'], $igPsd['videoMadeWithAi'], $igPsd['madeWithAi']));
+check('zernio: every request carries the Bearer auth header as an associative map (CurlHttpClient contract)',
+    ($igHttp->calls[0]['headers']['Authorization'] ?? '') === 'Bearer sk_test'
+    && ($igHttp->calls[0]['headers']['Accept'] ?? '') === 'application/json'
+    && str_contains($igBody['mediaItems'][0]['url'], 'media.zernio.com'));
+// read-only accounts() maps SocialAccount → the vendor-neutral shape
+$acctHttp = new FakeHttpClient([new HttpResponse(200, (string) json_encode(['accounts' => [['_id' => 'acc_ig', 'platform' => 'instagram', 'username' => 'kuyash', 'displayName' => 'Kuyash', 'isActive' => true]]]))]);
+$accts = $mkZernio($acctHttp)->accounts('instagram');
+check('zernio: GET /accounts maps SocialAccount (_id→external_ref, platform, username, active)',
+    count($accts) === 1 && $accts[0]['external_ref'] === 'acc_ig' && $accts[0]['platform'] === 'instagram' && $accts[0]['active'] === true);
+$o = $mkZernio(new FakeHttpClient([$zPost('instagram', 'published', 'https://ig/p1')]))->status('p_1');
+check('zernio: status() reconciliation poll converges to PUBLISHED', $o->status === PublishOutcome::PUBLISHED);
 
 echo "== Publish: ZernioPublishExecutor (per-account fan-out) ==\n";
 
@@ -4591,7 +4669,7 @@ $connect = static function (Database $db, int $ws, string $platform, string $han
     return $db->lastInsertId();
 };
 $mkExec = static fn (Database $db, string $now): ZernioPublishExecutor => new ZernioPublishExecutor(
-    $db, new MockPublishProvider(), new AccountRepository($db), new PostRepository($db), new \Kuyash\Workflow\EventLog($db), static fn (): string => $now,
+    $db, new MockPublishProvider(), new AccountRepository($db), new PostRepository($db), new \Kuyash\Workflow\EventLog($db), new WorkspaceSettings($db), static fn (): string => $now,
 );
 
 check('executor: no connected accounts → published, 0 posts, no_accounts event', (static function () use ($mkPublishJob, $mkExec, $argonHash, $basePath): bool {
@@ -4703,6 +4781,95 @@ check('executor: IDEMPOTENT — re-run never double-posts a published target', (
         && $db->one("SELECT external_post_id FROM posts WHERE run_id=?", [$job['run_id']])['external_post_id'] === $first;
 })());
 
+// ── per-platform AI disclosure (Phase 10): native flag for YT/TikTok, caption
+//    line for IG, toggle-gated, suppression audited. A spy provider captures the
+//    PublishRequest the executor built so we can assert the EFFECTIVE decision.
+final class SpyPublishProvider implements \Kuyash\Publish\PublishProvider
+{
+    /** @var list<PublishRequest> */
+    public array $requests = [];
+
+    public function publish(PublishRequest $request): PublishOutcome
+    {
+        $this->requests[] = $request;
+
+        return PublishOutcome::published('sp_' . count($this->requests), 'https://x/' . count($this->requests));
+    }
+
+    public function status(string $externalPostId): PublishOutcome
+    {
+        return PublishOutcome::published($externalPostId, 'https://x/' . $externalPostId);
+    }
+
+    public function name(): string
+    {
+        return 'spy';
+    }
+}
+$mkExecSpy = static fn (Database $db, SpyPublishProvider $spy, string $now): ZernioPublishExecutor => new ZernioPublishExecutor(
+    $db, $spy, new AccountRepository($db), new PostRepository($db), new \Kuyash\Workflow\EventLog($db), new WorkspaceSettings($db), static fn (): string => $now,
+);
+$aiPrior = ['compliance_check' => ['ai_label_required' => true], 'caption_generation' => ['captions' => ['instagram' => 'Tasty one-pan dinner', 'youtube' => 'Tasty one-pan dinner', 'tiktok' => 'Tasty one-pan dinner']]];
+
+I18n::setLocale('en');
+check('exec/ai: settings default ON for all 3 platforms; setAiDisclosure persists; unknown platform rejected', (static function () use ($argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'aiset@x.com', $argonHash, 'AISET');
+    $s = new WorkspaceSettings($db);
+    $def = $s->aiDisclosure($ws);
+    $ok = $def['instagram'] && $def['youtube'] && $def['tiktok'] && $s->aiDiscloses($ws, 'instagram') === true;
+    $s->setAiDisclosure($ws, 'tiktok', false);
+    return $ok && $s->aiDiscloses($ws, 'tiktok') === false && $s->aiDiscloses($ws, 'youtube') === true && $s->setAiDisclosure($ws, 'bogus', false) === false;
+})());
+check('exec/ai: Instagram AI media gets the "Made with AI" disclosure on its own final line', (static function () use ($mkPublishJob, $mkExecSpy, $connect, $aiPrior, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'aiig@x.com', $argonHash, 'AIIG');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@ig', $now);
+    $spy = new SpyPublishProvider();
+    $mkExecSpy($db, $spy, $now)->execute($mkPublishJob($db, $ws, $u, $now), $aiPrior);
+    $req = $spy->requests[0] ?? null;
+    return $req !== null && $req->aiLabelApplied === true
+        && str_contains($req->caption, "\nMade with AI")          // own line after the caption
+        && str_ends_with(rtrim($req->caption), 'Made with AI');    // it is the final line
+})());
+check('exec/ai: the Instagram disclosure is localized to the owner locale (TR → "AI ile üretildi")', (static function () use ($mkPublishJob, $mkExecSpy, $connect, $aiPrior, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'aitr@x.com', $argonHash, 'AITR');
+    $db->run('UPDATE users SET locale = ? WHERE id = ?', ['tr', $u]);
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'instagram', '@igtr', $now);
+    $spy = new SpyPublishProvider();
+    $mkExecSpy($db, $spy, $now)->execute($mkPublishJob($db, $ws, $u, $now), $aiPrior);
+    return str_contains($spy->requests[0]->caption ?? '', 'AI ile üretildi');
+})());
+check('exec/ai: YouTube + TikTok carry effective aiLabelApplied=true (→ native flag set in the adapter)', (static function () use ($mkPublishJob, $mkExecSpy, $connect, $aiPrior, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'aiyt@x.com', $argonHash, 'AIYT');
+    $now = '2026-06-13T10:00:00Z';
+    $connect($db, $ws, 'youtube', 'Chan', $now);
+    $connect($db, $ws, 'tiktok', '@tt', $now);
+    $spy = new SpyPublishProvider();
+    $mkExecSpy($db, $spy, $now)->execute($mkPublishJob($db, $ws, $u, $now), $aiPrior);
+    foreach ($spy->requests as $r) {
+        if (!$r->aiLabelApplied) { return false; }
+        if (str_contains($r->caption, 'Made with AI')) { return false; } // caption line is IG-only
+    }
+    return count($spy->requests) === 2;
+})());
+check('exec/ai: a turned-OFF platform suppresses disclosure (effective=false, no caption line) + writes a truthful audit', (static function () use ($mkPublishJob, $mkExecSpy, $connect, $aiPrior, $argonHash, $basePath): bool {
+    $db = migratedDb($basePath);
+    [$u, $ws] = seedUser($db, 'aioff@x.com', $argonHash, 'AIOFF');
+    $now = '2026-06-13T10:00:00Z';
+    (new WorkspaceSettings($db))->setAiDisclosure($ws, 'instagram', false);
+    $connect($db, $ws, 'instagram', '@igoff', $now);
+    $spy = new SpyPublishProvider();
+    $mkExecSpy($db, $spy, $now)->execute($mkPublishJob($db, $ws, $u, $now), $aiPrior);
+    $req = $spy->requests[0] ?? null;
+    $audit = (int) $db->one("SELECT COUNT(*) AS n FROM events WHERE key = 'compliance.ai_disclosure_suppressed'")['n'];
+    return $req !== null && $req->aiLabelApplied === false && !str_contains($req->caption, 'Made with AI') && $audit === 1;
+})());
+
 echo "== Publish: PostRepository UNIQUE backstop (graceful idempotency-key collision) ==\n";
 
 check('postrepo: a duplicate insertPublishing returns the existing post id (no throw)', (static function () use ($mkPublishJob, $connect, $argonHash, $basePath): bool {
@@ -4754,6 +4921,24 @@ check('webhook ctl: duplicate event_id → 200 ack, single stored row (idempoten
     $second = $ctl->handle($body, $sign($body))->status();
 
     return $second === 200 && (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events WHERE external_event_id='ev_dup'")['n'] === 1;
+})());
+check('webhook ctl: Zernio payload "id" is the dedup key (real field per openapi)', (static function () use ($basePath, $whSecret, $sign): bool {
+    $db = migratedDb($basePath);
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $body = '{"id":"evt_zern_1","event":"post.published","post":{"_id":"p1"},"timestamp":"2026-06-13T10:00:00Z"}';
+    $ok = $ctl->handle($body, $sign($body))->status();
+
+    return $ok === 200 && (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events WHERE external_event_id='evt_zern_1'")['n'] === 1;
+})());
+check('webhook ctl: X-Zernio-Event-Id header is the dedup key when present (overrides body)', (static function () use ($basePath, $whSecret, $sign): bool {
+    $db = migratedDb($basePath);
+    $ctl = new WebhookController(new WebhookInbox($db, new PostRepository($db), new \Kuyash\Workflow\EventLog($db)), $whSecret);
+    $body = '{"event":"post.published","post":{"_id":"p2"}}'; // no id in body — header provides it
+    $first = $ctl->handle($body, $sign($body), 'ip', 'hdr_evt_9')->status();
+    $dup = $ctl->handle($body, $sign($body), 'ip', 'hdr_evt_9')->status();
+
+    return $first === 200 && $dup === 200
+        && (int) $db->one("SELECT COUNT(*) AS n FROM webhook_events WHERE external_event_id='hdr_evt_9'")['n'] === 1;
 })());
 check('webhook inbox: processing converges the post + records publish.webhook_received', (static function () use ($mkPublishJob, $mkExec, $connect, $argonHash, $basePath, $whSecret, $sign): bool {
     $db = migratedDb($basePath);

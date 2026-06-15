@@ -23,6 +23,9 @@ final class WebhookController
 {
     public const SIGNATURE_HEADER = 'HTTP_X_ZERNIO_SIGNATURE';
 
+    /** Stable per-delivery id for idempotency (Zernio sends it as a header too). */
+    public const EVENT_ID_HEADER = 'HTTP_X_ZERNIO_EVENT_ID';
+
     /** Logical rate-limit bucket for this endpoint. */
     private const RATE_BUCKET = 'webhook:zernio';
 
@@ -42,15 +45,18 @@ final class WebhookController
         $raw = file_get_contents('php://input');
         $signature = (string) ($_SERVER[self::SIGNATURE_HEADER] ?? '');
         $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+        $eventId = (string) ($_SERVER[self::EVENT_ID_HEADER] ?? '');
 
-        return $this->handle(is_string($raw) ? $raw : '', $signature, $ip);
+        return $this->handle(is_string($raw) ? $raw : '', $signature, $ip, $eventId);
     }
 
     /**
      * Per-IP rate-limit → verify → persist raw → ack. Directly testable (no
-     * php://input): the route passes the captured body/signature/ip here.
+     * php://input): the route passes the captured body/signature/ip/event-id here.
+     * The dedup id comes from the X-Zernio-Event-Id header when present, else the
+     * payload's `id` (Zernio's stable event UUID), else legacy `event_id`.
      */
-    public function handle(string $rawBody, string $signature, string $ip = 'unknown'): Response
+    public function handle(string $rawBody, string $signature, string $ip = 'unknown', string $eventIdHeader = ''): Response
     {
         // throttle FIRST (cheapest path): a flood of bogus deliveries from one IP
         // is rejected before HMAC work. Generous cap — a real webhook never bursts
@@ -79,8 +85,8 @@ final class WebhookController
             return self::text('invalid signature', 401);
         }
 
-        $eventId = $this->eventId($rawBody);
-        if ($eventId === null) {
+        $eventId = $eventIdHeader !== '' ? $eventIdHeader : $this->eventId($rawBody);
+        if ($eventId === null || $eventId === '') {
             error_log('Kuyash: webhook rejected — payload missing event id');
 
             return self::text('bad payload', 400);
@@ -117,7 +123,8 @@ final class WebhookController
         if (!is_array($payload)) {
             return null;
         }
-        $id = $payload['event_id'] ?? null;
+        // Zernio's stable per-delivery id is `id`; accept legacy `event_id` too.
+        $id = $payload['id'] ?? $payload['event_id'] ?? null;
 
         return is_string($id) && $id !== '' ? $id : null;
     }

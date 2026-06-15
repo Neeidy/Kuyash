@@ -10,6 +10,7 @@ use Kuyash\Core\View;
 /** @var int $autoUsedToday */
 /** @var int $spentThisMonthCents */
 /** @var string $workspaceName current workspace display name (topbar chip) */
+/** @var array{instagram: bool, youtube: bool, tiktok: bool} $aiDisclosure per-platform AI-disclosure toggles */
 /** @var string $csrfField trusted generated HTML */
 
 $isAuto = $settings['approval_mode'] === 'auto';
@@ -102,6 +103,24 @@ $killOn = $settings['kill_switch'];
       </div>
 
       <button type="submit" class="btn btn--primary"><?= View::t('settings.save') ?></button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__head"><h2><?= View::t('settings.ai_card') ?></h2></div>
+  <div class="card__body">
+    <form method="post" action="/settings/ai-disclosure" class="settings-form">
+      <?= $csrfField ?>
+      <p class="muted"><?= View::t('settings.ai_desc') ?></p>
+      <?php foreach (['instagram' => 'settings.ai_instagram', 'youtube' => 'settings.ai_youtube', 'tiktok' => 'settings.ai_tiktok'] as $p => $labelKey): ?>
+      <label class="ai-toggle">
+        <input type="checkbox" name="ai_<?= $p ?>"<?= ($aiDisclosure[$p] ?? true) ? ' checked' : '' ?>>
+        <span><?= View::t($labelKey) ?></span>
+      </label>
+      <?php endforeach; ?>
+      <p class="quality-warn"><?= View::t('settings.ai_warn') ?></p>
+      <button type="submit" class="btn btn--primary"><?= View::t('settings.ai_save') ?></button>
     </form>
   </div>
 </div>

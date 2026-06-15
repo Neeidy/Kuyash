@@ -17,3 +17,29 @@ Required before any real call:
 12. AI-label / content-flag fields per platform, if exposed by the API
 
 Mock client must simulate: success, platform rejection, rate-limit, auth failure, webhook delivery, partial multi-platform failure, **lost webhook (reconciliation poll path)**, and **duplicate webhook delivery (inbox idempotency)** — see the webhook inbox + reconciliation sections in content-pipeline.md.
+
+---
+
+## STATUS — Phase 10: real adapter BUILT (doc-gate cleared) ✅
+
+All 12 items above were supplied (see `zernio-integration-spec.md`, compiled from
+the live `openapi.yaml` + docs.zernio.com). The real `ZernioPublishProvider` is
+implemented — presign+PUT upload, `POST /v1/posts`, status reconciliation, read-only
+`GET /v1/accounts`, 429 backoff, the `{error,code,reason}` envelope — with EVERY field
+taken verbatim from the spec (no fabrication). **`ZERNIO_MOCK` stays `true` by default;
+no live publish.** Setting `ZERNIO_MOCK=false` (+ `ZERNIO_API_KEY`) makes it real.
+
+## AI-label reality — CORRECTED (verified from the raw openapi.yaml)
+
+An earlier note claimed Zernio exposes NO AI-disclosure field. **That was wrong** (a
+truncated-fetch artifact). The raw spec defines native AI-disclosure flags for two of
+Kuyash's three platforms:
+
+- **YouTube** → `platformSpecificData.containsSyntheticMedia` (boolean)
+- **TikTok**  → `platformSpecificData.videoMadeWithAi` (boolean)
+- **Instagram** → **no native field** → Kuyash appends a "Made with AI" / "AI ile üretildi"
+  caption line instead.
+
+Kuyash sets these from the compliance flag (`aiLabelApplied`), gated by per-platform
+operator toggles in Settings (default ON). Turning one off is recorded as a truthful
+`compliance.ai_disclosure_suppressed` audit event. Decision + rationale: **ADR-021**.

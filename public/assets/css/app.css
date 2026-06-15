@@ -701,6 +701,13 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
 }
 .mode-option.is-picked { border-color: var(--accent); background: var(--surface-2); }
 .mode-option input { margin-top: 3px; accent-color: var(--accent); flex: none; }
+/* Phase 10: per-platform AI-disclosure toggles */
+.ai-toggle {
+  display: flex; gap: var(--s3); align-items: center; width: 100%;
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: var(--s3) var(--s4); cursor: pointer; font-size: 13px; line-height: 1.5;
+}
+.ai-toggle input { accent-color: var(--accent); flex: none; width: 16px; height: 16px; }
 
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s4); width: 100%; max-width: 560px; }
 /* two class selectors (0,2,0) so the hint beats base.css `.field > span` (0,1,1)
