@@ -6,6 +6,8 @@ namespace Kuyash\Media;
 
 use Closure;
 use Kuyash\Core\Database;
+use Kuyash\Storage\StorageKey;
+use Kuyash\Storage\StorageManager;
 use Throwable;
 
 /**
@@ -25,6 +27,9 @@ final class AssetCache
     public function __construct(
         private readonly Database $db,
         private readonly MediaPaths $paths,
+        // Optional: lets a HIT whose local file was evicted to the durable disk
+        // (R2) self-heal by restoring it. Null (test rigs) → re-produce instead.
+        private readonly ?StorageManager $storage = null,
     ) {
     }
 
@@ -36,16 +41,38 @@ final class AssetCache
     {
         $hit = $this->lookup($workspaceId, $cacheKey);
         if ($hit !== null) {
+            $name = (string) $hit['stored_name'];
+            $meta = $this->decodeMeta($hit['meta_json']);
+            $cached = true;
+
+            // A HIT row can outlive its local file: migrate-storage moves the
+            // object to the durable disk (R2) and drops the local copy, or local
+            // scratch gets cleaned. The consumer (ffmpeg) needs a REAL local file,
+            // so verify it and self-heal before returning the ref.
+            $canonical = $this->paths->pathFor('cache', $workspaceId, $name);
+            if (!is_file($canonical)) {
+                $meta = $this->rematerialize(
+                    $workspaceId,
+                    $cacheKey,
+                    $name,
+                    (string) ($hit['storage_disk'] ?? 'local'),
+                    $canonical,
+                    $meta,
+                    $producer,
+                    $cached,
+                );
+            }
+
             $this->db->run(
                 'UPDATE asset_cache SET hits = hits + 1 WHERE workspace_id = ? AND cache_key = ?',
                 [$workspaceId, $cacheKey],
             );
 
             return new CacheEntry(
-                $this->paths->ref('cache', $workspaceId, (string) $hit['stored_name']),
-                (string) $hit['stored_name'],
-                $this->decodeMeta($hit['meta_json']),
-                true,
+                $this->paths->ref('cache', $workspaceId, $name),
+                $name,
+                $meta,
+                $cached,
             );
         }
 
@@ -86,6 +113,51 @@ final class AssetCache
         return new CacheEntry($this->paths->ref('cache', $workspaceId, $name), $name, $meta, false);
     }
 
+    /**
+     * Heal a HIT whose local file vanished. First try to restore it from the
+     * durable disk where migrate-storage parked it (R2). If it is unrecoverable
+     * there — local-only disk, never uploaded, or no StorageManager wired — re-run
+     * the producer IN PLACE (same stored_name → no new row, no UNIQUE race). A
+     * re-produce is a fresh production, not a cache saving, so $cached flips to
+     * false and the caller charges quota for the real re-fetch.
+     *
+     * @param Closure(string): array<string, mixed> $producer
+     * @param array<string, mixed>                  $meta current (HIT) metadata
+     * @return array<string, mixed> meta to report — unchanged on restore, fresh on re-produce
+     */
+    private function rematerialize(
+        int $workspaceId,
+        string $cacheKey,
+        string $name,
+        string $disk,
+        string $canonical,
+        array $meta,
+        Closure $producer,
+        bool &$cached,
+    ): array {
+        if ($this->storage !== null && $disk !== 'local' && $this->storage->has($disk)) {
+            $key = StorageKey::make('cache', $workspaceId, $name);
+            $provider = $this->storage->disk($disk);
+            if ($provider->exists($key)) {
+                $provider->getToLocal($key, $canonical);
+                if (is_file($canonical)) {
+                    return $meta; // restored from the durable disk — still a HIT
+                }
+            }
+        }
+
+        // last resort: re-produce into the SAME stored_name and refresh the meta
+        $fresh = $producer($canonical);
+        $metaJson = json_encode($fresh, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        $this->db->run(
+            'UPDATE asset_cache SET meta_json = ? WHERE workspace_id = ? AND cache_key = ?',
+            [$metaJson, $workspaceId, $cacheKey],
+        );
+        $cached = false;
+
+        return $fresh;
+    }
+
     private function isUniqueViolation(Throwable $e): bool
     {
         // SQLSTATE 23000 = integrity constraint; message names the UNIQUE index
@@ -107,7 +179,7 @@ final class AssetCache
     private function lookup(int $workspaceId, string $cacheKey): ?array
     {
         return $this->db->one(
-            'SELECT stored_name, meta_json FROM asset_cache WHERE workspace_id = ? AND cache_key = ?',
+            'SELECT stored_name, meta_json, storage_disk FROM asset_cache WHERE workspace_id = ? AND cache_key = ?',
             [$workspaceId, $cacheKey],
         );
     }

@@ -3120,6 +3120,111 @@ check('cache: a different key is a separate miss', (static function () use ($acC
     return !$e->cached && $acCalls === $before + 1;
 })());
 
+echo "== Media: AssetCache self-heals a HIT whose local file was evicted ==\n";
+
+// A HIT row can outlive its local file once migrate-storage backfills the object
+// to the durable disk (R2) and drops the local copy. Wire AssetCache with a
+// StorageManager whose default 'r2' disk is a second LocalStorageProvider (no
+// network) standing in for R2.
+$healRoot = tempDir('acheal');
+$healPaths = new MediaPaths(['asset' => "$healRoot/a", 'cache' => "$healRoot/c", 'render' => "$healRoot/v", 'work' => "$healRoot/w"]);
+$healDurRoot = tempDir('achealdur');
+$healDur = new LocalStorageProvider(['asset' => "$healDurRoot/a", 'cache' => "$healDurRoot/c", 'render' => "$healDurRoot/v"]);
+$healSm = new StorageManager([
+    'local' => new LocalStorageProvider(['asset' => "$healRoot/a", 'cache' => "$healRoot/c", 'render' => "$healRoot/v"]),
+    'r2' => $healDur,
+], 'r2');
+$healDb = migratedDb($basePath);
+[$healUser, $hws] = seedUser($healDb, 'heal@example.com', $argonHash, 'HEAL WS');
+$healCache = new AssetCache($healDb, $healPaths, $healSm);
+$healCalls = 0;
+$healProd = function (string $p) use (&$healCalls): array {
+    $healCalls++;
+    file_put_contents($p, 'CLIPBYTES');
+
+    return ['cost_cents' => 7];
+};
+
+// MISS produces the canonical local file + row; then simulate the R2 backfill:
+// push to the durable disk, mark the row, evict the local copy.
+$hm = $healCache->remember($hws, 'stock', 'k-heal', 'mp4', $healProd);
+$hCanon = $healPaths->resolve($hm->ref);
+$healDur->put(StorageKey::make('cache', $hws, $hm->name), $hCanon, 'video/mp4');
+$healDb->run("UPDATE asset_cache SET storage_disk = 'r2' WHERE workspace_id = ? AND cache_key = ?", [$hws, 'k-heal']);
+unlink($hCanon);
+check('cache: precondition — HIT row exists but local file is gone', !is_file($hCanon) && $healCalls === 1);
+
+$hHit = $healCache->remember($hws, 'stock', 'k-heal', 'mp4', $healProd);
+check('cache: evicted HIT restores from the durable disk (no re-produce, still cached)',
+    $hHit->cached === true && $healCalls === 1 && is_file($hCanon));
+
+// regression: with the local file back, a further HIT is a clean reuse
+$beforeClean = $healCalls;
+$hClean = $healCache->remember($hws, 'stock', 'k-heal', 'mp4', $healProd);
+check('cache: HIT with present local file is a clean reuse (no producer, no download)',
+    $hClean->cached === true && $healCalls === $beforeClean && is_file($hCanon));
+
+// unrecoverable (local-only disk, never uploaded) → re-produce IN PLACE, charged
+$rm = $healCache->remember($hws, 'stock', 'k-repro', 'mp4', $healProd);
+$rCanon = $healPaths->resolve($rm->ref);
+$healDb->run("UPDATE asset_cache SET storage_disk = 'local' WHERE workspace_id = ? AND cache_key = ?", [$hws, 'k-repro']);
+unlink($rCanon);
+$beforeRepro = $healCalls;
+$rHit = $healCache->remember($hws, 'stock', 'k-repro', 'mp4', $healProd);
+check('cache: unrecoverable evicted HIT re-produces in place (cached=false, same name, charged)',
+    $rHit->cached === false && $healCalls === $beforeRepro + 1 && is_file($rCanon) && $rHit->name === $rm->name);
+
+if ($mediaReady) {
+    echo "== Media: AssemblyEngine stages R2-evicted inputs end-to-end ==\n";
+
+    // R2-mode simulation: visual + audio live ONLY on the durable disk; their
+    // canonical local copies are removed (as migrate-storage would). The engine's
+    // storage IS the durable disk, so assembly must stage both before ffmpeg.
+    $asmDb = migratedDb($basePath);
+    [$asmUser, $asmWs] = seedUser($asmDb, 'asmr2@example.com', $argonHash, 'ASM R2 WS');
+    $asmRoot = tempDir('asmr2');
+    $asmPaths = new MediaPaths(['asset' => "$asmRoot/a", 'cache' => "$asmRoot/c", 'render' => "$asmRoot/v", 'work' => "$asmRoot/w"]);
+    $asmFf = new Ffmpeg($ffmpegBin, $ffprobeBin, 120);
+    $asmDurRoot = tempDir('asmr2dur');
+    $asmDur = new LocalStorageProvider(['asset' => "$asmDurRoot/a", 'cache' => "$asmDurRoot/c", 'render' => "$asmDurRoot/v"]);
+    $asmSm = new StorageManager([
+        'local' => new LocalStorageProvider(['asset' => "$asmRoot/a", 'cache' => "$asmRoot/c", 'render' => "$asmRoot/v"]),
+        'r2' => $asmDur,
+    ], 'r2');
+    $asmEngine = new AssemblyEngine($asmFf, $asmPaths, new RenderRepository($asmDb), $asmSm->default(), 24, ['burn_subtitles' => false], 'r2');
+
+    // a run + job so the render row's FKs (renders → runs/jobs) are satisfied
+    $asmNow = gmdate(NOW_ISO);
+    $asmDb->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, 'asm', 'full', '[]', ?, ?)", [$asmWs, $asmNow, $asmNow]);
+    $asmWf = $asmDb->lastInsertId();
+    $asmDb->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', ?, ?, ?)", [$asmWs, $asmWf, $asmUser, $asmNow, $asmNow]);
+    $asmRun = $asmDb->lastInsertId();
+    $asmDb->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, run_after, created_at) VALUES (?, ?, 'ASSEMBLE', 1, 'assembly', ?, ?)", [$asmWs, $asmRun, $asmNow, $asmNow]);
+    $asmJob = $asmDb->lastInsertId();
+
+    // produce a REAL visual clip + narration at their canonical local paths
+    $vName = $asmPaths->newName('mp4');
+    $vPath = $asmPaths->pathFor('cache', $asmWs, $vName);
+    (new MockStockProvider($asmFf, 540, 960, 24))->fetchClip('skyline', 3.0, $vPath);
+    $aName = $asmPaths->newName('wav');
+    $aPath = $asmPaths->pathFor('cache', $asmWs, $aName);
+    WavWriter::writeSilence($aPath, 3.0);
+    $vRef = $asmPaths->ref('cache', $asmWs, $vName);
+    $aRef = $asmPaths->ref('cache', $asmWs, $aName);
+
+    // backfill to the durable disk, then evict the local copies
+    $asmDur->put(StorageKey::make('cache', $asmWs, $vName), $vPath, 'video/mp4');
+    $asmDur->put(StorageKey::make('cache', $asmWs, $aName), $aPath, 'audio/wav');
+    unlink($vPath);
+    unlink($aPath);
+    check('assembly: R2-mode precondition — both ffmpeg inputs evicted from local', !is_file($vPath) && !is_file($aPath));
+
+    $asmOut = $asmEngine->assembleNarrated($asmWs, $asmRun, $asmJob, 'draft', ['width' => 540, 'height' => 960, 'preset' => 'ultrafast'], $vRef, $aRef, 'one two three four');
+    check('assembly: R2-evicted visual+audio staged → render completes end-to-end',
+        ($asmOut['render_id'] ?? 0) > 0 && is_file($asmPaths->resolve($asmOut['render_ref'])));
+    check('assembly: staging restored the inputs to their canonical local paths', is_file($vPath) && is_file($aPath));
+}
+
 echo "== Media: TTS provider selection via the real binding ==\n";
 
 $buildTts = static function (string $mock, string $key) use ($basePath): TtsProvider {

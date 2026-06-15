@@ -386,6 +386,7 @@ return static function (Container $container, string $basePath): void {
     $container->bind(AssetCache::class, static fn (Container $c): AssetCache => new AssetCache(
         $c->get(Database::class),
         $c->get(MediaPaths::class),
+        $c->get(StorageManager::class), // self-heal HIT whose local file was evicted to R2
     ));
 
     $container->bind(RenderRepository::class, static fn (Container $c): RenderRepository => new RenderRepository(

@@ -64,8 +64,8 @@ final class AssemblyEngine
         $work = $this->paths->newWorkDir();
 
         try {
-            $visual = $this->paths->resolve($visualRef);
-            $audio = $this->paths->resolve($audioRef);
+            $visual = $this->localInput($visualRef);
+            $audio = $this->localInput($audioRef);
             $duration = $this->ffmpeg->probeDuration($audio);
 
             $srt = SubtitleBuilder::build($script, $duration ?? 8.0);
@@ -131,7 +131,7 @@ final class AssemblyEngine
         $work = $this->paths->newWorkDir();
 
         try {
-            $visual = $this->paths->resolve($visualRef);
+            $visual = $this->localInput($visualRef);
             $name = $this->paths->newName('mp4');
             $out = $this->paths->pathFor('render', $workspaceId, $name);
 
@@ -150,6 +150,34 @@ final class AssemblyEngine
         } finally {
             $this->paths->cleanupWorkDir($work);
         }
+    }
+
+    /**
+     * A guaranteed-LOCAL path for a media ref that ffmpeg can open, in every
+     * storage mode. The local file is used as-is when present (byte-identical to
+     * before this seam). When it is absent — the object was backfilled to the
+     * durable disk (R2) and the local copy evicted by migrate-storage — it is
+     * staged back from the default durable disk into its canonical local path
+     * (a read-through restore, so later passes reuse it). Honest failure if the
+     * object exists on neither disk.
+     */
+    private function localInput(string $ref): string
+    {
+        $local = $this->paths->resolve($ref);
+        if (is_file($local)) {
+            return $local;
+        }
+
+        [$store, $ws, $name] = explode(':', $ref, 3);
+        $key = StorageKey::make($store, (int) $ws, $name);
+        if ($this->storage->exists($key)) {
+            $this->storage->getToLocal($key, $local);
+            if (is_file($local)) {
+                return $local;
+            }
+        }
+
+        throw new FfmpegException("assembly input missing and unrecoverable: {$ref}");
     }
 
     /** @param array{width: int, height: int} $g */
