@@ -7,52 +7,35 @@
 ## Son güncelleme
 
 - Tarih: 2026-06-14
-- Güncelleyen: Claude (**EXPERIENCE LAYER (FAZ 16–21) TAMAMLANDI + main'e MERGE + PUSH EDİLDİ.** Faz 21 3. tur
-  4-madde düzeltmesi `806fdf8`'de commit'lendi (+`chore(state)`), tüm 16→21 stack'i fast-forward ile main'e geldi
-  (lineer, çakışma yok), `git push origin main` yapıldı. Kapsam SADECE 4 madde,
-  başka ekran/davranış/refactor YOK; engine/queue/worker/migration DOKUNULMADI. **(1)** Workspace adı kullanıcı
-  düzenlenebilir: yeni `WorkspaceSettings::setName` (trim+collapse, ≤60, tenant-scoped prepared) + `SettingsController::saveName`
-  + `POST /settings/name` ($protected, global CSRF) + /settings'te "Workspace name" kartı + topbar çipi `.mode-chip__name`
-  TEAL GRADIENT (hardcoded değil, DB `workspaces.name` okur — ADDITIVE, migration yok). **(2)** Nötr metin rampası
-  GÖRÜNÜR teal-slate: `--text #d7ece5 / --text-2 #8fbeb3 / --text-3 #84b2a9` (G−R +21/+47/+46 ≫ eski +6; AA her
-  yüzeyde ≥7.06; luminance düşmedi/yükseldi). **(3)** Topbar live dot: yeni `@keyframes live-beat` (opacity+glow
-  nabzı ~2s, `.is-live` bağlı, accent+--glow, reduced-motion sabit-glow). **(4)** Pipeline node drawer GERÇEK
-  per-aşama çıktı: `Cockpit::pipeline` her node'a `results` (type→result_json, read-only tenant-scope SELECT) +
-  pipeline.php her node tipini render (TREND başlık/skor, IDEA hook, SCRIPT gövde, VOICE, VISUALS, ASSEMBLE,
-  CAPTION, HASHTAGS, MUSIC, PREVIEW, COMPLIANCE [pass/warn/block + benzerlik% + AI etiketi], PUBLISH) — hepsi
-  `View::e` escape (XSS-safe <template> invariant), wait→"başlamadı", veri-yok→"çıktı yok"; visual-seed Run A
-  TREND/IDEA/SCRIPT gerçekçi result_json (DEV-only). ~50 lang anahtarı (en+tr parite). **tests/run.php 776→796 PASS
-  (+20 rev/item testi), 0 FAIL; visual gate 69 PNG / 0 err / 0 overflow / exit 0; canlı-app curl kanıtı: rename
-  persisted+CSRF 403+tenant-izole, dashboard HTML'inde gerçek node çıktısı.** **4 GATE GO/0 blocker** (qa scope+parite,
-  security 0 HIGH/MED + 2 LOW, ux piksel-örnekli teal teyit, compliance truthful eşleme). Önceki tur özeti aşağıda. ↓
-  **FAZ 21 — İLK SUNUM REDDEDİLDİ (commit `e0f2541`) → 6 MADDELİK DÜZELTME (commit
-  `cc8df98`). İNSAN KAPISI bekliyor; PUSH/MERGE YOK.** Salt sunum+i18n+mock veri; engine/route/DB/gerçek-API
-  DOKUNULMADI. İlk F21'de §1 hesap widget'ı + dashboard/accounts/queue v3 + temel jargon scrub vardı; kullanıcı
-  /logs+/queue artık jargonu + 5 iç ekranın "eski" durması + inline player'ın oynamaması üzerinden reddetti.
-  **6 DÜZELTME:** (A1) /logs TAM temizlik — `Messages::event()` {type}/{platform}/{slop→%}/{node} DISPLAY-humanize
-  (stored row HAM = audit korunur), event.* string reword (worker/watchdog/policy/WARN-BLOCK çıktı), {kind}
-  "[compliance]"→"Uyumluluk", visual-seed GERÇEK event key+param. (A2) /queue render_review özeti
-  "(mock):…policy mock-v0" → durum-bazlı "Compliance: passed · AI label required" (ham summary asla basılmaz).
-  (A3) /settings+/digest standalone "policy kuyash-v1" çipleri + auto_desc sürümü KALDIRILDI; sürüm YALNIZ truthful
-  onay KAYITLARINDA. (B) 5 ekran gerçek v3: glow primary CTA + trends gradient skor/hover/stagger + library
-  play-affordance + populated grid + quick/digest/settings `.card--primary` focal. (C) metin rampası teal-fısıltı
-  (sadece hue; `--text/-2/-3`; luminance korundu/yükseldi → AA, --text-3 ≥5.0 her yüzey). (D6) inline player GERÇEKTEN
-  OYNAR — committed mock fixture (`tools/visual/fixtures/preview.{mp4,jpg}`) seed'le render storage'a + awaiting
-  render_review'ye `draft_render_id`; **/render/1 → 200 video/mp4 + 206 range (curl-kanıt)**, SSE `/live` snapshot
-  emit. **EK:** canonical node adları `Messages::node()` ile liste/feed'de humanize (VOICE→"Voiceover"; graph
-  view'larda canonical KALIR), `[hidden]` CSS fix (boyut-uyarısı koşulsuz görünüyordu), published_today oranı reword.
-  `tests/run.php` **776 PASS/0 FAIL**; visual **69 PNG / 0 err / 0 overflow / exit 0**; parite **564=564**.
-  **Gate'ler:** qa/security/compliance **GO** (truthful records + AI label + sample dürüstlüğü + audit korundu;
-  scope: tek `src/` = Messages facade); **ux ilk tur CONDITIONAL** (2 blocker: /queue ham node enum + fixture
-  commitsiz) → İKİSİ DE DÜZELTİLDİ → ux yeniden-doğrulama bekleniyor. F21 tip `cc8df98` (F20'den stack).)
+- Güncelleyen: Claude (**FAZ 10 — ZERNIO GERÇEK PUBLISH ADAPTER + per-platform AI ifşası: KABUL + COMMIT + PUSH
+  EDİLDİ. ZERNIO_MOCK=true KALDI — gerçek YAYIN YOK (kullanıcının ayrı kararı).** Kod commit `6891f8b`
+  (feat/publish, 17 dosya) + checkpoint `chore(state)`; `git push origin main` yapıldı. main=origin/main.
+  Gerçek `ZernioPublishProvider` (PublishProvider seam arkası, mock varsayılan): presign POST /media/presign →
+  PUT upload → POST /posts; status() GET /posts/{id}; salt-okunur accounts() GET /accounts; 8 hata modu →
+  PublishOutcome; sınırlı 429 retry; {error,code,reason} sanitize (key sızdırmaz); Bearer assoc-header. Şema HER
+  ALAN ham openapi.yaml'a karşı doğrulandı — UYDURMA YOK (ilk turdaki platformResults/contentType:reels/per-platform
+  error integration-gate'te yakalandı → `post.platforms[]`/shareToFeed/errorCategory'ye düzeltildi). **Hibrit
+  per-platform AI ifşası (default AÇIK, operatör toggle):** YouTube `containsSyntheticMedia` + TikTok `videoMadeWithAi`
+  native bayrak; IG native alan YOK → caption ifşa satırı ("Made with AI"/"AI ile üretildi", owner locale); bir
+  platform KAPATILINCA truthful `compliance.ai_disclosure_suppressed` audit (sessiz değil). Ayarlar'da 3 toggle;
+  migration **0013** `ai_disclose_{instagram,youtube,tiktok}` (NOT NULL default 1). Webhook HMAC-SHA256 raw-body +
+  event-id dedup (payload.id / X-Zernio-Event-Id). Docs: zernio-notes + zernio-integration-spec + **ADR-021**.
+  **822 PASS / 0 FAIL**; secret taraması temiz (.env gitignored; 2 isabet = placeholder); **CANLI salt-okunur
+  GET /accounts → IG `@ai.neeidy` listelendi (yayın yok).** **4 GATE GO/0 blocker** (qa scope/parite, security
+  0 HIGH-MED + 2 LOW, compliance truthful effective-flag + audit, integration B1-B4 sonrası GO).
+  **+ DEV-DB FIX:** /settings 500 (no such column ai_disclose_instagram) = migration 0013 canlı dev DB'ye
+  uygulanmamıştı (test-DB'ler her testte sıfırdan kurulduğu için 822 PASS yakalamadı; KOD/migration uyumsuzluğu
+  DEĞİL). WAL-safe yedek (`kuyash.pre-0013.bak.sqlite`, VACUUM INTO, integrity=ok) → `bin/migrate.php` → 0013
+  uygulandı (dev DB migration=13, kolon adları code ile birebir, 3 ws default ON). KANIT: /settings 200 + 3 toggle
+  `checked`; 10 nav ekranı HTTP 200 / 0 SQL-hata.)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **EXPERIENCE LAYER (FAZ 16–21) TAMAMLANDI + main'e MERGE + PUSH EDİLDİ.** Tüm stack lineer fast-forward
-  ile main'e geldi (çakışma yok). **main = origin/main = `806fdf8`** (push edildi). Merge olan commit'ler (eski→yeni):
-  F16 `8a6f561` → F17 `231b709` → F18 `1a4486d` → F19 `460e487` → F20 `fd80455` → F21 `e0f2541` → F21-fix `cc8df98`
-  → F21-r3 `806fdf8` (+ chore(state)). Test: **796 PASS**. Visual baseline: `storage/visual/phase-21-rev/` (69 PNG,
-  tüm 12 ekran v3 + 4-madde düzeltme). feat/phase-16..21 branch'leri merge sonrası bırakılabilir/silinebilir.
+- Aşama: **FAZ 10 (Zernio gerçek publish adapter + AI ifşası) KABUL + COMMIT + PUSH.** main üzerinde lineer.
+  Kod commit `6891f8b` (feat/publish, 17 dosya) + `chore(state)` checkpoint → `git push origin main`.
+  **822 PASS / 0 FAIL.** ZERNIO_MOCK=true (gerçek yayın YOK; kullanıcının ayrı kararı). Dev DB migration=13
+  (0013 uygulandı; /settings 500 çözüldü). Önceki: EXPERIENCE LAYER (FAZ 16–21) main'e merge+push (`806fdf8`),
+  visual baseline `storage/visual/phase-21-rev/` (69 PNG). feat/phase-16..21 branch'leri silinmişti.
 - **F21** (Tam Deneyim Dönüşümü; TÜM 12 ekran v3 + jargon=0 [/logs+/queue dahil] + §1 hesap widget'ı + oynar inline
   player): `account-card.php` + `Messages::jobType/platform/node` + event display-humanize + ~50 lang scrub + login
   branding + gradient başlık + trends gradient-skor + glow CTA + teal-fısıltı metin + committed mock fixture. Spec
@@ -138,10 +121,10 @@
 
 ## Sıradaki adım
 
-0. **EXPERIENCE LAYER (FAZ 16–21) KAPANDI — main'e merge + push EDİLDİ.** Yeni faz/iş yok; sıradaki çalışma
-   aşağıdaki enable-time/followup kalemlerinden seçilir. main=origin/main=`806fdf8`, **796 PASS**, 4 gate GO.
-   Açık takip (ertelendi, kozmetik): trends freshness chip ham ISO timestamp; workflows/show+runs/show NODE-TRACK
-   canonical adları (graph = canonical-vocabulary evi, kasıtlı). feat/phase-16..21 branch'leri merge sonrası silinebilir.
+0. **FAZ 10 (Zernio gerçek adapter + AI ifşası) KABUL + COMMIT `6891f8b` + PUSH.** 822 PASS, 4 gate GO,
+   ZERNIO_MOCK=true (gerçek yayın YOK). **Kullanıcının ayrı kararı:** `ZERNIO_MOCK=false` ile ilk gerçek yayın
+   denemesi (go-live'da `platformPostUrl` eşlemesini uçtan uca teyit eder) — bu komut gelene kadar mock kalır.
+   Yeni faz/iş yoksa sıradaki çalışma aşağıdaki enable-time/followup kalemlerinden seçilir.
 
 1. **Operatör enable-time (production-readiness.md):** R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra
    `STORAGE_DRIVER=r2`; backup cron (`bin/backup.php`); `caddy validate` + canlı tunnel; prod `.env`
@@ -168,6 +151,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-06-14 — **PHASE 10: ZERNIO GERÇEK PUBLISH ADAPTER + per-platform AI-disclosure — KABUL + COMMIT `6891f8b` + PUSH (ZERNIO_MOCK=true KALDI, gerçek yayın YOK).** Ham `openapi.yaml` (1.4MB) curl+parse ile şema BİREBİR (uydurma yok). Gerçek `ZernioPublishProvider`: presign+PUT upload, POST /posts, status, salt-okunur accounts(), 429 backoff, {error,code,reason} → PublishOutcome. **AI-LABEL:** YouTube `containsSyntheticMedia` + TikTok `videoMadeWithAi` native bayrak VAR, IG YOK → **hibrit+per-platform toggle**: Ayarlar→AI ifşası (migration **0013**, 3 boolean default 1), IG caption "Made with AI"/"AI ile üretildi" (owner locale), kapatınca `compliance.ai_disclosure_suppressed` truthful audit. Webhook event-id `payload.id`/`X-Zernio-Event-Id`. **CANLI salt-okunur GET /accounts → IG `@ai.neeidy` (kanıt; yayın yok).** Docs: zernio-notes + spec + **ADR-021**. **822 PASS/0 FAIL**; secret-scan temiz. **4 GATE GO:** qa, security (0 HIGH-MED; header-format bug'ı canlı 401 yakaladı+düzeltildi), compliance (truthful effective-flag + audit), integration (ilk NO-GO 4 uydurma alan platformResults/contentType:reels/per-platform error → B1-B4 `post.platforms[]`/shareToFeed/errorCategory → yeniden GO). 17 dosya commit (feat/publish) + checkpoint (chore/state). **+ DEV-DB FIX:** /settings 500 (no such column ai_disclose_instagram) = 0013 canlı dev DB'ye uygulanmamıştı (KOD/migration uyumsuzluğu DEĞİL) → WAL-safe yedek `kuyash.pre-0013.bak.sqlite` + `bin/migrate.php` (dev DB migration=13, 3 ws default ON) → /settings 200 + 3 toggle, 10 nav ekranı 200/0-SQL-hata.
+
 - 2026-06-14 — **GO-LIVE PREP + R2 GATE + DASHBOARD BÜTÇE GERÇEĞE BAĞLANDI (hepsi main'e push'lu).** (a) Go-live planı sunuldu (servis-bazı credential/.env + Zernio 12-madde doc-gate [0/12 elde] + IG Business ön-koşulu); MOCK smoke izole DB'de uçtan uca **PASS** (trend→onay→pipeline→48 event→completed). (b) **R2 gate düzeltildi** (`bin/r2-smoke.php` `35bb7ac`): imzasız GET'te HTTP 400'ü gövde-temelli redde çevirdi (sızıntı=obje baytları döndü mü; PRIVATE=400/401/403 VE gövde gizli) → canlı bucket **6/6 PASS** (gövde R2 hata-XML'i, sızıntı yok). `.env`'de `STORAGE_DRIVER=r2` (kullanıcı bıraktı). (c) **Dashboard BYO-key bütçe** (`8716803`): "remaining balance"→**"remaining budget"** (cap−MTD spend / "no monthly limit"); `Cockpit::business` budget_cap+remaining + cost-per-content gerçek usage & 0-harcamada "no data"; sahte dev-DB finansı silindi (ws#2: $50 grant+$1.50 adjust+$0.95 usage → temiz $0; WAL-safe yedek `kuyash.pre-finance-reset.*.bak`; ws#1/#3 dokunulmadı). Bütçe enforcement zaten wire'lı (PreflightGate) — kanıtlandı: **$1 cap, $7.02 quick_create AI-video run → BudgetExceededException; $0.10 stok run → başlar.** **801 PASS/0 FAIL** (+5 test). origin/main `8716803`.
 
 - 2026-06-14 — **FAZ 21 — 3. TUR REDDİ → 4 MADDELİK HEDEFLİ DÜZELTME BİTTİ (UNCOMMITTED; COMMIT/PUSH/MERGE YOK).** Kullanıcı F21'i hâlâ kabul etmedi, SADECE 4 iş istedi (başka ekran/refactor YOK; engine/queue/worker/migration DOKUNULMADI). (1) Workspace adı düzenlenebilir: `WorkspaceSettings::setName`+`SettingsController::saveName`+`POST /settings/name` ($protected/CSRF/tenant-scoped/≤60, ADDITIVE `workspaces.name`, migration yok) + /settings kartı + topbar `.mode-chip__name` TEAL GRADIENT (DB adı okur). (2) Metin rampası GÖRÜNÜR teal: `--text #d7ece5/--text-2 #8fbeb3/--text-3 #84b2a9` (G−R +21/+47/+46 ≫ eski +6; AA ≥7.06; luminance düşmedi). (3) Live dot `@keyframes live-beat` nabız+glow (accent+--glow, reduced-motion sabit). (4) Pipeline drawer GERÇEK per-aşama çıktı: `Cockpit::pipeline` node'lara `results` (read-only SELECT) + pipeline.php 12 node tipini render (hepsi `View::e` escape, wait→"başlamadı"/veri-yok→"çıktı yok"); visual-seed Run A TREND/IDEA/SCRIPT gerçekçi result_json (DEV-only). ~50 lang anahtarı (en+tr parite). **796 PASS/0 FAIL (+20 test); visual 69 PNG/0 err/0 overflow/exit 0; canlı-app curl: rename persist+CSRF 403+tenant-izole, dashboard'da gerçek node çıktısı; topbar yakın-çekim teal teyit.** 4 GATE GO/0 blocker (qa/security 0 HIGH-MED+2 LOW/ux piksel-teal/compliance truthful). 13 dosya working tree'de; İNSAN KAPISI bekliyor.
@@ -178,4 +163,3 @@
 - 2026-06-13 — **`/go` LOOP — FAZ 17 KABUL (İmza Dashboard).** GERÇEK dev-DB verisine bağlı + DÜRÜST (uydurma metrik YOK). `Cockpit` genişletildi (+CreditLedger/UsageRepository/AccountRepository/JobRepository; `snapshot($ctx,$now)` → `business` [balance_cents/spent_mtd/charges_mtd/granted_week/cost_per_content_cents NULL→"—"/awaiting] + `accounts` [listFor, yalnız platform/handle/health/reference] + rich `awaiting` [JobRepo::awaitingApproval reuse]; salt-okuma tenant-scope; ölü `awaiting()` silindi). `web.php` binding +4 servis; `DashboardController` $now passthrough. `dashboard.php` baştan yazıldı: business KPI strip (count-up money `data-count`, gerçek delta) + 2-col grid (inline-player onay kartları | connected-accounts widget) + active-runs. Yeni `inline-player.js` (overlay→video.play, gerçek timeupdate→progress scaleX, `<video preload=none>` → media-free seed'de 404 YOK, **drawer AÇMAZ** [eski bug structurally imkânsız: data-drawer-open yok + type=button]). `motion.js` count-up money modu (data-count/prefix/decimals; reduced-motion bail korundu). `app.css` F17 bloğu (inline-player/appr-card/acct-row; transform/opacity, yeni backdrop YOK). `lang/en+tr` +16 `dash.*`/`player.*` parite (eski "scheduling arrives in Phase 10" jargon satırı KALDIRILDI). `AccountRepository::listFor` JOIN'e `asset.workspace_id` hardening (security LOW). `tests/run.php` +8 (balance/cost-null/granted-week/rich-awaiting/accounts-no-fabricate/**tenant-isolation sibling-empty**/parite). **746 PASS/0 FAIL**; visual **69 PNG / 0 err / 0 overflow / exit 0**; CC gözüyle 1280-EN (KPI $43.90 +grant delta / inline-player placeholder / accounts health) + 375-TR (stacked, tam Türkçe, truthful onay notu "kayıtlar hiçbir şekilde sahte tutulmaz"). **4 gate PASS/0 blocker**: ux (jargon node-id → P20), qa (746, scope/parite/build-free/JS-off), security (0 HIGH; 2 LOW: listFor JOIN [UYGULANDI] + JobRepo SELECT* [P20]), **compliance GATE: truthful records + AI label + 0 fabricated metric EN&TR**. Branch `feat/phase-17-signature-dashboard` (F16'dan stack). LOOP DEVAM → Faz 18.
 - 2026-06-13 — **`/go` LOOP — FAZ 16 KABUL (Motion & Interaction Core).** Salt client-side enhancement; PHP/DB/route/screen DOKUNULMADI. Yeni: `motion.js` (PL namespace: `durOf` token okur, kayan-pill sidebar [mouseenter/focus → aktife döner], integer-only KPI count-up rAF), `palette.js` (⌘K palette: aç/filtrele/ok-Enter-Esc/focus-trap+restore, pure nav window.location), `drawer.js` (genel sağ panel `PL.drawer.open/openTemplate`, innerHTML yalnız escaped `<template>`'ten), `command-palette.php` + `drawer.php` partial'ları. Değişen: `base.css` (teal `#2dd4bf`→`#2ff0d2` global + `--glow`/`--accent-line` + statik ambient gradient [teal+violet radial, animasyonsuz, attach fixed] + overflow-x hidden), `app.css` (Faz 16 bloğu +~140: `.main>*` CSS giriş [reduced-motion sıfır, flash-free], pill, kpi hover-lift, ⌘K trigger, cmdk + drawer CSS [backdrop-filter YALNIZ bunların scrim'inde]), `app.php` (head'de `html.js` sync script + topbar ⌘K trigger + 2 partial require + 3 script defer), `lang/en+tr` (+9 `cmd.*`/`help.*` parite), `tests/run.php` (+6 p16 testi). Doğrulama: **738 PASS/0 FAIL**; visual gate **69 PNG / 0 console-error / 0 overflow / exit 0**; CC gözüyle dashboard 1280-EN (pill+brighter-teal+ambient+count-up) ve 375-TR (hamburger, icon-only ⌘K, tam Türkçe, stacked, no-overflow) teyit. §1.2 motion temiz: yalnız transform/opacity keyframe (pl-rise/fade/pop), backdrop-filter sadece `.cmdk`+`.drawer__scrim`, spinner/animasyonlu-blur/kalıcı-backdrop YOK, her animasyon state'e bağlı, reduced-motion tüm token sıfır, no-JS güvenli (html.js gate, content JS'e bağımlı gizlenmiyor). 3 gate **PASS/0 blocker**: ux (pill height-transition should_fix UYGULANDI → yalnız transform/opacity), qa (738 PASS, scope temiz, parite, build-free, JS-off fallback), security (0 HIGH, 2 LOW: drawer innerHTML invariant F17/18 + data-label F17). Branch `feat/phase-16-motion-core` (main'den). LOOP DEVAM → Faz 17.
 - 2026-06-13 — START PHASE 15.9: Loop & Visual-Test Infra İNŞA EDİLDİ (Experience Layer altyapı fazı; ürün kodu DOKUNULMADI). `go.md`'in dayandığı GERÇEK görsel-gate altyapısı kuruldu. Karar: **sıfır-bağımlılık Node CDP harness** (sistem Chrome `/Applications/...` + Node v26 built-in `WebSocket`/`fetch` → npm/package.json/Playwright YOK; app build-free kaldı) + **izole visual DB** (`DB_PATH=storage/database/kuyash-visual.sqlite`, `APP_ENV=dev` → cookie non-Secure, http login çalışır). Yeni: `tools/visual/shot.mjs` (CDP driver: login→form-submit, locale-switch CSRF-form-submit, route×{375/768/1280}×{en/tr}, console-error[favicon hariç]+overflow yakala, full-page PNG, exit 1/2/0), `tools/visual/gate.sh` (seed→`php -S` 8099→/health→shot→teardown), `tools/visual/routes.json` (11 nav+login), `bin/visual-seed.php` (idempotent, MEDIA-FREE seed: awaiting job result_json'da draft_render_id YOK → 0 broken-media 404; `Nodes::defaultNodes()` ile doğru nodes_json), `tools/visual/README.md`, `.claude/docs/loop-gates.md` (3-gate görev şablonları). `.gitignore`(+storage/visual/) + `Caddyfile`(+/tools/* blok) ±2. Doğrulama: self-test `--only /dashboard`→6 PNG; tam baseline→**69 PNG, 0 console-error/0 overflow/exit 0**; fail-path (3000px overflow + console.error)→**exit 1**; **732 PASS**; ürün dosyası 0; package.json/node_modules YOK. Görsel teyit (CC gözüyle): dashboard EN/TR gerçek render (KPI 2/1/1/2/0, awaiting strip card--primary accent band, AI rozet), TR/375 tam Türkçe+responsive (hamburger, stacked, "ÖNBELLEK İSABETİ"). 3 reviewer **GO/0 blocker**: qa (scope/idempotent/exit-logic), security (0 blocker, 2 LOW), ux (baseline dürüstçe yeşil, gerçek i18n/responsive/empty-state/dürüst-rozet). Hardening UYGULANDI: visual-seed DB_PATH 'visual' guard (bare-run→exit 2) + Caddy /tools/* parity. Commit YAPILMADI — kabul bekliyor.
-- 2026-06-13 — FAZ 15.5 KABUL: kullanıcı kabul + commit + push onayı verdi. Güvenlik kapısı temiz (secret grep: yalnız doc/fixture eşleşmeleri, gerçek anahtar yok), 732 PASS korundu → Faz 15.5 feat `840d1bb` (app.css+base.css+dashboard.php+queue/index.php+phase-15-followups A11Y-2/UX-1) + chore(state) (checkpoint+phase-plan+experience-layer-plan+go.md+design/) + `git push origin main` (auto-push). Aynı push'ta önceki oturumun Experience Layer replan (15.9→20) + `/go` loop altyapısı da gitti (daha önce uncommitted'di). Sıra: `START PHASE 15.9` (Loop & Visual-Test Infra).
