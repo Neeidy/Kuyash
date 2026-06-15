@@ -4783,6 +4783,80 @@ check('zernio: GET /accounts maps SocialAccount (_id→external_ref, platform, u
 $o = $mkZernio(new FakeHttpClient([$zPost('instagram', 'published', 'https://ig/p1')]))->status('p_1');
 check('zernio: status() reconciliation poll converges to PUBLISHED', $o->status === PublishOutcome::PUBLISHED);
 
+echo "== Publish: account id resolution (real Zernio _id) ==\n";
+
+// payload accountId is the account's external_ref VERBATIM — so it must hold the
+// real Zernio SocialAccount _id (24-hex), never a fabricated/handle value.
+$realAcctId = '6a2f250a5f7d1751abb4803a';
+$idReq = new PublishRequest('instagram', '@ai.neeidy', $realAcctId, 'k:idmap', false, null, $zRenderId, 'Cap', ['#x'], $zWs);
+$idHttp = new FakeHttpClient([$zPresign(), $zPost('instagram', 'published', 'https://ig/p')]);
+$mkZernio($idHttp)->publish($idReq);
+$idBody = (array) json_decode($idHttp->calls[1]['body'], true);
+check('zernio: payload platforms[0].accountId is the account external_ref (the Zernio _id), verbatim',
+    ($idBody['platforms'][0]['accountId'] ?? null) === $realAcctId);
+
+// the exact production failure: a bad accountId → 400 invalid_field_value, surfaced as REJECTED
+$o = $mkZernio(new FakeHttpClient([$zPresign(), new HttpResponse(400, (string) json_encode(['error' => 'Invalid accountId format', 'code' => 'invalid_field_value']))]))->publish($zReq('instagram'));
+check('zernio: 400 invalid_field_value (bad accountId) → REJECTED carrying the code',
+    $o->status === PublishOutcome::REJECTED && str_contains((string) $o->error, 'invalid_field_value'));
+
+// MockPublishProvider implements the interface accounts() with a format-valid id
+$mockAccts = (new \Kuyash\Publish\MockPublishProvider())->accounts('instagram');
+check('mock: accounts() returns one active instagram account, 24-hex id, vendor-neutral shape',
+    count($mockAccts) === 1 && $mockAccts[0]['platform'] === 'instagram' && $mockAccts[0]['active'] === true
+    && preg_match('/^[a-f0-9]{24}$/', (string) $mockAccts[0]['external_ref']) === 1);
+
+// a provider double returning a controlled real _id for ai.neeidy
+$mkAcctProvider = static fn (array $accts): \Kuyash\Publish\PublishProvider => new class($accts) implements \Kuyash\Publish\PublishProvider {
+    /** @param list<array<string, mixed>> $accts */
+    public function __construct(private array $accts) {}
+    public function publish(PublishRequest $request): PublishOutcome { return PublishOutcome::rejected('n/a'); }
+    public function status(string $externalPostId): PublishOutcome { return PublishOutcome::rejected('n/a'); }
+    public function name(): string { return 'fake'; }
+    public function accounts(?string $platform = null): array
+    {
+        return $platform === null ? $this->accts : array_values(array_filter($this->accts, static fn (array $a): bool => $a['platform'] === $platform));
+    }
+};
+$remoteAccts = [['external_ref' => $realAcctId, 'platform' => 'instagram', 'username' => 'ai.neeidy', 'display_name' => 'AI', 'active' => true]];
+
+$syncDb = migratedDb($basePath);
+[$su, $sws] = seedUser($syncDb, 'sync@example.com', $argonHash, 'Sync WS');
+$snow = gmdate(NOW_ISO);
+$sctx = new WorkspaceContext($syncDb);
+$sctx->set($sws);
+$srepo = new AccountRepository($syncDb);
+$igId = $srepo->connect($sctx, 'instagram', '@AI.Neeidy', 'zacct_STALE', $snow); // stale + mixed-case + @
+$ttId = $srepo->connect($sctx, 'tiktok', '@nomatch', 'zacct_TT', $snow);          // no remote match
+$acctCtl = new AccountsController($view, $srepo, new PostRepository($syncDb), new AssetRepository($syncDb), new PublishCounter($syncDb), new WorkspaceSettings($syncDb), $sctx, new Csrf(), new Flash(), $mkAcctProvider($remoteAccts));
+$acctCtl->sync();
+$igRef = $syncDb->one('SELECT external_ref FROM accounts WHERE id = ?', [$igId])['external_ref'];
+$ttRef = $syncDb->one('SELECT external_ref FROM accounts WHERE id = ?', [$ttId])['external_ref'];
+check('sync: matched account external_ref reconciled to the real Zernio _id (@/case-insensitive match)', $igRef === $realAcctId);
+check('sync: non-matching account left untouched', $ttRef === 'zacct_TT');
+
+check('account repo: setExternalRef updates tenant-scoped, no-op when unchanged', (static function () use ($syncDb, $sctx, $srepo, $ttId, $snow): bool {
+    $changed = $srepo->setExternalRef($sctx, $ttId, 'resolved_tt', $snow);
+    $again = $srepo->setExternalRef($sctx, $ttId, 'resolved_tt', $snow); // identical → false
+    return $changed && !$again && $syncDb->one('SELECT external_ref FROM accounts WHERE id = ?', [$ttId])['external_ref'] === 'resolved_tt';
+})());
+
+// connectCallback now resolves the real _id from the provider (no fabricated zacct_)
+$ccDb = migratedDb($basePath);
+[$ccu, $ccws] = seedUser($ccDb, 'cc@example.com', $argonHash, 'CC WS');
+$ccctx = new WorkspaceContext($ccDb);
+$ccctx->set($ccws);
+$ccrepo = new AccountRepository($ccDb);
+$ccCtl = new AccountsController($view, $ccrepo, new PostRepository($ccDb), new AssetRepository($ccDb), new PublishCounter($ccDb), new WorkspaceSettings($ccDb), $ccctx, new Csrf(), new Flash(), $mkAcctProvider($remoteAccts));
+$_SESSION['oauth_state'] = 'st_xyz';
+$_GET = ['platform' => 'instagram', 'handle' => '@ai.neeidy', 'state' => 'st_xyz'];
+$ccCtl->connectCallback();
+$_GET = [];
+unset($_SESSION['oauth_state']);
+$ccRow = $ccDb->one("SELECT external_ref FROM accounts WHERE workspace_id = ? AND platform = 'instagram'", [$ccws]);
+check('connect: connectCallback stores the REAL provider _id (no fabricated zacct_)',
+    ($ccRow['external_ref'] ?? '') === $realAcctId);
+
 echo "== Publish: ZernioPublishExecutor (per-account fan-out) ==\n";
 
 $mkPublishJob = static function (Database $db, int $ws, int $userId, string $now): array {
@@ -4938,6 +5012,11 @@ final class SpyPublishProvider implements \Kuyash\Publish\PublishProvider
     public function name(): string
     {
         return 'spy';
+    }
+
+    public function accounts(?string $platform = null): array
+    {
+        return [];
     }
 }
 $mkExecSpy = static fn (Database $db, SpyPublishProvider $spy, string $now): ZernioPublishExecutor => new ZernioPublishExecutor(
@@ -5333,7 +5412,7 @@ check('account repo: setDefaultReference rejects a cross-tenant asset', (static 
 $acAuthAsset = seedReadyVideo($acDb, $acWs, 'my ref');
 $acCtl = new AccountsController(
     $view, $acRepo, new PostRepository($acDb), new AssetRepository($acDb), new PublishCounter($acDb),
-    new WorkspaceSettings($acDb), $acCtx, new Csrf(), new Flash(),
+    new WorkspaceSettings($acDb), $acCtx, new Csrf(), new Flash(), new \Kuyash\Publish\MockPublishProvider(),
 );
 check('accounts ctl: index lists accounts + connect buttons + next-scheduled line', (static function () use ($acCtl): bool {
     $body = $acCtl->index()->body();

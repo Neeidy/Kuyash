@@ -59,6 +59,32 @@ final class MockPublishProvider implements PublishProvider
         return PublishOutcome::published($postId, self::url($request->platform, $postId));
     }
 
+    /**
+     * Deterministic mock account list (no network): one active account per
+     * platform with a stable, format-valid id, so the connect/sync flow resolves
+     * offline. Mirrors the real adapter's vendor-neutral shape.
+     *
+     * @return list<array{external_ref: string, platform: string, username: string, display_name: string, active: bool}>
+     */
+    public function accounts(?string $platform = null): array
+    {
+        $out = [];
+        foreach (AccountRepository::PLATFORMS as $p) {
+            if ($platform !== null && $platform !== $p) {
+                continue;
+            }
+            $out[] = [
+                'external_ref' => substr(hash('sha256', 'mockacct|' . $p), 0, 24),
+                'platform' => $p,
+                'username' => 'demo_' . $p,
+                'display_name' => 'Demo ' . ucfirst($p),
+                'active' => true,
+            ];
+        }
+
+        return $out;
+    }
+
     public function status(string $externalPostId): PublishOutcome
     {
         // an accepted post converges to live on poll (the lost-webhook path);

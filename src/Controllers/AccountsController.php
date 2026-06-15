@@ -13,6 +13,8 @@ use Kuyash\Library\AssetRepository;
 use Kuyash\Publish\AccountRepository;
 use Kuyash\Publish\PostRepository;
 use Kuyash\Publish\PublishCounter;
+use Kuyash\Publish\PublishProvider;
+use Kuyash\Publish\PublishProviderException;
 use Kuyash\Workspace\WorkspaceContext;
 use Kuyash\Workspace\WorkspaceSettings;
 
@@ -38,6 +40,7 @@ final class AccountsController
         private readonly WorkspaceContext $workspace,
         private readonly Csrf $csrf,
         private readonly Flash $flash,
+        private readonly PublishProvider $publisher,
     ) {
     }
 
@@ -107,8 +110,12 @@ final class AccountsController
         }
 
         $handle = $this->cleanHandle((string) ($_GET['handle'] ?? ''), $platform);
-        // mock provider account reference (NOT a token) — the only thing we store
-        $externalRef = 'zacct_' . bin2hex(random_bytes(6));
+        // Resolve the REAL provider account id (the value publish() sends as
+        // accountId) from GET /accounts by matching the handle. Only when the
+        // account is not reported by the provider (offline mock / not yet at the
+        // provider) do we fall back to a placeholder — "Sync from Zernio" corrects it.
+        $externalRef = $this->resolveExternalRef($platform, $handle)
+            ?? ('zacct_' . bin2hex(random_bytes(6)));
         $this->accounts->connect($this->workspace, $platform, $handle, $externalRef, gmdate('Y-m-d\TH:i:s\Z'));
 
         return $this->back('success', 'account.connected');
@@ -145,6 +152,72 @@ final class AccountsController
         }
 
         return $this->back('success', 'account.reference_updated');
+    }
+
+    /**
+     * Reconcile every local account's external_ref with the provider's REAL
+     * account id (GET /accounts), matched by platform + normalized username. Fixes
+     * a stale/placeholder ref so publish() sends a valid accountId. @param array<string, string> $params
+     */
+    public function sync(array $params = []): Response
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        try {
+            $remote = $this->publisher->accounts();
+        } catch (PublishProviderException) {
+            return $this->back('error', 'account.sync_failed');
+        }
+
+        // {platform}|{normalized username} → real provider account id
+        $map = [];
+        foreach ($remote as $a) {
+            $ref = (string) ($a['external_ref'] ?? '');
+            if ($ref === '') {
+                continue;
+            }
+            $map[(string) ($a['platform'] ?? '') . '|' . $this->normalizeHandle((string) ($a['username'] ?? ''))] = $ref;
+        }
+
+        $updated = 0;
+        foreach ($this->accounts->listFor($this->workspace) as $acct) {
+            $key = (string) $acct['platform'] . '|' . $this->normalizeHandle((string) $acct['handle']);
+            $ref = $map[$key] ?? null;
+            if ($ref !== null && $this->accounts->setExternalRef($this->workspace, (int) $acct['id'], $ref, $now)) {
+                $updated++;
+            }
+        }
+
+        return $this->back($updated > 0 ? 'success' : 'info', $updated > 0 ? 'account.synced' : 'account.sync_none');
+    }
+
+    /**
+     * The provider account id for a (platform, handle), resolved from the live
+     * account list (matched on normalized username). Null when the provider
+     * reports no such account, or on a transient error (caller falls back).
+     */
+    private function resolveExternalRef(string $platform, string $handle): ?string
+    {
+        $want = $this->normalizeHandle($handle);
+        try {
+            foreach ($this->publisher->accounts($platform) as $a) {
+                if ((string) ($a['platform'] ?? '') === $platform
+                    && $this->normalizeHandle((string) ($a['username'] ?? '')) === $want
+                    && (string) ($a['external_ref'] ?? '') !== ''
+                ) {
+                    return (string) $a['external_ref'];
+                }
+            }
+        } catch (PublishProviderException) {
+            return null;
+        }
+
+        return null;
+    }
+
+    /** Compare handles/usernames case- and @-insensitively. */
+    private function normalizeHandle(string $h): string
+    {
+        return strtolower(ltrim(trim($h), '@'));
     }
 
     /** Sanitize a handle to a safe display string; fall back to a generated one. */

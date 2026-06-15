@@ -230,6 +230,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+        $c->get(\Kuyash\Publish\PublishProvider::class),
     ));
 
     $container->bind(WebhookController::class, static fn (Container $c): WebhookController => new WebhookController(

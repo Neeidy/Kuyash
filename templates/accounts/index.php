@@ -19,6 +19,10 @@ use Kuyash\Core\View;
   </div>
   <div class="screen-head__actions">
     <span class="chip chip--neutral"><?= View::t('accounts.publishing_mock') ?></span>
+    <form method="post" action="/accounts/sync">
+      <?= $csrfField ?>
+      <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('account.sync') ?></button>
+    </form>
   </div>
 </div>
 

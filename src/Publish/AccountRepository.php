@@ -84,6 +84,20 @@ final class AccountRepository
         return $this->db->lastInsertId();
     }
 
+    /**
+     * Store the resolved provider account id (the value publish() sends as
+     * accountId). Used by connect + the "Sync from Zernio" reconcile to replace a
+     * stale/fabricated ref with the real one. Tenant-scoped; true when changed.
+     */
+    public function setExternalRef(WorkspaceContext $ctx, int $id, string $externalRef, string $now): bool
+    {
+        return $this->db->run(
+            'UPDATE accounts SET external_ref = ?, updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND external_ref != ?',
+            [$externalRef, $now, $id, $ctx->id(), $externalRef],
+        )->rowCount() > 0;
+    }
+
     /** Disconnect: tenant-scoped status flip. Returns true when a row changed. */
     public function disconnect(WorkspaceContext $ctx, int $id): bool
     {

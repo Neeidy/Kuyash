@@ -93,6 +93,7 @@ return static function (Router $router, Config $config, Container $container): v
     $router->get('/accounts', $protected([AccountsController::class, 'index']));
     $router->get('/accounts/connect/{platform}', $protected([AccountsController::class, 'connectStart']));
     $router->get('/accounts/callback', $protected([AccountsController::class, 'connectCallback']));
+    $router->post('/accounts/sync', $protected([AccountsController::class, 'sync']));
     $router->post('/accounts/{id}/disconnect', $protected([AccountsController::class, 'disconnect']));
     $router->post('/accounts/{id}/reference', $protected([AccountsController::class, 'setReference']));
 

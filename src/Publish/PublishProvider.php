@@ -30,4 +30,14 @@ interface PublishProvider
 
     /** Provider tag recorded on the job/post ('mock' | 'zernio'). */
     public function name(): string;
+
+    /**
+     * The provider's connected social accounts (read-only). Lets the connect/sync
+     * flow resolve a local account to its REAL provider account id — the value
+     * publish() expects as the target (`accountId`). Vendor-neutral shape.
+     *
+     * @return list<array{external_ref: string, platform: string, username: string, display_name: string, active: bool}>
+     * @throws PublishProviderException on a transient transport failure
+     */
+    public function accounts(?string $platform = null): array;
 }
