@@ -69,6 +69,14 @@ final class WavWriter
     }
 
     /**
+     * Streaming WAV writers (notably OpenAI TTS) emit 0xFFFFFFFF in the RIFF and
+     * data chunk-size fields as a placeholder meaning "length unknown / streamed".
+     * Trusting it literally makes durationOf return nonsense (0xFFFFFFFF ÷ byteRate
+     * ≈ 89478s). We detect this sentinel and derive the real size from the file.
+     */
+    private const STREAMING_SIZE_SENTINEL = 0xFFFFFFFF;
+
+    /**
      * Best-effort duration (seconds) of a PCM WAV by walking its chunks:
      * data-chunk byte count ÷ byte rate. Returns null on a non-PCM/odd file so
      * the caller can fall back to an estimate (never a hard failure).
@@ -102,6 +110,15 @@ final class WavWriter
                     }
                 } elseif ($id === 'data') {
                     $dataSize = $size;
+                    if ($size === self::STREAMING_SIZE_SENTINEL) {
+                        // Unknown/streamed length: the payload runs from here to EOF.
+                        $payloadStart = ftell($handle);
+                        $stat = fstat($handle);
+                        $fileSize = $stat['size'] ?? null;
+                        if ($payloadStart !== false && $fileSize !== null && $fileSize > $payloadStart) {
+                            $dataSize = $fileSize - $payloadStart;
+                        }
+                    }
                     break; // duration is known once we have data size + byte rate
                 } else {
                     fseek($handle, $size + ($size % 2), SEEK_CUR); // chunks are word-aligned

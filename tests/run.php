@@ -3033,6 +3033,35 @@ check('wav: duration clamped to a sane floor', (static function () use ($wavDir)
     return (WavWriter::durationOf($wavDir . '/tiny.wav') ?? 0) >= 0.1;
 })());
 
+// Streaming WAV (OpenAI TTS): RIFF + data chunk sizes are the 0xFFFFFFFF "unknown
+// length" sentinel. Build one by hand (24 kHz mono 16-bit → byteRate 48000) with a
+// real 48000-byte payload = exactly 1.0s. Without the fix durationOf trusts the
+// sentinel and returns 0xFFFFFFFF/48000 ≈ 89478s.
+$buildWav = static function (string $path, int $declaredDataSize, int $payloadBytes, int $riffSize = 0xFFFFFFFF): void {
+    $byteRate = 48000;   // 24000 Hz * 1 ch * 2 bytes
+    $header = 'RIFF' . pack('V', $riffSize) . 'WAVE'
+        . 'fmt ' . pack('V', 16)
+        . pack('v', 1) . pack('v', 1)            // PCM, mono
+        . pack('V', 24000) . pack('V', $byteRate)
+        . pack('v', 2) . pack('v', 16)           // blockAlign, bits
+        . 'data' . pack('V', $declaredDataSize);
+    file_put_contents($path, $header . str_repeat("\0", $payloadBytes));
+};
+$streamWav = $wavDir . '/stream.wav';
+$buildWav($streamWav, 0xFFFFFFFF, 48000, 0xFFFFFFFF);
+$streamDur = WavWriter::durationOf($streamWav) ?? 0.0;
+check('wav: streaming 0xFFFFFFFF data-size → filesize-based duration (~1.0s, not 89478)',
+    abs($streamDur - 1.0) < 0.02);
+check('wav: streaming sentinel never yields the bogus ~89478s reading', $streamDur < 100.0);
+
+// Regression: a normal WAV whose data chunk declares a real size MUST keep using
+// that declared size — even when extra bytes trail the data chunk — so the sentinel
+// branch never hijacks well-formed files. Declared 24000 bytes = 0.5s; 1024 trailing.
+$normalWav = $wavDir . '/declared.wav';
+$buildWav($normalWav, 24000, 24000 + 1024, 36 + 24000);
+check('wav: normal declared data-size unchanged (0.5s, trailing bytes ignored)',
+    abs((WavWriter::durationOf($normalWav) ?? 0.0) - 0.5) < 0.02);
+
 echo "== Media: SubtitleBuilder ==\n";
 
 $srt = SubtitleBuilder::build('one two three four five six seven eight nine ten eleven twelve', 6.0);
