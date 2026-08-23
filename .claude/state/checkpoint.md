@@ -192,8 +192,20 @@
 
 ## Sıradaki adım
 
-0. **FAZ 23 (Planlı Paylaşım) TAMAM — kabul/commit bekliyor;** 2 kapanış gate'i (security + ux) çalıştırıldı.
-   Sonrası: commit + `git push origin main` (auto-push kuralı). Yeni faz/iş yoksa aşağıdaki followup'lardan seçilir.
+0. **FAZ 23 + cila + ayrı "Haftalık plan" ekranı TAMAM ve PUSH'LU** (`ce4d380`, `c269328`, `b97510b`, `7563d0c`).
+   941 PASS / 0 FAIL; görsel gate 75 PNG / 0 hata; 13 nav route 200. Yeni faz/iş yoksa followup'lardan seçilir.
+
+   **AÇIK ÜRÜN SORUSU (kullanıcı, 2026-08-23) — cevaplandı, iş BEKLİYOR:** "İçerikleri biz üretmesek, kendi
+   videolarımı yükleyip bir influencer SADECE plan/yayın için bu sistemi kullanabilir mi?" **CEVAP: EVET, zaten
+   destekli.** `Nodes::DISTRIBUTION` zinciri = `LIBRARY → CAPTION → HASHTAGS → MUSIC NOTE/STYLE → PREVIEW →
+   COMPLIANCE → PUBLISH` (TREND/IDEA/SCRIPT/VOICE/VISUALS/ASSEMBLE **yok** → TTS/stok/ffmpeg/AI-video devrede
+   değil). Kanıt: ws#2'de "Distribution" workflow'u (id=2) kayıtlı ve run #1/#2 **completed**. Akış: kütüphaneye
+   kendi videonu yükle → Distribution çalıştır → sistem yalnız caption+hashtag üretir (cent-altı OpenAI) → kuyrukta
+   onayla + Haftalık plan'dan saat seç → compliance + AI etiketi + Zernio yayın.
+   **DÜRÜST SINIRLAR (kullanıcıya söylendi):** (a) **caption/hashtag ELLE DÜZENLENEMİYOR** — AI üretir, sen yalnız
+   onaylar/reddedersin; bu senaryoyu ciddiye alırsak EN DEĞERLİ tek ekleme budur (onay ekranında caption düzenleme).
+   (b) toplu yükleme yok (1 video = 1 run). (c) plan otomatik içerik ÜRETMEZ (bilinçli; slot yalnız onay anında
+   "ne zaman"ı cevaplar). (d) video kurgulama/altyazı yakma yok — yüklenen dosya olduğu gibi yayınlanır.
    **Faz 23 bilinen sınırlar:** (a) per-account FARKLI saatte yayın yok (engine fan-out gerektirir; slot şeması
    `account_id` ile hazır) — bir run tüm hesaplara tek anda yayınlanır; (b) adapter'a workspace dilimi taşınmadı
    (gerekçe yukarıda); (c) slot yalnızca ONAY anında uygulanır — otomatik "her slotta bir içerik üret" YOK
