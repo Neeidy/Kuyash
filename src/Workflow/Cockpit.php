@@ -43,7 +43,8 @@ final class Cockpit
      *   pipeline: array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null,
      *   activeRuns: list<array<string, mixed>>,
      *   awaiting: list<array<string, mixed>>,
-     *   accounts: list<array<string, mixed>>
+     *   accounts: list<array<string, mixed>>,
+     *   nextPublish: array{run_id: int, run_after: string}|null
      * }
      */
     public function snapshot(WorkspaceContext $ctx, string $now): array
@@ -58,7 +59,32 @@ final class Cockpit
             'activeRuns' => $this->activeRuns($ws),
             'awaiting' => array_slice($this->jobs->awaitingApproval($ctx), 0, 4),
             'accounts' => array_slice($this->accountRepo->listFor($ctx, 6), 0, 4),
+            // Phase 23: the soonest publish actually waiting in the queue. Read
+            // from the real job gate, not from the slot plan — a slot is only a
+            // template, this is a scheduled fact.
+            'nextPublish' => $this->nextPublish($ws, $now),
         ];
+    }
+
+    /**
+     * The earliest queued publish job still in the future, workspace-scoped.
+     * Null when nothing is scheduled — the cockpit says so plainly rather than
+     * implying a plan that does not exist.
+     *
+     * @return array{run_id: int, run_after: string}|null
+     */
+    private function nextPublish(int $workspaceId, string $now): ?array
+    {
+        $row = $this->db->one(
+            "SELECT run_id, run_after FROM jobs
+             WHERE workspace_id = ? AND type = 'publish' AND status = 'queued' AND run_after > ?
+             ORDER BY run_after ASC, id ASC LIMIT 1",
+            [$workspaceId, $now],
+        );
+
+        return $row === null
+            ? null
+            : ['run_id' => (int) $row['run_id'], 'run_after' => (string) $row['run_after']];
     }
 
     /**

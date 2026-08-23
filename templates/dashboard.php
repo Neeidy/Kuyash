@@ -70,6 +70,29 @@ $biz = $cockpit['business'];
   </div>
 </div>
 
+<?php /* Phase 23 — the soonest publish actually waiting in the queue. Read from
+         the real job gate: a slot plan alone never appears here, only something
+         genuinely scheduled. The countdown ticks client-side from the exact
+         instant in datetime, and degrades to the server-rendered phrase with
+         JS off. */ ?>
+<div class="callout callout--banner next-publish">
+  <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 1.5"/></svg></span>
+  <div>
+    <strong><?= View::t('cockpit.next_publish') ?>:</strong>
+    <?php if ($cockpit['nextPublish'] !== null): ?>
+    <?php $nextAt = (string) $cockpit['nextPublish']['run_after']; ?>
+    <a href="/runs/<?= (int) $cockpit['nextPublish']['run_id'] ?>"><?= View::t('pipeline.content_n', ['n' => (int) $cockpit['nextPublish']['run_id']]) ?></a>
+    <time datetime="<?= View::e($nextAt) ?>" data-countdown="<?= View::e($nextAt) ?>"
+          data-t-imminent="<?= View::t('time.imminent') ?>"
+          data-t-minutes="<?= View::t('time.in_minutes', ['n' => '{n}']) ?>"
+          data-t-hours="<?= View::t('time.in_hours', ['n' => '{n}']) ?>"
+          data-t-days="<?= View::t('time.in_days', ['n' => '{n}']) ?>"><?= View::e(Messages::until($nextAt)) ?></time>
+    <?php else: ?>
+    <span class="muted"><?= View::t('cockpit.next_publish_none') ?></span>
+    <?php endif; ?>
+  </div>
+</div>
+
 <?php if ($cockpit['pipeline'] !== null): ?>
 <div class="card pipeline-card">
   <div class="card__head">

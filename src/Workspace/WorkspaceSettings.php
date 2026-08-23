@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kuyash\Workspace;
 
 use Kuyash\Core\Database;
+use Kuyash\Publish\SlotResolver;
 
 /**
  * Per-workspace settings that live on the workspaces row. Phase 7 adds the
@@ -123,6 +124,35 @@ final class WorkspaceSettings
         $this->db->run(
             'UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?',
             [$name, gmdate(self::ISO), $workspaceId],
+        );
+
+        return true;
+    }
+
+    /**
+     * The timezone weekly publish slots are written in (Phase 23). Storage and
+     * scheduling stay UTC throughout — this only says what "Mon 09:00" means, so
+     * a slot keeps its wall-clock time across daylight-saving shifts.
+     */
+    public function timezone(int $workspaceId): string
+    {
+        $row = $this->db->one('SELECT timezone FROM workspaces WHERE id = ?', [$workspaceId]);
+        $zone = (string) ($row['timezone'] ?? 'UTC');
+
+        // a zone removed from the tzdata between releases must not break scheduling
+        return $zone !== '' && SlotResolver::isValidTimezone($zone) ? $zone : 'UTC';
+    }
+
+    /** Rejects anything PHP's tzdata does not recognise. */
+    public function setTimezone(int $workspaceId, string $timezone): bool
+    {
+        $timezone = trim($timezone);
+        if (!SlotResolver::isValidTimezone($timezone)) {
+            return false;
+        }
+        $this->db->run(
+            'UPDATE workspaces SET timezone = ?, updated_at = ? WHERE id = ?',
+            [$timezone, gmdate(self::ISO), $workspaceId],
         );
 
         return true;

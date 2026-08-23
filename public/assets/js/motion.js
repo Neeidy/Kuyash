@@ -98,4 +98,39 @@
       requestAnimationFrame(step);
     });
   })();
+
+  /* ---- live countdown to the next scheduled publish (Phase 23).
+     The server already rendered a correct phrase, so this only keeps it fresh
+     while the page stays open — with JS off the static phrase stands. Ticks once
+     a minute: the copy is minute-grained, so a per-second timer would burn
+     wakeups to redraw the same words. ---- */
+  (function countdown() {
+    var nodes = document.querySelectorAll('[data-countdown]');
+    if (!nodes.length) return;
+
+    /* Wording comes from the element's own data-* attributes, which the server
+       filled from the language files — so the countdown speaks the user's
+       language without duplicating any string in JS. */
+    function phrase(el, deltaMs) {
+      var s = Math.floor(deltaMs / 1000);
+      var pick = function (name, n) {
+        return (el.getAttribute('data-t-' + name) || '').replace('{n}', n);
+      };
+      if (s < 60) return el.getAttribute('data-t-imminent') || '';
+      if (s < 3600) return pick('minutes', Math.floor(s / 60));
+      if (s < 86400) return pick('hours', Math.floor(s / 3600));
+      return pick('days', Math.floor(s / 86400));
+    }
+
+    function tick() {
+      var now = Date.now();
+      Array.prototype.forEach.call(nodes, function (el) {
+        var at = Date.parse(el.getAttribute('data-countdown'));
+        var text = isNaN(at) ? '' : phrase(el, Math.max(0, at - now));
+        if (text) el.textContent = text;
+      });
+    }
+    tick();
+    setInterval(tick, 60000);
+  })();
 })();

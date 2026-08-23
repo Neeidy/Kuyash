@@ -112,6 +112,12 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/settings/name', $protected([SettingsController::class, 'saveName']));
     $router->post('/settings/ai-disclosure', $protected([SettingsController::class, 'saveAiDisclosure']));
     $router->post('/settings/kill-switch', $protected([SettingsController::class, 'killSwitch']));
+    // Phase 23 — the weekly publishing plan (templates only; publishing itself
+    // still goes through the existing approval → publish_after → queue gate)
+    $router->post('/settings/timezone', $protected([SettingsController::class, 'saveTimezone']));
+    $router->post('/settings/slots', $protected([SettingsController::class, 'addSlot']));
+    $router->post('/settings/slots/{id}/remove', $protected([SettingsController::class, 'removeSlot']));
+    $router->post('/settings/slots/{id}/toggle', $protected([SettingsController::class, 'toggleSlot']));
     $router->get('/digest', $protected([DigestController::class, 'index']));
 
     // dev-only: verifies the central error handler (log + generic 500)

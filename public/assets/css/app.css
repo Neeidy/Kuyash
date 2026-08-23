@@ -465,7 +465,16 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
   font-size: 12.5px; color: var(--text-2); line-height: 1.55;
   border-left: 2px solid var(--border-strong); padding-left: var(--s3); margin: var(--s2) 0 0;
 }
-.approve-card__actions { display: flex; gap: var(--s2); flex: none; flex-wrap: wrap; }
+.approve-card__actions { display: flex; gap: var(--s2); flex: none; flex-wrap: wrap; min-width: 0; max-width: 100%;
+  /* align-items:flex-end keeps Reject level with Approve once the approve
+     form grows a schedule block above its button — with the default stretch
+     the destructive action floated to the top of the row, detached from the
+     pair it belongs to and reading as an action on the schedule question */
+  align-items: flex-end; }
+/* the actions column holds the schedule picker (Phase 23), so its children
+   must be allowed to shrink — flex:none on a form kept the Reject button at
+   its natural width and pushed it past a 375px viewport */
+.approve-card__actions > form { min-width: 0; max-width: 100%; }
 
 /* ---------- logs terminal (Phase 4; ported from demo motion.css §9) ---------- */
 .term {
@@ -1375,3 +1384,35 @@ html:not(.js) .topbar__live { display: none; }
 /* settings: the approval-mode option cards respond on hover */
 .mode-option { transition: border-color var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
 .mode-option:not(.is-picked):hover { border-color: var(--border-strong); background: var(--surface-2); }
+
+/* ---- Phase 23: weekly publishing plan + next-publish banner ---- */
+.next-publish { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); }
+.next-publish time { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+.slot-zone, .slot-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s3); margin: var(--s3) 0; }
+.slot-zone .field, .slot-add .field { margin-bottom: 0; }
+.slot-zone .field__label, .slot-add .field__label { justify-content: flex-start; }
+.slot-add .field--inline select, .slot-zone .field--inline select { min-width: 9rem; }
+.slot-add input[type="time"] { min-width: 7rem; }
+.slot-zone .field__hint { max-width: 26rem; }
+/* the approval picker lives inside a narrow card: the shared 200px select
+   floor overflowed it at 375px, so here the controls simply fill the row */
+.approve-card__schedule { min-width: 0; }
+.approve-card__schedule .field { min-width: 0; margin-bottom: 0; }
+.approve-card__schedule select { min-width: 0; width: 100%; max-width: 100%; }
+.approve-card__schedule input { min-width: 0; width: 100%; max-width: 240px; }
+.slot-list { list-style: none; margin: var(--s3) 0; padding: 0; display: flex; flex-direction: column; gap: 1px;
+  background: var(--border); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; }
+.slot { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  padding: var(--s2) var(--s3); background: var(--surface); font-size: 13px; }
+.slot--off { color: var(--text-3); }
+.slot--off .slot__when strong { font-weight: 500; }
+.slot__when { min-width: 10.5rem; display: flex; align-items: baseline; gap: var(--s2); }
+.slot__when .num { font-variant-numeric: tabular-nums; }
+.slot__who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot__next { flex: none; }
+.slot__actions { display: flex; gap: var(--s2); margin-left: auto; }
+.slot-empty { margin: var(--s3) 0; }
+@media (max-width: 640px) {
+  .slot { align-items: flex-start; }
+  .slot__actions { margin-left: 0; width: 100%; }
+}

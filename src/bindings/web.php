@@ -52,6 +52,8 @@ use Kuyash\Media\RenderRepository;
 use Kuyash\Publish\AccountRepository;
 use Kuyash\Publish\PostRepository;
 use Kuyash\Publish\PublishCounter;
+use Kuyash\Publish\SlotRepository;
+use Kuyash\Publish\SlotResolver;
 use Kuyash\Publish\WebhookController;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Storage\StorageManager;
@@ -264,6 +266,9 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(Flash::class),
         $c->get(WorkerHeartbeat::class),
+        $c->get(SlotRepository::class),
+        $c->get(SlotResolver::class),
+        $c->get(WorkspaceSettings::class),
     ));
 
     $container->bind(SettingsController::class, static fn (Container $c): SettingsController => new SettingsController(
@@ -276,6 +281,9 @@ return static function (Container $container, string $basePath): void {
         $c->get(Auth::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+        $c->get(SlotRepository::class),
+        $c->get(SlotResolver::class),
+        $c->get(AccountRepository::class),
     ));
 
     $container->bind(DigestController::class, static fn (Container $c): DigestController => new DigestController(

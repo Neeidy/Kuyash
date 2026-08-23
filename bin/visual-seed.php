@@ -309,6 +309,18 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
         );
     }
 
+    // Weekly publishing plan (Phase 23) — real slot rows, not fabricated metrics:
+    // a slot is operator configuration, so seeding it populates the settings
+    // screen and the approval picker without asserting anything about results.
+    $db->run("UPDATE workspaces SET timezone = 'Europe/Istanbul' WHERE id = ?", [$workspaceId]);
+    foreach ([[1, '09:00'], [3, '18:30'], [5, '12:00']] as [$weekday, $time]) {
+        $db->run(
+            'INSERT INTO publish_slots (workspace_id, account_id, weekday, time_hhmm, enabled, created_at, updated_at)
+             VALUES (?, NULL, ?, ?, 1, ?, ?)',
+            [$workspaceId, $weekday, $time, $now, $now],
+        );
+    }
+
     // Library assets — VIDEO kind only (the library INDEX renders a styled tile +
     // hover play affordance for video, with NO <img>/<video> load → still 0 × 404;
     // the detail page is out of the gate's route set). Populates the v3 asset grid.

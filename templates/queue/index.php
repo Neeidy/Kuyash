@@ -11,6 +11,8 @@ use Kuyash\Core\View;
 /** @var list<array<string, mixed>> $runs newest first */
 /** @var string $csrfField trusted generated HTML */
 /** @var bool $workerAlive */
+/** @var list<array<string, mixed>> $slots weekly plan slots, each with next_at resolved (Phase 23) */
+/** @var string $timezone workspace zone the slot times are written in */
 ?>
 <?php if (($workerAlive ?? true) === false): ?>
 <div class="callout callout--warn callout--banner" role="alert">
@@ -93,10 +95,32 @@ use Kuyash\Core\View;
           <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve">
             <?= $csrfField ?>
             <?php if ($job['type'] === 'render_review'): ?>
-            <label class="approve-card__schedule">
-              <span class="muted"><?= View::t('queue.schedule_label') ?></span>
-              <input type="datetime-local" name="scheduled_for">
-            </label>
+            <div class="approve-card__schedule">
+              <span class="muted"><?= View::t('queue.schedule_label', ['zone' => $timezone]) ?></span>
+              <?php if ($slots !== []): ?>
+              <?php /* the weekly plan first: picking a planned time is the common
+                       case, and each option states the real instant it lands on */ ?>
+              <label class="field field--inline">
+                <select name="slot_id">
+                  <option value=""><?= View::t('slots.publish_now') ?></option>
+                  <?php foreach ($slots as $slot): ?>
+                  <option value="<?= (int) $slot['id'] ?>">
+                    <?= View::t('day.' . (int) $slot['weekday']) ?> <?= View::e((string) $slot['time_hhmm']) ?>
+                    · <?= View::e(Messages::until((string) $slot['next_at'])) ?>
+                  </option>
+                  <?php endforeach; ?>
+                </select>
+              </label>
+              <?php endif; ?>
+              <label class="field field--inline">
+                <?php /* always the "exact time" hint: the zone-bearing question is
+                         already rendered above, and repeating it here without its
+                         {zone} param printed the placeholder literally — the state
+                         every brand-new workspace (no slots yet) lands on. */ ?>
+                <span class="field__hint"><?= View::t('slots.pick_time') ?></span>
+                <input type="datetime-local" name="scheduled_for">
+              </label>
+            </div>
             <?php endif; ?>
             <button type="submit" class="btn btn--primary btn--sm"><?= $job['type'] === 'render_review' ? View::t('queue.approve_publish') : View::t('queue.approve') ?></button>
           </form>

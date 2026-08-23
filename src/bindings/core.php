@@ -32,6 +32,8 @@ use Kuyash\Publish\PostRepository;
 use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\PublishProvider;
 use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\SlotRepository;
+use Kuyash\Publish\SlotResolver;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Publish\ZernioPublishExecutor;
 use Kuyash\Publish\ZernioPublishProvider;
@@ -183,6 +185,13 @@ return static function (Container $container, string $basePath): void {
     $container->bind(PostRepository::class, static fn (Container $c): PostRepository => new PostRepository(
         $c->get(Database::class),
     ));
+
+    // Phase 23: weekly publish slots. The resolver is pure (no clock, no DB) —
+    // it only converts "Mon 09:00 in <zone>" into the next UTC instant.
+    $container->bind(SlotRepository::class, static fn (Container $c): SlotRepository => new SlotRepository(
+        $c->get(Database::class),
+    ));
+    $container->bind(SlotResolver::class, static fn (): SlotResolver => new SlotResolver());
 
     $container->bind(PublishCounter::class, static fn (Container $c): PublishCounter => new PublishCounter(
         $c->get(Database::class),

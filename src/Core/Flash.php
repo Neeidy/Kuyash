@@ -13,15 +13,23 @@ final class Flash
 {
     private const KEY = '_flash';
 
-    public function add(string $type, string $messageKey): void
+    /**
+     * Queue a message KEY (not text) plus any placeholder values it needs.
+     * Params are resolved at render time by Messages::resolveFlashes, so a flash
+     * still speaks the reader's language — which is why the VALUES are stored
+     * rather than an already-formatted sentence.
+     *
+     * @param array<string, scalar|null> $params
+     */
+    public function add(string $type, string $messageKey, array $params = []): void
     {
-        $_SESSION[self::KEY][] = ['type' => $type, 'key' => $messageKey];
+        $_SESSION[self::KEY][] = ['type' => $type, 'key' => $messageKey, 'params' => $params];
     }
 
     /**
      * Return queued messages and clear them.
      *
-     * @return list<array{type: string, key: string}>
+     * @return list<array{type: string, key: string, params?: array<string, scalar|null>}>
      */
     public function pull(): array
     {

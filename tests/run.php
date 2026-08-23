@@ -62,6 +62,8 @@ use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\PublishOutcome;
 use Kuyash\Publish\PublishRequest;
 use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\SlotRepository;
+use Kuyash\Publish\SlotResolver;
 use Kuyash\Publish\WebhookController;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Publish\ZernioPublishExecutor;
@@ -307,9 +309,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql', '0016_publish_slots.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 15);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 16);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -767,8 +769,8 @@ $flash->add('success', 'upload.success');
 $flash->add('error', 'upload.empty');
 $pulled = $flash->pull();
 check('flash: queued messages pulled in order', $pulled === [
-    ['type' => 'success', 'key' => 'upload.success'],
-    ['type' => 'error', 'key' => 'upload.empty'],
+    ['type' => 'success', 'key' => 'upload.success', 'params' => []],
+    ['type' => 'error', 'key' => 'upload.empty', 'params' => []],
 ]);
 check('flash: pull clears the queue', $flash->pull() === []);
 
@@ -2053,7 +2055,7 @@ while ($p4worker->tick()) {
 }
 $p4auth = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
 $deadHeartbeat = new WorkerHeartbeat(tempDir('hb') . '/none.heartbeat'); // never beaten → "not running"
-$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat);
+$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db));
 $wfCtl = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
     new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
@@ -2129,7 +2131,7 @@ $_SESSION = [];
 $_SESSION['auth_user_id'] = $p4UserB;
 $p4ctx->set($p4WsB);
 $authB = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
-$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat);
+$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db));
 $wfCtlB = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
     new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
@@ -4554,7 +4556,7 @@ $scSettings = new WorkspaceSettings($aeDb);
 $scQuality = new QualityScore($aeDb, static fn (): string => $aeNow);
 $scGate = new AutoApprovalGate($aeDb, $aeEvents, $scSettings, $scQuality, new UsageRepository($aeDb));
 $scAuth = new Auth($aeDb, new LoginThrottle($aeDb), $aeCtx);
-$settingsCtl = new SettingsController($badgeView, $scSettings, $scQuality, $scGate, $aeEvents, $aeCtx, $scAuth, new Csrf(), new Flash());
+$settingsCtl = new SettingsController($badgeView, $scSettings, $scQuality, $scGate, $aeEvents, $aeCtx, $scAuth, new Csrf(), new Flash(), new SlotRepository($aeDb), new SlotResolver(), new AccountRepository($aeDb));
 
 check('settings ctl: index renders mode, policy, quality, auto-slots', (static function () use ($settingsCtl): bool {
     $body = $settingsCtl->index()->body();
@@ -6273,6 +6275,9 @@ check('i18n: every template View::t key exists in en.php', (static function () u
                 if (str_ends_with($k, 'state_')) {
                     continue; // dynamic: runs.state_<state>, all six keys verified below
                 }
+                if ($k === 'day.') {
+                    continue; // dynamic: day.<1-7>, all seven verified below
+                }
                 if (!array_key_exists($k, $enMap)) {
                     return false;
                 }
@@ -6281,6 +6286,11 @@ check('i18n: every template View::t key exists in en.php', (static function () u
     }
     foreach (['pending', 'failed', 'awaiting', 'running', 'done', 'cancelled'] as $s) {
         if (!array_key_exists('runs.state_' . $s, $enMap)) {
+            return false;
+        }
+    }
+    for ($d = 1; $d <= 7; $d++) {   // weekday labels used by the weekly plan
+        if (!array_key_exists('day.' . $d, $enMap)) {
             return false;
         }
     }
@@ -7395,6 +7405,431 @@ check('p22/jargon: the trends freshness chip renders the relative phrase, not th
         $tpl = (string) file_get_contents($basePath . '/templates/trends/index.php');
         return str_contains($tpl, 'Messages::since((string) $feed->fetchedAt)')
             && preg_match('/·\s*<\?=\s*View::e\(\(string\)\s*\$feed->fetchedAt\)/', $tpl) !== 1;
+    })());
+
+echo "== Phase 23: Planned publishing (weekly slots) ==\n";
+
+I18n::setLocale('en');
+$p23Resolver = new SlotResolver();
+
+// ── (1) resolving a weekly slot to a real instant ───────────────────────────
+
+// 2026-08-23 is a Sunday. Istanbul is UTC+3, so Monday 09:00 local = 06:00Z.
+check('p23/resolve: a weekly slot becomes the next matching UTC instant',
+    $p23Resolver->nextOccurrence('Europe/Istanbul', 1, '09:00', '2026-08-23T12:00:00Z') === '2026-08-24T06:00:00Z');
+check('p23/resolve: a slot earlier TODAY rolls to next week, never into the past',
+    $p23Resolver->nextOccurrence('UTC', 7, '09:00', '2026-08-23T12:00:00Z') === '2026-08-30T09:00:00Z');
+check('p23/resolve: a slot later today fires today',
+    $p23Resolver->nextOccurrence('UTC', 7, '18:00', '2026-08-23T12:00:00Z') === '2026-08-23T18:00:00Z');
+
+// DAYLIGHT SAVING is the whole reason this is a resolver and not string maths:
+// the operator asked for 09:00 local, so the UTC instant MUST move by an hour
+// across a DST boundary — otherwise the post drifts twice a year.
+check('p23/resolve: the same slot maps to different UTC instants in winter and summer',
+    $p23Resolver->nextOccurrence('America/New_York', 3, '09:00', '2026-01-05T00:00:00Z') === '2026-01-07T14:00:00Z'
+    && $p23Resolver->nextOccurrence('America/New_York', 3, '09:00', '2026-07-05T00:00:00Z') === '2026-07-08T13:00:00Z');
+check('p23/resolve: a week that CROSSES the DST change keeps the local wall-clock time',
+    // 2026-03-04 09:00 EST has passed → next Wednesday is 03-11, after the shift:
+    // still 09:00 for the operator, which is 13:00Z and not 14:00Z
+    $p23Resolver->nextOccurrence('America/New_York', 3, '09:00', '2026-03-04T15:00:00Z') === '2026-03-11T13:00:00Z');
+check('p23/resolve: invalid weekday / time / timezone yield null, never a guessed instant',
+    $p23Resolver->nextOccurrence('Europe/Istanbul', 8, '09:00', '2026-08-23T12:00:00Z') === null
+    && $p23Resolver->nextOccurrence('Europe/Istanbul', 1, '25:00', '2026-08-23T12:00:00Z') === null
+    && $p23Resolver->nextOccurrence('Mars/Olympus', 1, '09:00', '2026-08-23T12:00:00Z') === null);
+check('p23/resolve: nextAmong returns the soonest of several slots',
+    $p23Resolver->nextAmong('UTC', [
+        ['weekday' => 5, 'time_hhmm' => '10:00'],
+        ['weekday' => 1, 'time_hhmm' => '08:00'],
+        ['weekday' => 3, 'time_hhmm' => '12:00'],
+    ], '2026-08-23T12:00:00Z') === '2026-08-24T08:00:00Z');
+check('p23/resolve: the resolver never reads the clock (same inputs → same output)',
+    $p23Resolver->nextOccurrence('Europe/Istanbul', 1, '09:00', '2026-08-23T12:00:00Z')
+    === $p23Resolver->nextOccurrence('Europe/Istanbul', 1, '09:00', '2026-08-23T12:00:00Z'));
+
+// ── (2) the slot store ──────────────────────────────────────────────────────
+
+$p23Db = migratedDb($basePath);
+[, $p23Ws] = seedUser($p23Db, 'slots@x.com', $argonHash, 'SlotsWS');
+$p23Ctx = new WorkspaceContext($p23Db);
+$p23Ctx->set($p23Ws);
+$p23Slots = new SlotRepository($p23Db);
+$p23Now = '2026-08-23T12:00:00Z';
+
+$p23SlotId = $p23Slots->add($p23Ctx, 1, '09:00', null, $p23Now);
+check('p23/slots: a slot is stored and read back for the workspace',
+    $p23SlotId !== null && count($p23Slots->listFor($p23Ctx)) === 1);
+check('p23/slots: adding the SAME slot twice is a no-op (the UNIQUE index covers NULL accounts)',
+    $p23Slots->add($p23Ctx, 1, '09:00', null, $p23Now) === null
+    && count($p23Slots->listFor($p23Ctx)) === 1);
+check('p23/slots: an invalid weekday or time is rejected outright',
+    $p23Slots->add($p23Ctx, 0, '09:00', null, $p23Now) === null
+    && $p23Slots->add($p23Ctx, 8, '09:00', null, $p23Now) === null
+    && $p23Slots->add($p23Ctx, 2, '24:00', null, $p23Now) === null
+    && $p23Slots->add($p23Ctx, 2, '9:00', null, $p23Now) === null);
+check('p23/slots: pausing keeps the slot but drops it from the offered list',
+    $p23Slots->setEnabled($p23Ctx, (int) $p23SlotId, false, $p23Now)
+    && count($p23Slots->listFor($p23Ctx)) === 1
+    && $p23Slots->listFor($p23Ctx, enabledOnly: true) === []);
+check('p23/slots: resuming puts it back on offer',
+    $p23Slots->setEnabled($p23Ctx, (int) $p23SlotId, true, $p23Now)
+    && count($p23Slots->listFor($p23Ctx, enabledOnly: true)) === 1);
+check('p23/slots: slots are ordered as a week reads (weekday, then time)',
+    (static function () use ($p23Slots, $p23Ctx, $p23Now): bool {
+        $p23Slots->add($p23Ctx, 1, '07:00', null, $p23Now);
+        $p23Slots->add($p23Ctx, 3, '08:00', null, $p23Now);
+        $order = array_map(
+            static fn (array $s): string => $s['weekday'] . '@' . $s['time_hhmm'],
+            $p23Slots->listFor($p23Ctx),
+        );
+
+        return $order === ['1@07:00', '1@09:00', '3@08:00'];
+    })());
+
+// Tenant isolation, both directions. NOTE: WorkspaceContext resolves the active
+// tenant from $_SESSION, so every instance shares it — switching workspaces must
+// be done by set()-ing and then restoring, not by holding two context objects.
+check('p23/slots: a sibling workspace sees none of these slots and cannot delete them',
+    (static function () use ($p23Db, $argonHash, $p23Slots, $p23SlotId, $p23Ctx, $p23Ws): bool {
+        [, $ws2] = seedUser($p23Db, 'slots2@x.com', $argonHash, 'SlotsWS2');
+        $p23Ctx->set($ws2);
+        $isolated = $p23Slots->listFor($p23Ctx) === []
+            && $p23Slots->find($p23Ctx, (int) $p23SlotId) === null
+            && $p23Slots->remove($p23Ctx, (int) $p23SlotId) === false
+            && $p23Slots->setEnabled($p23Ctx, (int) $p23SlotId, false, '2026-08-23T12:00:00Z') === false;
+        $p23Ctx->set($p23Ws);
+
+        return $isolated;
+    })());
+check('p23/slots: a slot cannot be narrowed to ANOTHER workspace\'s account',
+    (static function () use ($p23Db, $argonHash, $p23Slots, $p23Ctx, $p23Ws, $p23Now): bool {
+        [, $wsOther] = seedUser($p23Db, 'slots3@x.com', $argonHash, 'SlotsWS3');
+        $p23Ctx->set($wsOther);
+        $foreign = (new AccountRepository($p23Db))->connect($p23Ctx, 'instagram', '@theirs', 'REF', $p23Now);
+        $p23Ctx->set($p23Ws);
+
+        return $p23Slots->add($p23Ctx, 5, '10:00', $foreign, $p23Now) === null;
+    })());
+check('p23/slots: narrowing to an account of the SAME workspace is allowed',
+    (static function () use ($p23Db, $p23Slots, $p23Ctx, $p23Now): bool {
+        $mine = (new AccountRepository($p23Db))->connect($p23Ctx, 'instagram', '@mine', 'REF2', $p23Now);
+        $id = $p23Slots->add($p23Ctx, 6, '11:00', $mine, $p23Now);
+        $row = $id === null ? null : $p23Slots->find($p23Ctx, $id);
+
+        return $row !== null && $row['account_id'] === $mine;
+    })());
+check('p23/slots: removing a slot is tenant-scoped and actually removes it',
+    $p23Slots->remove($p23Ctx, (int) $p23SlotId)
+    && $p23Slots->find($p23Ctx, (int) $p23SlotId) === null);
+
+// ── (3) workspace timezone ──────────────────────────────────────────────────
+
+$p23Settings = new WorkspaceSettings($p23Db);
+check('p23/timezone: defaults to UTC and accepts a real zone',
+    $p23Settings->timezone($p23Ws) === 'UTC'
+    && $p23Settings->setTimezone($p23Ws, 'Europe/Istanbul')
+    && $p23Settings->timezone($p23Ws) === 'Europe/Istanbul');
+check('p23/timezone: a bogus zone is refused and the stored one is untouched',
+    !$p23Settings->setTimezone($p23Ws, 'Mars/Olympus')
+    && !$p23Settings->setTimezone($p23Ws, '')
+    && $p23Settings->timezone($p23Ws) === 'Europe/Istanbul');
+
+// ── (4) approval → the SAME queue gate the manual path already used ─────────
+
+check('p23/approve: picking a slot schedules the publish at that slot\'s next instant',
+    (static function () use ($basePath, $argonHash): bool {
+        $db = migratedDb($basePath);
+        [$user, $ws] = seedUser($db, 'slotapp@x.com', $argonHash, 'SlotAppWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        (new WorkspaceSettings($db))->setTimezone($ws, 'UTC');
+        $slots = new SlotRepository($db);
+        $slotId = $slots->add($ctx, 1, '09:00', null, '2026-08-23T12:00:00Z');
+
+        // a render awaiting approval, exactly as the manual path builds it
+        $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+                  VALUES (?, 'w', 'full', '[]', ?, ?)", [$ws, '2026-08-23T12:00:00Z', '2026-08-23T12:00:00Z']);
+        $wf = $db->lastInsertId();
+        $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at)
+                  VALUES (?, ?, 'trend', '[]', 'awaiting_approval', ?, ?, ?)", [$ws, $wf, $user, '2026-08-23T12:00:00Z', '2026-08-23T12:00:00Z']);
+        $runId = $db->lastInsertId();
+        $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, max_retries, priority, run_after, created_at)
+                  VALUES (?, ?, 'PREVIEW', 1, 'render_review', 'awaiting_approval', '{}', 3, 0, ?, ?)",
+            [$ws, $runId, '2026-08-23T12:00:00Z', '2026-08-23T12:00:00Z']);
+        $jobId = $db->lastInsertId();
+
+        // the controller resolves the slot; the Engine keeps owning the decision
+        $resolved = (new SlotResolver())->nextOccurrence('UTC', 1, '09:00', '2026-08-23T12:00:00Z');
+        $engine = new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator(), static fn (): string => '2026-08-23T12:00:00Z');
+        $engine->approve($ctx, $jobId, $user, 'slotapp@x.com', $resolved);
+
+        $run = $db->one('SELECT publish_after FROM runs WHERE id = ?', [$runId]);
+
+        return $slotId !== null
+            && $resolved === '2026-08-24T09:00:00Z'
+            && $run['publish_after'] === '2026-08-24T09:00:00Z';   // the existing column, unchanged
+    })());
+
+// A hand-picked time must mean the SAME thing as a slot. The datetime-local
+// field carries no zone; reading it as UTC while slots were written in the
+// workspace zone made an operator on UTC+3 who typed 09:00 publish at 12:00
+// local. Both paths now resolve through the workspace timezone.
+check('p23/approve: a hand-picked time is read in the workspace zone, not silently as UTC',
+    (static function () use ($basePath, $argonHash, $view): bool {
+        $db = migratedDb($basePath);
+        [$user, $ws] = seedUser($db, 'tzpick@x.com', $argonHash, 'TzPickWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $settings = new WorkspaceSettings($db);
+        $settings->setTimezone($ws, 'Europe/Istanbul');   // UTC+3
+
+        $ctl = new QueueController(
+            $view, new JobRepository($db), new RunRepository($db),
+            new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
+            $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+            new WorkerHeartbeat(tempDir('hb') . '/p23.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings,
+        );
+
+        $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
+        $reflect->setAccessible(true);
+
+        // far enough ahead that it stays in the future whenever the suite runs
+        $future = gmdate('Y-m-d', time() + (20 * 86400));
+        $_POST = ['scheduled_for' => $future . 'T09:00'];
+        $local = $reflect->invoke($ctl);
+        $_POST = ['scheduled_for' => $future . 'T09:00:00Z'];   // explicit zone stays as given
+        $explicit = $reflect->invoke($ctl);
+        $_POST = [];
+
+        return $local['at'] === $future . 'T06:00:00Z'      // 09:00 Istanbul, not 09:00Z
+            && $local['error'] === null
+            && $explicit['at'] === $future . 'T09:00:00Z';
+    })());
+check('p23/approve: an unknown or paused slot REFUSES the approval — never a silent immediate publish',
+    (static function () use ($basePath, $argonHash, $view): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'slotguard@x.com', $argonHash, 'SlotGuardWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $settings = new WorkspaceSettings($db);
+        $slots = new SlotRepository($db);
+        $paused = $slots->add($ctx, 1, '09:00', null, '2026-08-23T12:00:00Z');
+        $slots->setEnabled($ctx, (int) $paused, false, '2026-08-23T12:00:00Z');
+
+        $ctl = new QueueController(
+            $view, new JobRepository($db), new RunRepository($db),
+            new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
+            $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+            new WorkerHeartbeat(tempDir('hb') . '/p23b.heartbeat'), $slots, new SlotResolver(), $settings,
+        );
+        $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
+        $reflect->setAccessible(true);
+
+        $_POST = ['slot_id' => '99999'];
+        $unknown = $reflect->invoke($ctl);
+        $_POST = ['slot_id' => (string) $paused];
+        $disabled = $reflect->invoke($ctl);
+        $_POST = [];
+
+        // REFUSED, not silently downgraded to an immediate publish
+        return $unknown['at'] === null && $unknown['error'] === 'slots.unresolvable'
+            && $disabled['at'] === null && $disabled['error'] === 'slots.unresolvable';
+    })());
+
+// THE FAIL-OPEN THIS PHASE MUST NOT HAVE: a scheduling intent that cannot be
+// honoured used to return null, which the Engine reads as "publish now". On a
+// live account that is an irreversible post at the wrong time.
+check('p23/safety: a past time REFUSES the approval instead of publishing immediately',
+    (static function () use ($basePath, $argonHash, $view): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'pastsched@x.com', $argonHash, 'PastSchedWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $settings = new WorkspaceSettings($db);
+        $ctl = new QueueController(
+            $view, new JobRepository($db), new RunRepository($db),
+            new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
+            $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+            new WorkerHeartbeat(tempDir('hb') . '/p23c.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings,
+        );
+        $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
+        $reflect->setAccessible(true);
+
+        $_POST = ['scheduled_for' => '2020-01-01T09:00'];
+        $past = $reflect->invoke($ctl);
+        $_POST = ['scheduled_for' => '9999-12-31T23:59'];
+        $farOut = $reflect->invoke($ctl);
+        $_POST = ['scheduled_for' => 'garbage'];
+        $junk = $reflect->invoke($ctl);
+        $_POST = [];   // nothing requested → legitimately publish on approval
+        $none = $reflect->invoke($ctl);
+
+        return $past['error'] === 'slots.in_past' && $past['at'] === null
+            && $farOut['error'] === 'slots.too_far'
+            && $junk['error'] === 'slots.unresolvable'
+            && $none === ['at' => null, 'error' => null];
+    })());
+check('p23/safety: the refusal messages exist in BOTH languages and name the consequence',
+    (static function (): bool {
+        foreach (['en', 'tr'] as $loc) {
+            I18n::setLocale($loc);
+            foreach (['slots.unresolvable', 'slots.in_past', 'slots.too_far', 'approval.approved_scheduled'] as $k) {
+                if (View::t($k) === $k || trim(View::t($k)) === '') {
+                    return false;
+                }
+            }
+            // the two refusals must state that nothing went out
+            $said = mb_strtolower(View::t('slots.unresolvable') . View::t('slots.in_past'));
+            if (!str_contains($said, $loc === 'en' ? 'nothing was published' : 'hiçbir şey yayınlanmadı')) {
+                return false;
+            }
+        }
+        I18n::setLocale('en');
+
+        return true;
+    })());
+check('p23/flash: a message carries placeholder VALUES, resolved into the reader\'s language', (static function (): bool {
+    $saved = $_SESSION;
+    $_SESSION = [];
+    $f = new Flash();
+    $f->add('success', 'approval.approved_scheduled', ['when' => 'in 3 h']);
+    $resolved = Messages::resolveFlashes($f);
+    $_SESSION = $saved;
+
+    return count($resolved) === 1
+        && str_contains($resolved[0]['text'], 'in 3 h')
+        && !str_contains($resolved[0]['text'], '{when}');
+})());
+check('p23/copy: a scheduled approval CONFIRMS the time back to the operator',
+    str_contains(View::t('approval.approved_scheduled', ['when' => 'in 3 h']), 'in 3 h'));
+
+// The account column was a control nothing read — offering it claimed more than
+// the system does, so the UI no longer shows it and a hand-posted value is
+// rejected rather than silently widened to "every account".
+check('p23/honesty: the settings screen offers no per-account slot control',
+    (static function () use ($basePath): bool {
+        $tpl = (string) file_get_contents($basePath . '/templates/settings/index.php');
+
+        return !str_contains($tpl, 'name="account_id"') && !str_contains($tpl, 'slots.all_accounts_option');
+    })());
+check('p23/honesty: a hand-posted account_id is REFUSED, not quietly widened to every account',
+    (static function () use ($basePath, $argonHash, $view): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'narrow@x.com', $argonHash, 'NarrowWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $slots = new SlotRepository($db);
+        $wsSettings = new WorkspaceSettings($db);
+        $quality = new QualityScore($db);
+        $events = new \Kuyash\Workflow\EventLog($db);
+        $ctl = new SettingsController(
+            $view, $wsSettings, $quality,
+            new AutoApprovalGate($db, $events, $wsSettings, $quality, new UsageRepository($db)),
+            $events, $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+            $slots, new SlotResolver(), new AccountRepository($db),
+        );
+        $_POST = ['weekday' => '1', 'time_hhmm' => '09:00', 'account_id' => '7'];
+        $ctl->addSlot();
+        $_POST = [];
+
+        return $slots->listFor($ctx) === [];   // nothing stored
+    })());
+
+// Guards the security review flagged: the DB must not accept a row the resolver
+// would reject, and the plan must not grow without bound.
+check('p23/guard: the schema rejects an out-of-range hour (24:00), not just the app',
+    (static function () use ($basePath, $argonHash): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'chk@x.com', $argonHash, 'ChkWS');
+
+        return throws(static fn () => $db->run(
+            "INSERT INTO publish_slots (workspace_id, account_id, weekday, time_hhmm, enabled, created_at, updated_at)
+             VALUES (?, NULL, 1, '24:00', 1, ?, ?)",
+            [$ws, '2026-08-23T12:00:00Z', '2026-08-23T12:00:00Z'],
+        ), PDOException::class);
+    })());
+check('p23/guard: a workspace cannot grow an unbounded number of slots',
+    (static function () use ($basePath, $argonHash): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'cap@x.com', $argonHash, 'CapWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $slots = new SlotRepository($db);
+        $now = '2026-08-23T12:00:00Z';
+        $added = 0;
+        // 7 weekdays × many times — try to exceed the cap
+        for ($d = 1; $d <= 7 && $added <= SlotRepository::MAX_PER_WORKSPACE + 5; $d++) {
+            for ($h = 0; $h < 12; $h++) {
+                if ($slots->add($ctx, $d, sprintf('%02d:00', $h), null, $now) !== null) {
+                    $added++;
+                }
+            }
+        }
+
+        return $added === SlotRepository::MAX_PER_WORKSPACE
+            && count($slots->listFor($ctx)) === SlotRepository::MAX_PER_WORKSPACE;
+    })());
+
+// ── (5) the cockpit reports SCHEDULED FACT, not the plan ────────────────────
+
+check('p23/cockpit: next-publish reads a real queued job, is tenant-scoped, and is null when nothing waits',
+    (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+        $db = migratedDb($basePath);
+        [$user, $ws] = seedUser($db, 'nextpub@x.com', $argonHash, 'NextPubWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+        $cockpit = new \Kuyash\Workflow\Cockpit($db, new AssetCache($db, $paths), new CreditLedger($db), new UsageRepository($db), new AccountRepository($db), new JobRepository($db));
+
+        $now = '2026-08-23T12:00:00Z';
+        $empty = $cockpit->snapshot($ctx, $now)['nextPublish'];
+
+        $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+                  VALUES (?, 'w', 'full', '[]', ?, ?)", [$ws, $now, $now]);
+        $wf = $db->lastInsertId();
+        $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at)
+                  VALUES (?, ?, 'trend', '[]', 'running', ?, ?, ?)", [$ws, $wf, $user, $now, $now]);
+        $runId = $db->lastInsertId();
+        // a PAST publish and a FUTURE one — only the future one is "next"
+        foreach ([['2026-08-23T08:00:00Z'], ['2026-08-25T09:00:00Z']] as [$at]) {
+            $db->run("INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, max_retries, priority, run_after, created_at)
+                      VALUES (?, ?, 'PUBLISH', 9, 'publish', 'queued', '{}', 3, 0, ?, ?)", [$ws, $runId, $at, $now]);
+        }
+        $next = $cockpit->snapshot($ctx, $now)['nextPublish'];
+
+        // a sibling workspace must not see it
+        [, $ws2] = seedUser($db, 'nextpub2@x.com', $argonHash, 'NextPubWS2');
+        $ctx->set($ws2);   // shared session context — switch, then assert
+        $siblingSeesNothing = $cockpit->snapshot($ctx, $now)['nextPublish'] === null;
+        $ctx->set($ws);
+
+        return $empty === null
+            && $next !== null && $next['run_after'] === '2026-08-25T09:00:00Z' && $next['run_id'] === $runId
+            && $siblingSeesNothing;
+    })());
+
+// ── (6) honest wording for a future instant ────────────────────────────────
+
+check('p23/copy: Messages::until phrases a future instant as a wait',
+    Messages::until('2026-08-23T12:30:00Z', '2026-08-23T12:00:00Z') === View::t('time.in_minutes', ['n' => 30])
+    && Messages::until('2026-08-23T15:00:00Z', '2026-08-23T12:00:00Z') === View::t('time.in_hours', ['n' => 3])
+    && Messages::until('2026-08-26T12:00:00Z', '2026-08-23T12:00:00Z') === View::t('time.in_days', ['n' => 3]));
+check('p23/copy: an instant already due reads as imminent, never as a negative wait',
+    Messages::until('2026-08-23T11:00:00Z', '2026-08-23T12:00:00Z') === View::t('time.imminent'));
+check('p23/copy: an unparseable instant falls back to the raw value',
+    Messages::until('not-a-date', '2026-08-23T12:00:00Z') === 'not-a-date');
+check('p23/copy: weekday labels exist in BOTH languages (the plan is read, not decoded)',
+    (static function (): bool {
+        foreach (['en', 'tr'] as $loc) {
+            I18n::setLocale($loc);
+            for ($d = 1; $d <= 7; $d++) {
+                if (trim(View::t('day.' . $d)) === '' || View::t('day.' . $d) === 'day.' . $d) {
+                    return false;
+                }
+            }
+        }
+        I18n::setLocale('en');
+
+        return true;
     })());
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)

@@ -145,6 +145,37 @@ final class Messages
     }
 
     /**
+     * The mirror of since(): an ISO-8601 UTC timestamp in the FUTURE rendered as
+     * a plain wait ("in 3 h"). Used by the weekly plan and the cockpit's next-up
+     * line, where the operator cares how long until something publishes, not
+     * which Z-suffixed instant it is.
+     *
+     * A time that has already passed collapses to "any moment now" rather than a
+     * negative wait — a due-but-not-yet-fired job is exactly that.
+     */
+    public static function until(string $iso, ?string $nowIso = null): string
+    {
+        $then = strtotime($iso);
+        if ($then === false) {
+            return $iso;
+        }
+        $now = $nowIso === null ? time() : (int) strtotime($nowIso);
+        $delta = $then - $now;
+
+        if ($delta < 60) {
+            return I18n::lookup('time.imminent') ?? 'any moment now';
+        }
+        if ($delta < 3600) {
+            return I18n::t('time.in_minutes', ['n' => (string) intdiv($delta, 60)]);
+        }
+        if ($delta < 86400) {
+            return I18n::t('time.in_hours', ['n' => (string) intdiv($delta, 3600)]);
+        }
+
+        return I18n::t('time.in_days', ['n' => (string) intdiv($delta, 86400)]);
+    }
+
+    /**
      * Resolve queued flashes into displayable {type, text} pairs.
      *
      * @return list<array{type: string, text: string}>
@@ -152,10 +183,16 @@ final class Messages
     public static function resolveFlashes(Flash $flash): array
     {
         return array_map(
-            static fn (array $f): array => [
-                'type' => $f['type'],
-                'text' => self::text($f['key']),
-            ],
+            static function (array $f): array {
+                $params = $f['params'] ?? [];
+
+                return [
+                    'type' => $f['type'],
+                    // params are interpolated here, at render time, so the text is
+                    // produced in the reader's locale rather than the writer's
+                    'text' => $params === [] ? self::text($f['key']) : I18n::t($f['key'], $params),
+                ];
+            },
             $flash->pull(),
         );
     }
