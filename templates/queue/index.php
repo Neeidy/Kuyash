@@ -123,7 +123,7 @@ use Kuyash\Core\View;
               <?php if ($slots === []): ?>
               <?php /* no plan yet: say the feature exists, right where someone is
                        already deciding when to publish */ ?>
-              <span class="field__hint"><a href="/settings#plan"><?= View::t('slots.create_plan') ?></a></span>
+              <span class="field__hint"><a href="/plan"><?= View::t('slots.create_plan') ?></a></span>
               <?php endif; ?>
             </div>
             <?php endif; ?>

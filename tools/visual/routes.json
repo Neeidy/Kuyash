@@ -8,6 +8,7 @@
     { "path": "/library", "name": "library", "auth": true },
     { "path": "/workflows", "name": "workflows", "auth": true },
     { "path": "/queue", "name": "queue", "auth": true },
+    { "path": "/plan", "name": "plan", "auth": true },
     { "path": "/accounts", "name": "accounts", "auth": true },
     { "path": "/logs", "name": "logs", "auth": true },
     { "path": "/digest", "name": "digest", "auth": true },

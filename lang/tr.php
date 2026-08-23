@@ -142,6 +142,7 @@ return [
     'nav.trends' => 'Trendler',
     'nav.library' => 'Kütüphane',
     'nav.workflows' => 'İş Akışları',
+    'nav.plan' => 'Haftalık plan',
     'nav.queue' => 'Kuyruk',
     'nav.accounts' => 'Hesaplar',
     'nav.logs' => 'Kayıtlar',
@@ -709,6 +710,13 @@ return [
     'acct.health_unknown' => 'Henüz kontrol edilmedi',
 
     // ── Haftalık yayın planı (Faz 23) ────────────────────────────────────────
+    'plan.title' => 'Haftalık plan',
+    'plan.subtitle' => 'Genelde yayın yaptığın saatler. Bir videoyu onaylarken, elle tarih seçmek yerine bu saatlerin ilkine gönderebilirsin.',
+    'plan.times_card' => 'Yayın saatleri',
+    'plan.zone_card' => 'Saat dilimi',
+    'plan.how_it_works' => 'Hiçbir şey kendiliğinden yayınlanmaz: buradaki bir saat, yalnızca bir videoyu onaylarken önerilir.',
+    'plan.weekday_aria' => 'Haftanın günü',
+    'plan.time_aria' => 'Günün saati',
     'slots.title' => 'Haftalık yayın planı',
     'slots.subtitle' => 'Genelde yayın yaptığın saatleri belirle. Bir videoyu onaylarken, elle tarih seçmek yerine bu saatlerin ilkine gönderebilirsin.',
     'slots.timezone_label' => 'Saatler şu dilime göre',

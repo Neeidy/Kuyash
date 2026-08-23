@@ -25,6 +25,7 @@ use Kuyash\Controllers\LiveController;
 use Kuyash\Controllers\LocaleController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
+use Kuyash\Controllers\PlanController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\QuickCreateController;
 use Kuyash\Controllers\RenderController;
@@ -256,6 +257,17 @@ return static function (Container $container, string $basePath): void {
         $c->get(Flash::class),
     ));
 
+    $container->bind(PlanController::class, static fn (Container $c): PlanController => new PlanController(
+        $c->get(View::class),
+        $c->get(SlotRepository::class),
+        $c->get(SlotResolver::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(PostRepository::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(Csrf::class),
+        $c->get(Flash::class),
+    ));
+
     $container->bind(QueueController::class, static fn (Container $c): QueueController => new QueueController(
         $c->get(View::class),
         $c->get(JobRepository::class),
@@ -281,9 +293,6 @@ return static function (Container $container, string $basePath): void {
         $c->get(Auth::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
-        $c->get(SlotRepository::class),
-        $c->get(SlotResolver::class),
-        $c->get(AccountRepository::class),
     ));
 
     $container->bind(DigestController::class, static fn (Container $c): DigestController => new DigestController(

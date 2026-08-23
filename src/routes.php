@@ -14,6 +14,7 @@ use Kuyash\Controllers\LiveController;
 use Kuyash\Controllers\LocaleController;
 use Kuyash\Controllers\LogsController;
 use Kuyash\Controllers\MediaController;
+use Kuyash\Controllers\PlanController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\QuickCreateController;
 use Kuyash\Controllers\RenderController;
@@ -112,12 +113,14 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/settings/name', $protected([SettingsController::class, 'saveName']));
     $router->post('/settings/ai-disclosure', $protected([SettingsController::class, 'saveAiDisclosure']));
     $router->post('/settings/kill-switch', $protected([SettingsController::class, 'killSwitch']));
-    // Phase 23 — the weekly publishing plan (templates only; publishing itself
-    // still goes through the existing approval → publish_after → queue gate)
-    $router->post('/settings/timezone', $protected([SettingsController::class, 'saveTimezone']));
-    $router->post('/settings/slots', $protected([SettingsController::class, 'addSlot']));
-    $router->post('/settings/slots/{id}/remove', $protected([SettingsController::class, 'removeSlot']));
-    $router->post('/settings/slots/{id}/toggle', $protected([SettingsController::class, 'toggleSlot']));
+    // Phase 23 — the weekly publishing plan. Its own screen (not a Settings
+    // card): "when do my videos go out" is opened on purpose, not set once.
+    // Templates only; publishing still runs approval → publish_after → gate.
+    $router->get('/plan', $protected([PlanController::class, 'index']));
+    $router->post('/plan/timezone', $protected([PlanController::class, 'saveTimezone']));
+    $router->post('/plan/slots', $protected([PlanController::class, 'addSlot']));
+    $router->post('/plan/slots/{id}/remove', $protected([PlanController::class, 'removeSlot']));
+    $router->post('/plan/slots/{id}/toggle', $protected([PlanController::class, 'toggleSlot']));
     $router->get('/digest', $protected([DigestController::class, 'index']));
 
     // dev-only: verifies the central error handler (log + generic 500)

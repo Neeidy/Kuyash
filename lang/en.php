@@ -146,6 +146,7 @@ return [
     'nav.trends' => 'Trends',
     'nav.library' => 'Library',
     'nav.workflows' => 'Workflows',
+    'nav.plan' => 'Weekly plan',
     'nav.queue' => 'Queue',
     'nav.accounts' => 'Accounts',
     'nav.logs' => 'Logs',
@@ -713,6 +714,13 @@ return [
     'acct.health_unknown' => 'Not checked yet',
 
     // ── Weekly publishing plan (Phase 23) ────────────────────────────────────
+    'plan.title' => 'Weekly plan',
+    'plan.subtitle' => 'The times you normally publish. Approving a video can send it to the next of these times instead of you picking a date by hand.',
+    'plan.times_card' => 'Publishing times',
+    'plan.zone_card' => 'Time zone',
+    'plan.how_it_works' => 'Nothing publishes on its own: a time here is only offered when you approve a video.',
+    'plan.weekday_aria' => 'Day of the week',
+    'plan.time_aria' => 'Time of day',
     'slots.title' => 'Weekly publishing plan',
     'slots.subtitle' => 'Set the times you normally publish. When you approve a video you can send it to the next of these times instead of picking a date by hand.',
     'slots.timezone_label' => 'Times are in',

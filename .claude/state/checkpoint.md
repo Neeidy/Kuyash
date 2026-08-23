@@ -33,6 +33,12 @@
   Ayarlar'da "Onay modu"nun hemen ALTINA taşındı (Kalite puanı'nın üstü), `id="plan"` anchor eklendi; dashboard
   "Sıradaki yayın" bandından ve (plan yokken) onay formundan `/settings#plan` linkleri. (3) ux S7: kalan "Slot
   saatleri" jargonu temizlendi.
+  **AYRI EKRAN (kullanıcı isteği; 941 PASS, gate 75 PNG/0 hata):** Haftalık plan artık Ayarlar kartı DEĞİL, kendi
+  ekranı — sol menüde **"Haftalık plan" / "Weekly plan"** (Kuyruk ile Hesaplar arasında). Yeni `PlanController` +
+  `templates/plan/index.php`; slot/timezone route'ları `/settings/*` → **`/plan/*`** taşındı; SettingsController
+  slot mantığından tamamen arındırıldı (tek ev kuralı). Ekran planı (niyet) ile kuyruğu (gerçek) ayrı gösteriyor:
+  üstte "Sıradaki yayın" bandı + geri sayım, altında saatler ve dilim kartları, ayrıca dürüst not: "Hiçbir şey
+  kendiliğinden yayınlanmaz". `tools/visual/routes.json`'a `/plan` eklendi (nav ekranı 12 → **13**).
   Önceki: **FAZ 22 DÜZELTME TURU — 2 bug kapatıldı, 892 PASS/0 FAIL, görsel gate 69 PNG/0 hata,
   route 12/12 200.** (1) Nav pill rebound: gerçek kök-neden **MPA sayfa-yükleme animasyonu** (easing değil) —
   base'te transform transition kaldırıldı + `void offsetHeight` + senkron `.is-ready`; **gerçek TIKLAMA kanıtı:**

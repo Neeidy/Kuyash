@@ -925,6 +925,7 @@ use Kuyash\Content\TextProviderException;
 use Kuyash\Content\TextResult;
 use Kuyash\Content\VariationEngine;
 use Kuyash\Controllers\LogsController;
+use Kuyash\Controllers\PlanController;
 use Kuyash\Controllers\QueueController;
 use Kuyash\Controllers\RenderController;
 use Kuyash\Controllers\WorkflowController;
@@ -7705,9 +7706,9 @@ check('p23/copy: a scheduled approval CONFIRMS the time back to the operator',
 // The account column was a control nothing read — offering it claimed more than
 // the system does, so the UI no longer shows it and a hand-posted value is
 // rejected rather than silently widened to "every account".
-check('p23/honesty: the settings screen offers no per-account slot control',
+check('p23/honesty: the plan screen offers no per-account slot control',
     (static function () use ($basePath): bool {
-        $tpl = (string) file_get_contents($basePath . '/templates/settings/index.php');
+        $tpl = (string) file_get_contents($basePath . '/templates/plan/index.php');
 
         return !str_contains($tpl, 'name="account_id"') && !str_contains($tpl, 'slots.all_accounts_option');
     })());
@@ -7718,14 +7719,9 @@ check('p23/honesty: a hand-posted account_id is REFUSED, not quietly widened to 
         $ctx = new WorkspaceContext($db);
         $ctx->set($ws);
         $slots = new SlotRepository($db);
-        $wsSettings = new WorkspaceSettings($db);
-        $quality = new QualityScore($db);
-        $events = new \Kuyash\Workflow\EventLog($db);
-        $ctl = new SettingsController(
-            $view, $wsSettings, $quality,
-            new AutoApprovalGate($db, $events, $wsSettings, $quality, new UsageRepository($db)),
-            $events, $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
-            $slots, new SlotResolver(), new AccountRepository($db),
+        $ctl = new PlanController(
+            $view, $slots, new SlotResolver(), new WorkspaceSettings($db),
+            new PostRepository($db), $ctx, new Csrf(), new Flash(),
         );
         $_POST = ['weekday' => '1', 'time_hhmm' => '09:00', 'account_id' => '7'];
         $ctl->addSlot();
@@ -7882,33 +7878,48 @@ check('p23/ui: the picker label exists in both languages',
 
 // The plan was only reachable by scrolling to the bottom of Settings — the two
 // empty states where someone is already thinking about timing now point at it.
-check('p23/ui: the weekly plan sits with the other publishing controls, not below a read-only metric',
+check('p23/ui: the weekly plan is its OWN screen, reachable from the main nav',
+    (static function () use ($basePath): bool {
+        $nav = (string) file_get_contents($basePath . '/templates/layout/app.php');
+        $routes = (string) file_get_contents($basePath . '/src/routes.php');
+
+        return str_contains($nav, "href=\"/plan\"")
+            && str_contains($nav, "View::t('nav.plan')")
+            && str_contains($routes, "\$router->get('/plan'")
+            && is_file($basePath . '/templates/plan/index.php');
+    })());
+check('p23/ui: Settings no longer carries the plan (one home for it, not two)',
     (static function () use ($basePath): bool {
         $tpl = (string) file_get_contents($basePath . '/templates/settings/index.php');
-        $mode = strpos($tpl, "View::t('settings.mode_card')");
-        $plan = strpos($tpl, "View::t('slots.title')");
-        $quality = strpos($tpl, "View::t('settings.quality_score')");
 
-        return $mode !== false && $plan !== false && $quality !== false
-            && $mode < $plan && $plan < $quality;
+        return !str_contains($tpl, "View::t('slots.title')")
+            && !str_contains($tpl, 'id="plan"')
+            && !str_contains($tpl, '/settings/slots');
     })());
-check('p23/ui: the plan card carries an anchor the discovery links can target',
-    str_contains((string) file_get_contents($basePath . '/templates/settings/index.php'), '<div class="card" id="plan">'));
+check('p23/ui: the slot actions live under /plan, not under /settings',
+    (static function () use ($basePath): bool {
+        $routes = (string) file_get_contents($basePath . '/src/routes.php');
+
+        return str_contains($routes, "'/plan/slots'")
+            && str_contains($routes, "'/plan/timezone'")
+            && !str_contains($routes, "'/settings/slots'")
+            && !str_contains($routes, "'/settings/timezone'");
+    })());
 check('p23/ui: the cockpit and the approval form both offer a way into the plan',
     (static function () use ($basePath): bool {
         $dash = (string) file_get_contents($basePath . '/templates/dashboard.php');
         $queue = (string) file_get_contents($basePath . '/templates/queue/index.php');
 
-        return str_contains($dash, 'href="/settings#plan"')
-            && str_contains($queue, 'href="/settings#plan"')
+        return str_contains($dash, 'href="/plan"')
+            && str_contains($queue, 'href="/plan"')
             // the queue link shows only when there is no plan yet
-            && preg_match('/if \(\$slots === \[\]\).*?settings#plan/s', $queue) === 1;
+            && preg_match('/if \(\$slots === \[\]\).*?href="\/plan"/s', $queue) === 1;
     })());
 check('p23/ui: the discovery labels exist in both languages',
     (static function (): bool {
         foreach (['en', 'tr'] as $loc) {
             I18n::setLocale($loc);
-            foreach (['cockpit.open_plan', 'slots.create_plan'] as $k) {
+            foreach (['cockpit.open_plan', 'slots.create_plan', 'nav.plan', 'plan.title', 'plan.subtitle'] as $k) {
                 if (View::t($k) === $k || trim(View::t($k)) === '') {
                     return false;
                 }

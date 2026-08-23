@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Kuyash\Core\Messages;
 use Kuyash\Core\View;
 
 /** @var array{approval_mode: string, kill_switch: bool, daily_post_cap: int, budget_cap_cents: ?int} $settings */
@@ -13,9 +12,6 @@ use Kuyash\Core\View;
 /** @var string $workspaceName current workspace display name (topbar chip) */
 /** @var array{instagram: bool, youtube: bool, tiktok: bool} $aiDisclosure per-platform AI-disclosure toggles */
 /** @var string $csrfField trusted generated HTML */
-/** @var string $timezone workspace zone the weekly plan is written in (Phase 23) */
-/** @var list<string> $timezones */
-/** @var list<array<string, mixed>> $slots weekly slots, each with next_at resolved */
 
 $isAuto = $settings['approval_mode'] === 'auto';
 $killOn = $settings['kill_switch'];
@@ -107,78 +103,6 @@ $killOn = $settings['kill_switch'];
       </div>
 
       <button type="submit" class="btn btn--primary"><?= View::t('settings.save') ?></button>
-    </form>
-  </div>
-</div>
-
-<div class="card" id="plan">
-  <div class="card__head">
-    <h2><?= View::t('slots.title') ?></h2>
-    <span class="card__action">
-      <span class="chip chip--neutral"><?= View::e($timezone) ?></span>
-    </span>
-  </div>
-  <div class="card__body">
-    <p class="muted"><?= View::t('slots.subtitle') ?></p>
-
-    <form method="post" action="/settings/timezone" class="slot-zone">
-      <?= $csrfField ?>
-      <label class="field field--inline">
-        <span class="field__label"><?= View::t('slots.timezone_label') ?></span>
-        <select name="timezone">
-          <?php foreach ($timezones as $tz): ?>
-          <option value="<?= View::e($tz) ?>"<?= $tz === $timezone ? ' selected' : '' ?>><?= View::e($tz) ?></option>
-          <?php endforeach; ?>
-        </select>
-        <span class="field__hint"><?= View::t('slots.timezone_hint') ?></span>
-      </label>
-      <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('slots.timezone_save') ?></button>
-    </form>
-
-    <?php if ($slots === []): ?>
-    <p class="muted slot-empty"><?= View::t('slots.empty') ?></p>
-    <?php else: ?>
-    <ul class="slot-list">
-      <?php foreach ($slots as $slot): ?>
-      <li class="slot<?= $slot['enabled'] ? '' : ' slot--off' ?>">
-        <span class="slot__when">
-          <strong><?= View::t('day.' . (int) $slot['weekday']) ?></strong>
-          <span class="num"><?= View::e((string) $slot['time_hhmm']) ?></span>
-        </span>
-        <?php if ($slot['enabled'] && ($slot['next_at'] ?? null) !== null): ?>
-        <span class="slot__next muted"><?= View::t('slots.next_at', ['when' => Messages::until((string) $slot['next_at'])]) ?></span>
-        <?php elseif (!$slot['enabled']): ?>
-        <span class="chip chip--neutral"><?= View::t('slots.paused_badge') ?></span>
-        <?php endif; ?>
-        <span class="slot__actions">
-          <form method="post" action="/settings/slots/<?= (int) $slot['id'] ?>/toggle">
-            <?= $csrfField ?>
-            <button type="submit" class="btn btn--ghost btn--sm"><?= View::t($slot['enabled'] ? 'slots.pause' : 'slots.resume') ?></button>
-          </form>
-          <form method="post" action="/settings/slots/<?= (int) $slot['id'] ?>/remove">
-            <?= $csrfField ?>
-            <button type="submit" class="btn btn--danger-ghost btn--sm"><?= View::t('slots.remove') ?></button>
-          </form>
-        </span>
-      </li>
-      <?php endforeach; ?>
-    </ul>
-    <?php endif; ?>
-
-    <form method="post" action="/settings/slots" class="slot-add">
-      <?= $csrfField ?>
-      <label class="field field--inline">
-        <span class="field__label"><?= View::t('slots.add') ?></span>
-        <select name="weekday">
-          <?php for ($d = 1; $d <= 7; $d++): ?>
-          <option value="<?= $d ?>"><?= View::t('day.' . $d) ?></option>
-          <?php endfor; ?>
-        </select>
-      </label>
-      <label class="field field--inline">
-        <input type="time" name="time_hhmm" value="09:00" required>
-      </label>
-      <button type="submit" class="btn btn--ghost btn--sm"><?= View::t('slots.add') ?></button>
     </form>
   </div>
 </div>

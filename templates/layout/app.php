@@ -7,7 +7,7 @@ use Kuyash\Core\View;
 
 /** @var string $content */
 /** @var string $title */
-/** @var string $active     'dashboard' | 'quick' | 'trends' | 'library' | 'workflows' | 'queue' | 'accounts' | 'logs' | 'digest' | 'usage' | 'settings' */
+/** @var string $active     'dashboard' | 'quick' | 'trends' | 'plan' | 'library' | 'workflows' | 'queue' | 'accounts' | 'logs' | 'digest' | 'usage' | 'settings' */
 /** @var string $workspaceName */
 /** @var string $csrfField  trusted generated HTML (logout form) */
 /** @var list<array{type: string, text: string}>|null $flashes rendered once here for every app page */
@@ -62,6 +62,11 @@ use Kuyash\Core\View;
         <span class="nav-item__marker"></span>
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l6 3-6 3-6-3z"/><path d="M2 8l6 3 6-3M2 11l6 3 6-3"/></svg></span>
         <?= View::t('nav.queue') ?>
+      </a>
+      <a class="nav-item<?= ($active ?? '') === 'plan' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'plan' ? ' aria-current="page"' : '' ?> href="/plan">
+        <span class="nav-item__marker"></span>
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5V4M10.5 1.5V4"/></svg></span>
+        <?= View::t('nav.plan') ?>
       </a>
       <a class="nav-item<?= ($active ?? '') === 'accounts' ? ' is-active' : '' ?>"<?= ($active ?? '') === 'accounts' ? ' aria-current="page"' : '' ?> href="/accounts">
         <span class="nav-item__marker"></span>
