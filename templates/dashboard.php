@@ -90,6 +90,9 @@ $biz = $cockpit['business'];
     <?php else: ?>
     <span class="muted"><?= View::t('cockpit.next_publish_none') ?></span>
     <?php endif; ?>
+    <?php /* the empty state is the natural place to discover the weekly plan —
+             otherwise it is only reachable by scrolling through Settings */ ?>
+    <a class="next-publish__plan" href="/settings#plan"><?= View::t('cockpit.open_plan') ?></a>
   </div>
 </div>
 

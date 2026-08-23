@@ -1416,3 +1416,19 @@ html:not(.js) .topbar__live { display: none; }
   .slot { align-items: flex-start; }
   .slot__actions { margin-left: 0; width: 100%; }
 }
+
+/* ---- styled file picker (Quick Create): the native control is replaced by the
+   app's own button, without losing keyboard access to the real input ---- */
+.filepick { position: relative; display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; cursor: pointer; }
+.filepick input[type="file"] {
+  /* visually hidden, NOT display:none — focus must still land on it */
+  position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip-path: inset(50%);
+}
+.filepick .btn { pointer-events: none; }           /* the label already opens the picker */
+.filepick:hover .btn--ghost { border-color: var(--border-strong); color: var(--text); background: var(--surface-2); }
+/* focus ring belongs on the visible button, since the input itself is invisible */
+.filepick input[type="file"]:focus-visible + .filepick__name,
+.filepick:focus-within .btn { outline: 2px solid var(--accent); outline-offset: 2px; }
+.filepick__name { font-size: 12.5px; color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filepick__name.is-set { color: var(--text-2); }
+.next-publish__plan { margin-left: var(--s3); font-size: 12px; white-space: nowrap; }

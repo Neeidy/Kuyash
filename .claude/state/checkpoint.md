@@ -25,6 +25,14 @@
   havada kalıyordu → `align-items:flex-end`. (S2) onay flash'ı artık zamanı söylüyor (Flash params desteği).
   (L1/L2/L3/L6) account_id fail-open, CHECK 24:00 açığı, slot cap=50, N+1 tz sorgusu. Kalanlar →
   `.claude/docs/phase-23-followups.md`.
+  **CİLA TURU (kullanıcı isteği; 940 PASS, gate temiz):** (1) `/quick` sayfasındaki native "Choose File" kontrolü
+  uygulamanın kendi butonuyla değiştirildi (`.filepick`): gerçek input DOM'da ve klavyeyle erişilebilir kalır
+  (`clip-path` ile gizli, display:none DEĞİL), picker'ı `<label>` açar (JS'siz çalışır), JS yalnızca seçilen dosya
+  adını yazar. "Fotoğraf seç" butonu "AI klip oluştur" ile birebir aynı ölçüde (33px yükseklik / 6px radius /
+  12.5px — tarayıcıda ölçüldü). (2) **Planlı paylaşım bulunamıyordu** (ux S9+S6 followup'ları) → plan kartı
+  Ayarlar'da "Onay modu"nun hemen ALTINA taşındı (Kalite puanı'nın üstü), `id="plan"` anchor eklendi; dashboard
+  "Sıradaki yayın" bandından ve (plan yokken) onay formundan `/settings#plan` linkleri. (3) ux S7: kalan "Slot
+  saatleri" jargonu temizlendi.
   Önceki: **FAZ 22 DÜZELTME TURU — 2 bug kapatıldı, 892 PASS/0 FAIL, görsel gate 69 PNG/0 hata,
   route 12/12 200.** (1) Nav pill rebound: gerçek kök-neden **MPA sayfa-yükleme animasyonu** (easing değil) —
   base'te transform transition kaldırıldı + `void offsetHeight` + senkron `.is-ready`; **gerçek TIKLAMA kanıtı:**

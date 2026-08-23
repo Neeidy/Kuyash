@@ -31,3 +31,28 @@
     if (e.key === 'Escape') setOpen(false);
   });
 })();
+
+/* ---- styled file picker: reflect the chosen file's name next to the button.
+   Progressive enhancement only — the label opens the picker without JS; this
+   just replaces the "no photo chosen yet" placeholder once one is picked. ---- */
+(function filePickName() {
+  'use strict';
+
+  var picks = document.querySelectorAll('.filepick input[type="file"]');
+  Array.prototype.forEach.call(picks, function (input) {
+    var name = input.closest('.filepick').querySelector('[data-file-name]');
+    if (!name) return;
+    var placeholder = name.textContent;
+
+    input.addEventListener('change', function () {
+      var file = input.files && input.files[0];
+      if (!file) {
+        name.textContent = placeholder;
+        name.classList.remove('is-set');
+        return;
+      }
+      name.textContent = file.name + ' (' + (file.size / 1048576).toFixed(1) + ' MB)';
+      name.classList.add('is-set');
+    });
+  });
+})();

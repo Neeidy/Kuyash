@@ -120,6 +120,11 @@ use Kuyash\Core\View;
                 <span class="field__hint"><?= View::t('slots.pick_time') ?></span>
                 <input type="datetime-local" name="scheduled_for">
               </label>
+              <?php if ($slots === []): ?>
+              <?php /* no plan yet: say the feature exists, right where someone is
+                       already deciding when to publish */ ?>
+              <span class="field__hint"><a href="/settings#plan"><?= View::t('slots.create_plan') ?></a></span>
+              <?php endif; ?>
             </div>
             <?php endif; ?>
             <button type="submit" class="btn btn--primary btn--sm"><?= $job['type'] === 'render_review' ? View::t('queue.approve_publish') : View::t('queue.approve') ?></button>

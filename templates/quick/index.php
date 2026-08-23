@@ -42,11 +42,20 @@ use Kuyash\Core\View;
         placeholder="<?= View::t('quick.prompt_placeholder') ?>"></textarea>
     </label>
 
-    <label class="field">
+    <div class="field">
       <span class="field__label"><?= View::t('quick.upload_photo') ?></span>
       <span class="field__hint"><?= View::t('quick.upload_hint', ['label' => $photoLabel, 'max' => $maxPhotoLabel]) ?></span>
-      <input type="file" name="photo" accept="<?= View::e($acceptAttr) ?>">
-    </label>
+      <?php /* The browser's default file control looks nothing like the rest of
+               the app. The real <input> stays in the DOM (and keyboard-focusable
+               — hidden with clip-path, never display:none) while the label wears
+               the app's own button styling. With JS off the button still opens
+               the picker; only the "chosen file" text needs JS. */ ?>
+      <label class="filepick">
+        <span class="btn btn--ghost"><?= View::t('quick.choose_photo') ?></span>
+        <span class="filepick__name" data-file-name><?= View::t('quick.no_file') ?></span>
+        <input type="file" name="photo" accept="<?= View::e($acceptAttr) ?>">
+      </label>
+    </div>
 
     <?php if ($photos !== []): ?>
     <fieldset class="field" role="radiogroup" aria-label="<?= View::t('quick.pick_aria') ?>">

@@ -111,52 +111,7 @@ $killOn = $settings['kill_switch'];
   </div>
 </div>
 
-<div class="card">
-  <div class="card__head"><h2><?= View::t('settings.ai_card') ?></h2></div>
-  <div class="card__body">
-    <form method="post" action="/settings/ai-disclosure" class="settings-form">
-      <?= $csrfField ?>
-      <p class="muted"><?= View::t('settings.ai_desc') ?></p>
-      <?php foreach (['instagram' => 'settings.ai_instagram', 'youtube' => 'settings.ai_youtube', 'tiktok' => 'settings.ai_tiktok'] as $p => $labelKey): ?>
-      <label class="ai-toggle">
-        <input type="checkbox" name="ai_<?= $p ?>"<?= ($aiDisclosure[$p] ?? true) ? ' checked' : '' ?>>
-        <span><?= View::t($labelKey) ?></span>
-      </label>
-      <?php endforeach; ?>
-      <p class="quality-warn"><?= View::t('settings.ai_warn') ?></p>
-      <button type="submit" class="btn btn--primary"><?= View::t('settings.ai_save') ?></button>
-    </form>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card__head"><h2><?= View::t('settings.quality_score') ?></h2></div>
-  <div class="card__body">
-    <?php $hasSample = (int) $quality['sample'] >= 5; ?>
-    <div class="quality-row">
-      <span class="quality-score num<?= $quality['breach'] ? ' quality-score--bad' : '' ?>"><?= $hasSample ? (int) $quality['score'] : '—' ?></span>
-      <div class="quality-meta">
-        <?php if (!$hasSample): ?>
-        <p class="muted"><?= View::t('settings.quality_insufficient', ['n' => (int) $quality['sample']]) ?></p>
-        <?php else: ?>
-        <p class="muted"><?= View::t('settings.quality_derived', [
-            'slop' => number_format($quality['slop_avg'], 2),
-            'block' => number_format($quality['block_rate'] * 100, 0),
-            'reject' => number_format($quality['reject_fail_rate'] * 100, 0),
-            'sample' => (int) $quality['sample'],
-        ]) ?></p>
-        <?php endif; ?>
-        <?php if ($quality['breach']): ?>
-        <p class="quality-warn"><?= View::t('settings.quality_breach') ?></p>
-        <?php elseif ($hasSample): ?>
-        <p class="muted"><?= View::t('settings.quality_ok') ?></p>
-        <?php endif; ?>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="card">
+<div class="card" id="plan">
   <div class="card__head">
     <h2><?= View::t('slots.title') ?></h2>
     <span class="card__action">
@@ -227,3 +182,49 @@ $killOn = $settings['kill_switch'];
     </form>
   </div>
 </div>
+
+<div class="card">
+  <div class="card__head"><h2><?= View::t('settings.ai_card') ?></h2></div>
+  <div class="card__body">
+    <form method="post" action="/settings/ai-disclosure" class="settings-form">
+      <?= $csrfField ?>
+      <p class="muted"><?= View::t('settings.ai_desc') ?></p>
+      <?php foreach (['instagram' => 'settings.ai_instagram', 'youtube' => 'settings.ai_youtube', 'tiktok' => 'settings.ai_tiktok'] as $p => $labelKey): ?>
+      <label class="ai-toggle">
+        <input type="checkbox" name="ai_<?= $p ?>"<?= ($aiDisclosure[$p] ?? true) ? ' checked' : '' ?>>
+        <span><?= View::t($labelKey) ?></span>
+      </label>
+      <?php endforeach; ?>
+      <p class="quality-warn"><?= View::t('settings.ai_warn') ?></p>
+      <button type="submit" class="btn btn--primary"><?= View::t('settings.ai_save') ?></button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card__head"><h2><?= View::t('settings.quality_score') ?></h2></div>
+  <div class="card__body">
+    <?php $hasSample = (int) $quality['sample'] >= 5; ?>
+    <div class="quality-row">
+      <span class="quality-score num<?= $quality['breach'] ? ' quality-score--bad' : '' ?>"><?= $hasSample ? (int) $quality['score'] : '—' ?></span>
+      <div class="quality-meta">
+        <?php if (!$hasSample): ?>
+        <p class="muted"><?= View::t('settings.quality_insufficient', ['n' => (int) $quality['sample']]) ?></p>
+        <?php else: ?>
+        <p class="muted"><?= View::t('settings.quality_derived', [
+            'slop' => number_format($quality['slop_avg'], 2),
+            'block' => number_format($quality['block_rate'] * 100, 0),
+            'reject' => number_format($quality['reject_fail_rate'] * 100, 0),
+            'sample' => (int) $quality['sample'],
+        ]) ?></p>
+        <?php endif; ?>
+        <?php if ($quality['breach']): ?>
+        <p class="quality-warn"><?= View::t('settings.quality_breach') ?></p>
+        <?php elseif ($hasSample): ?>
+        <p class="muted"><?= View::t('settings.quality_ok') ?></p>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+

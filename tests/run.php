@@ -7832,6 +7832,93 @@ check('p23/copy: weekday labels exist in BOTH languages (the plan is read, not d
         return true;
     })());
 
+echo "== Phase 23 polish: styled file picker + plan discoverability ==\n";
+
+// The browser's default file control looked nothing like the app. It is replaced
+// by the app's own button — WITHOUT dropping the real input, which must stay in
+// the DOM and keyboard-reachable (hidden with clip-path, never display:none).
+check('p23/ui: the photo picker wears the app button, and the native control is gone',
+    (static function () use ($basePath): bool {
+        $tpl = (string) file_get_contents($basePath . '/templates/quick/index.php');
+
+        return str_contains($tpl, 'class="filepick"')
+            && str_contains($tpl, "<span class=\"btn btn--ghost\"><?= View::t('quick.choose_photo') ?></span>")
+            && str_contains($tpl, 'data-file-name');
+    })());
+check('p23/ui: the real file input is still present and focusable (hidden, not display:none)',
+    (static function () use ($basePath): bool {
+        $css = (string) file_get_contents($basePath . '/public/assets/css/app.css');
+        preg_match('/\.filepick input\[type="file"\]\s*\{([^}]*)\}/s', $css, $m);
+        $rule = $m[1] ?? '';
+
+        return str_contains($rule, 'opacity: 0')
+            && str_contains($rule, 'clip-path')
+            && !str_contains($rule, 'display: none')
+            && !str_contains($rule, 'visibility: hidden');
+    })());
+check('p23/ui: choosing a file is announced without JS being required to open the picker',
+    (static function () use ($basePath): bool {
+        $js = (string) file_get_contents($basePath . '/public/assets/js/app.js');
+
+        // JS only updates the NAME; the <label> itself opens the dialog
+        return str_contains($js, 'filePickName')
+            && str_contains($js, "querySelectorAll('.filepick input[type=\"file\"]')")
+            && str_contains((string) file_get_contents($basePath . '/templates/quick/index.php'), '<label class="filepick">');
+    })());
+check('p23/ui: the picker label exists in both languages',
+    (static function (): bool {
+        foreach (['en', 'tr'] as $loc) {
+            I18n::setLocale($loc);
+            foreach (['quick.choose_photo', 'quick.no_file'] as $k) {
+                if (View::t($k) === $k || trim(View::t($k)) === '') {
+                    return false;
+                }
+            }
+        }
+        I18n::setLocale('en');
+
+        return true;
+    })());
+
+// The plan was only reachable by scrolling to the bottom of Settings — the two
+// empty states where someone is already thinking about timing now point at it.
+check('p23/ui: the weekly plan sits with the other publishing controls, not below a read-only metric',
+    (static function () use ($basePath): bool {
+        $tpl = (string) file_get_contents($basePath . '/templates/settings/index.php');
+        $mode = strpos($tpl, "View::t('settings.mode_card')");
+        $plan = strpos($tpl, "View::t('slots.title')");
+        $quality = strpos($tpl, "View::t('settings.quality_score')");
+
+        return $mode !== false && $plan !== false && $quality !== false
+            && $mode < $plan && $plan < $quality;
+    })());
+check('p23/ui: the plan card carries an anchor the discovery links can target',
+    str_contains((string) file_get_contents($basePath . '/templates/settings/index.php'), '<div class="card" id="plan">'));
+check('p23/ui: the cockpit and the approval form both offer a way into the plan',
+    (static function () use ($basePath): bool {
+        $dash = (string) file_get_contents($basePath . '/templates/dashboard.php');
+        $queue = (string) file_get_contents($basePath . '/templates/queue/index.php');
+
+        return str_contains($dash, 'href="/settings#plan"')
+            && str_contains($queue, 'href="/settings#plan"')
+            // the queue link shows only when there is no plan yet
+            && preg_match('/if \(\$slots === \[\]\).*?settings#plan/s', $queue) === 1;
+    })());
+check('p23/ui: the discovery labels exist in both languages',
+    (static function (): bool {
+        foreach (['en', 'tr'] as $loc) {
+            I18n::setLocale($loc);
+            foreach (['cockpit.open_plan', 'slots.create_plan'] as $k) {
+                if (View::t($k) === $k || trim(View::t($k)) === '') {
+                    return false;
+                }
+            }
+        }
+        I18n::setLocale('en');
+
+        return true;
+    })());
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(
