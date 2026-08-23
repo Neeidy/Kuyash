@@ -307,9 +307,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 13);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 15);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -4817,6 +4817,18 @@ $mkAcctProvider = static fn (array $accts): \Kuyash\Publish\PublishProvider => n
     {
         return $platform === null ? $this->accts : array_values(array_filter($this->accts, static fn (array $a): bool => $a['platform'] === $platform));
     }
+    public function accountMetrics(?string $platform = null, ?string $from = null, ?string $to = null): array
+    {
+        return array_map(static fn (array $a): array => [
+            'external_ref' => (string) $a['external_ref'],
+            'platform' => (string) $a['platform'],
+            'username' => (string) $a['username'],
+            'followers' => $a['followers'] ?? null,
+            'has_analytics' => (bool) ($a['has_analytics'] ?? true),
+            'posts' => $a['posts'] ?? [],
+            'raw' => ['source' => 'fake'],
+        ], $this->accounts($platform));
+    }
 };
 $remoteAccts = [['external_ref' => $realAcctId, 'platform' => 'instagram', 'username' => 'ai.neeidy', 'display_name' => 'AI', 'active' => true]];
 
@@ -5015,6 +5027,11 @@ final class SpyPublishProvider implements \Kuyash\Publish\PublishProvider
     }
 
     public function accounts(?string $platform = null): array
+    {
+        return [];
+    }
+
+    public function accountMetrics(?string $platform = null, ?string $from = null, ?string $to = null): array
     {
         return [];
     }
@@ -6422,10 +6439,15 @@ check('p17: business balance is the real ledger balance (grant 5000c)', $p17Snap
 check('p17: cost-per-content is NULL when no renders exist (honest "—", never divide-by-zero)', $p17Snap['business']['cost_per_content_cents'] === null);
 check('p17: granted-this-week reflects the recent grant', $p17Snap['business']['granted_week_cents'] === 5000);
 check('p17: awaiting uses the rich shape (decoded result, AI-label flag)', count($p17Snap['awaiting']) === 1 && ($p17Snap['awaiting'][0]['result']['ai_label_required'] ?? null) === true);
-check('p17: accounts widget returns real stored fields only (platform/health), no fabricated metrics', count($p17Snap['accounts']) === 1
+// Phase 22 sharpened this: the widget may now carry a PROVIDER-REPORTED audience
+// (followers_count, NULL until a sync/snapshot fills it) — but Cockpit still
+// fabricates nothing itself, so no engagement metric may appear here.
+check('p17/p22: accounts widget returns stored fields only — provider audience allowed, fabricated engagement never', count($p17Snap['accounts']) === 1
     && $p17Snap['accounts'][0]['platform'] === 'instagram'
     && $p17Snap['accounts'][0]['health'] === 'ok'
-    && !isset($p17Snap['accounts'][0]['followers'], $p17Snap['accounts'][0]['likes']));
+    && array_key_exists('followers_count', $p17Snap['accounts'][0])          // real column, honestly NULL when unsynced
+    && $p17Snap['accounts'][0]['followers_count'] === null
+    && !isset($p17Snap['accounts'][0]['followers'], $p17Snap['accounts'][0]['likes'], $p17Snap['accounts'][0]['engagement']));
 check('p17: tenant isolation — a sibling workspace sees an empty cockpit', (static function () use ($p17Db, $p17Cockpit, $p17Now): bool {
     $other = new WorkspaceContext($p17Db);
     $p17Db->run('INSERT INTO workspaces (name, created_at, updated_at) VALUES (?, ?, ?)', ['Other', $p17Now, $p17Now]);
@@ -6811,6 +6833,423 @@ check('rev/item4: different nodes yield DIFFERENT drawer bodies (not one generic
     $bodies = array_map('trim', $tm[1] ?? []);
     return count($bodies) >= 7 && count(array_unique($bodies)) >= 6;
 })());
+
+echo "== Phase 22: Panel + Real Data (metrics, dedup, honest labels) ==\n";
+
+I18n::setLocale('en');
+
+// ── (1) the metrics seam: audience AND per-post engagement ──────────────────
+
+$p22Mock = new \Kuyash\Publish\MockPublishProvider();
+$p22MockRows = $p22Mock->accountMetrics('instagram');
+check('p22/adapter: mock accountMetrics returns the instagram account with a real-shaped ref + audience',
+    count($p22MockRows) === 1
+    && $p22MockRows[0]['platform'] === 'instagram'
+    && preg_match('/^[a-f0-9]{24}$/', (string) $p22MockRows[0]['external_ref']) === 1
+    && is_int($p22MockRows[0]['followers']));
+check('p22/adapter: the seam carries PER-POST engagement, not follower-only (K1)',
+    $p22MockRows[0]['posts'] !== []
+    && array_key_exists('views', $p22MockRows[0]['posts'][0])
+    && array_key_exists('likes', $p22MockRows[0]['posts'][0])
+    && array_key_exists('comments', $p22MockRows[0]['posts'][0])
+    && array_key_exists('shares', $p22MockRows[0]['posts'][0]));
+check('p22/adapter: mock metrics are deterministic (no clock, no randomness)',
+    $p22Mock->accountMetrics('instagram') === $p22MockRows);
+
+/** Provider double: returns controlled metric rows, or fails transiently. */
+$p22Provider = static fn (array $rows, bool $fail = false): \Kuyash\Publish\PublishProvider
+    => new class($rows, $fail) implements \Kuyash\Publish\PublishProvider {
+        /** @param list<array<string, mixed>> $rows */
+        public function __construct(private array $rows, private bool $fail) {}
+        public function publish(PublishRequest $request): PublishOutcome { return PublishOutcome::rejected('n/a'); }
+        public function status(string $externalPostId): PublishOutcome { return PublishOutcome::rejected('n/a'); }
+        public function name(): string { return 'p22fake'; }
+        public function accounts(?string $platform = null): array { return []; }
+        public function accountMetrics(?string $platform = null, ?string $from = null, ?string $to = null): array
+        {
+            if ($this->fail) {
+                throw new \Kuyash\Publish\PublishProviderException('transient');
+            }
+
+            return $this->rows;
+        }
+    };
+
+$p22Row = static fn (string $ref, ?int $followers, array $posts, bool $hasAnalytics = true): array => [
+    'external_ref' => $ref, 'platform' => 'instagram', 'username' => 'ai.neeidy',
+    'followers' => $followers, 'has_analytics' => $hasAnalytics, 'posts' => $posts, 'raw' => ['probe' => 'x'],
+];
+
+// ── (1b) the REAL adapter: what it keeps, and what it refuses to keep ───────
+// The live account object carries ~43 fields (byokCredentials, tokenExpiresAt,
+// platformUserId, profile URLs…). Kuyash never stores platform credentials, and
+// the vendor may add a field at any time — so persistence is allowlisted.
+
+$p22AcctBody = static fn (): HttpResponse => new HttpResponse(200, (string) json_encode([
+    'hasAnalyticsAccess' => true,
+    'accounts' => [[
+        '_id' => '6a2f250a5f7d1751abb4803a', 'platform' => 'instagram', 'username' => 'ai.neeidy',
+        'followersCount' => 7, 'externalPostCount' => 0, 'isActive' => true, 'platformStatus' => 'active',
+        // fields that MUST NOT be retained:
+        'byokCredentials' => ['isActive' => true], 'tokenExpiresAt' => '2026-10-01T00:00:00Z',
+        'platformUserId' => '17841400000000000', 'profileUrl' => 'https://instagram.com/ai.neeidy',
+        'profilePicture' => 'https://cdn.example/pic.jpg', 'userId' => 'u_secret_123',
+    ]],
+]));
+$p22Analytics = static fn (array $posts = [], array $overview = []): HttpResponse => new HttpResponse(200, (string) json_encode([
+    'hasAnalyticsAccess' => true, 'overview' => $overview ?: ['totalPosts' => 0], 'posts' => $posts,
+    'pagination' => ['page' => 1, 'limit' => 50, 'total' => count($posts), 'pages' => 1],
+]));
+
+$p22Live = $mkZernio(new FakeHttpClient([$p22AcctBody(), $p22Analytics()]))->accountMetrics(null, '2026-07-24', '2026-08-23');
+check('p22/adapter: the real adapter maps the VERIFIED live fields (id + audience)',
+    count($p22Live) === 1 && $p22Live[0]['external_ref'] === '6a2f250a5f7d1751abb4803a'
+    && $p22Live[0]['followers'] === 7 && $p22Live[0]['has_analytics'] === true);
+check('p22/adapter: today\'s real state — analytics reachable but NO posts → honest empty list',
+    $p22Live[0]['posts'] === []);
+check('p22/security: credentials/token/PII fields are NOT retained (allowlist, not the raw object)',
+    (static function () use ($p22Live): bool {
+        $keys = array_keys($p22Live[0]['raw']['account'] ?? []);
+        foreach (['byokCredentials', 'tokenExpiresAt', 'platformUserId', 'profileUrl', 'profilePicture', 'userId'] as $forbidden) {
+            if (in_array($forbidden, $keys, true)) {
+                return false;
+            }
+        }
+
+        return in_array('_id', $keys, true) && in_array('followersCount', $keys, true);
+    })());
+check('p22/security: a NEW vendor field is not silently persisted (allowlist is closed, not a denylist)',
+    (static function () use ($mkZernio, $p22Analytics): bool {
+        $body = new HttpResponse(200, (string) json_encode(['hasAnalyticsAccess' => true, 'accounts' => [[
+            '_id' => 'a1', 'platform' => 'instagram', 'username' => 'x', 'followersCount' => 1,
+            'accessToken' => 'SECRET-SHOULD-NEVER-PERSIST',   // hypothetical future field
+        ]]]));
+        $rows = $mkZernio(new FakeHttpClient([$body, $p22Analytics()]))->accountMetrics();
+
+        return !str_contains((string) json_encode($rows[0]['raw']), 'SECRET-SHOULD-NEVER-PERSIST');
+    })());
+check('p22/adapter: reach/impressions are NOT stored as views (a true number behind a false label is still a lie)',
+    (static function () use ($mkZernio, $p22AcctBody, $p22Analytics): bool {
+        $posts = [['accountId' => '6a2f250a5f7d1751abb4803a', 'platformPostId' => 'p1', 'reach' => 500, 'impressions' => 900, 'likes' => 3]];
+        $rows = $mkZernio(new FakeHttpClient([$p22AcctBody(), $p22Analytics($posts)]))->accountMetrics();
+
+        return $rows[0]['posts'][0]['views'] === null      // neither reach nor impressions became "views"
+            && $rows[0]['posts'][0]['likes'] === 3;        // a real synonym still maps
+    })());
+check('p22/tenancy: install-wide analytics are not fanned into per-account rows',
+    (static function () use ($mkZernio, $p22AcctBody, $p22Analytics): bool {
+        $posts = [['platformPostId' => 'orphan', 'views' => 10]];   // no account id → unattributed
+        $rows = $mkZernio(new FakeHttpClient([$p22AcctBody(), $p22Analytics($posts, ['totalPosts' => 42])]))->accountMetrics();
+        $raw = (string) json_encode($rows[0]['raw']);
+
+        return $rows[0]['posts'] === []                       // never guessed onto this account
+            && !str_contains($raw, 'totalPosts')              // install-wide overview not copied per row
+            && str_contains($raw, 'unattributed_post_count'); // only a harmless count is kept
+    })());
+
+// ── (2) daily snapshot chore ────────────────────────────────────────────────
+
+$snapDb = migratedDb($basePath);
+[, $snapWs] = seedUser($snapDb, 'snap@x.com', $argonHash, 'SnapWS');
+$snapCtx = new WorkspaceContext($snapDb);
+$snapCtx->set($snapWs);
+$snapRepo = new AccountRepository($snapDb);
+$snapDay1 = '2026-08-22T10:00:00Z';
+$snapAcct = $snapRepo->connect($snapCtx, 'instagram', '@ai.neeidy', 'REF_LIVE', $snapDay1);
+
+$snapPosts = [
+    ['external_post_id' => 'p1', 'views' => 100, 'likes' => 10, 'comments' => 2, 'shares' => 1],
+    ['external_post_id' => 'p2', 'views' => 50, 'likes' => 5, 'comments' => null, 'shares' => null],
+];
+$snapChore = new \Kuyash\Analytics\DailySnapshot($snapDb, $p22Provider([$p22Row('REF_LIVE', 7, $snapPosts)]));
+$snapWrote = $snapChore->capture($snapDay1);
+$snapRowDb = $snapDb->one('SELECT * FROM account_metrics WHERE account_id = ?', [$snapAcct]);
+
+check('p22/snapshot: captures one row carrying the REAL follower count',
+    $snapWrote === 1 && (int) $snapRowDb['followers'] === 7 && (int) $snapRowDb['workspace_id'] === $snapWs);
+check('p22/snapshot: aggregates per-post engagement across the window',
+    (int) $snapRowDb['post_count'] === 2 && (int) $snapRowDb['views'] === 150
+    && (int) $snapRowDb['likes'] === 15 && (int) $snapRowDb['comments'] === 2 && (int) $snapRowDb['shares'] === 1);
+check('p22/snapshot: per-post rows + raw payload are preserved for later re-mapping',
+    str_contains((string) $snapRowDb['posts_json'], 'p1') && str_contains((string) $snapRowDb['raw_json'], 'probe'));
+check('p22/snapshot: the hot follower value lands on the account row',
+    (int) $snapDb->one('SELECT followers_count FROM accounts WHERE id = ?', [$snapAcct])['followers_count'] === 7);
+check('p22/snapshot: re-running the same UTC day writes NOTHING (idempotent chore)',
+    $snapChore->capture('2026-08-22T23:59:00Z') === 0
+    && (int) $snapDb->one('SELECT COUNT(*) AS n FROM account_metrics')['n'] === 1);
+check('p22/snapshot: a read-only metrics poll records ZERO spend (no usage/credit rows)',
+    (int) $snapDb->one('SELECT COUNT(*) AS n FROM usage_events')['n'] === 0
+    && (int) $snapDb->one('SELECT COUNT(*) AS n FROM credit_transactions')['n'] === 0);
+
+// today's live reality: analytics reachable, but the post list is EMPTY
+$snapDay2 = '2026-08-23T10:00:00Z';
+$snapEmpty = new \Kuyash\Analytics\DailySnapshot($snapDb, $p22Provider([$p22Row('REF_LIVE', 9, [], false)]));
+$snapEmpty->capture($snapDay2);
+$snapRow2 = $snapDb->one('SELECT * FROM account_metrics WHERE snapshot_date = ?', ['2026-08-23']);
+check('p22/snapshot: an empty analytics list stays HONEST — real followers, zero posts, NULL metrics (never 0)',
+    (int) $snapRow2['followers'] === 9 && (int) $snapRow2['post_count'] === 0
+    && $snapRow2['views'] === null && $snapRow2['likes'] === null
+    && (int) $snapRow2['has_analytics'] === 0);
+
+check('p22/snapshot: a transient provider failure yields 0 and never throws into the worker loop',
+    (new \Kuyash\Analytics\DailySnapshot($snapDb, $p22Provider([], true)))->capture('2026-08-24T10:00:00Z') === 0);
+
+// An account the provider does not report must still be RECORDED, otherwise it
+// stays "due" forever and re-polls on every 5-minute chore tick (~288/day)
+// against an undocumented rate limit.
+check('p22/snapshot: an unmatched account is recorded with NULL metrics, so it stops re-polling',
+    (static function () use ($basePath, $argonHash, $p22Provider, $p22Row): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'nomatch@x.com', $argonHash, 'NoMatchWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        (new AccountRepository($db))->connect($ctx, 'instagram', '@ghost', 'zacct_PLACEHOLDER', '2026-08-22T10:00:00Z');
+
+        // the provider knows a DIFFERENT account
+        $chore = new \Kuyash\Analytics\DailySnapshot($db, $p22Provider([$p22Row('SOMEONE_ELSE', 99, [])]));
+        $first = $chore->capture('2026-08-22T10:00:00Z');
+        $row = $db->one('SELECT * FROM account_metrics');
+        $second = $chore->capture('2026-08-22T18:00:00Z');   // later the same UTC day
+
+        return $first === 1
+            && $row['followers'] === null && (int) $row['post_count'] === 0   // honest "learned nothing"
+            && (int) $row['has_analytics'] === 0
+            && $second === 0                                                   // no longer due → no re-poll
+            && $db->one('SELECT followers_count FROM accounts')['followers_count'] === null;
+    })());
+
+// tenant isolation: a sibling workspace never receives another tenant's metrics
+[, $snapWs2] = seedUser($snapDb, 'snap2@x.com', $argonHash, 'SnapWS2');
+$snapCtx2 = new WorkspaceContext($snapDb);
+$snapCtx2->set($snapWs2);
+$snapAcct2 = $snapRepo->connect($snapCtx2, 'instagram', '@ai.neeidy', 'REF_LIVE', '2026-08-24T10:00:00Z');
+(new \Kuyash\Analytics\DailySnapshot($snapDb, $p22Provider([$p22Row('REF_LIVE', 7, [])])))->capture('2026-08-24T10:00:00Z');
+check('p22/snapshot: each workspace gets its OWN row, scoped to its own account',
+    (int) $snapDb->one('SELECT COUNT(*) AS n FROM account_metrics WHERE workspace_id = ? AND account_id = ?', [$snapWs2, $snapAcct2])['n'] === 1
+    && (int) $snapDb->one('SELECT COUNT(*) AS n FROM account_metrics WHERE workspace_id = ? AND account_id = ?', [$snapWs2, $snapAcct])['n'] === 0);
+
+// ── (3) account de-duplication (the reconnect bug) ──────────────────────────
+
+$dedDb = migratedDb($basePath);
+[, $dedWs] = seedUser($dedDb, 'dedup@x.com', $argonHash, 'DedupWS');
+$dedCtx = new WorkspaceContext($dedDb);
+$dedCtx->set($dedWs);
+$dedRepo = new AccountRepository($dedDb);
+$dedNow = gmdate(NOW_ISO);
+$dedFirst = $dedRepo->connect($dedCtx, 'instagram', '@ai.neeidy', 'REF_OLD', $dedNow);
+$dedRepo->disconnect($dedCtx, $dedFirst);
+$dedSecond = $dedRepo->connect($dedCtx, 'instagram', '@AI.Neeidy', 'REF_NEW', $dedNow); // same handle, different case + @
+
+check('p22/dedup: reconnecting REVIVES the existing row instead of forking a duplicate',
+    $dedSecond === $dedFirst && (int) $dedDb->one('SELECT COUNT(*) AS n FROM accounts')['n'] === 1);
+check('p22/dedup: the revived row is connected again and carries the fresh provider ref + handle',
+    (static function () use ($dedDb, $dedFirst): bool {
+        $r = $dedDb->one('SELECT * FROM accounts WHERE id = ?', [$dedFirst]);
+        return $r['status'] === 'connected' && $r['health'] === 'ok'
+            && $r['external_ref'] === 'REF_NEW' && $r['handle'] === '@AI.Neeidy';
+    })());
+check('p22/dedup: a DIFFERENT handle on the same platform still creates its own account',
+    $dedRepo->connect($dedCtx, 'instagram', '@other.acct', 'REF_OTHER', $dedNow) !== $dedFirst
+    && (int) $dedDb->one('SELECT COUNT(*) AS n FROM accounts')['n'] === 2);
+check('p22/dedup: another WORKSPACE may connect the same handle (multi-tenant stays legal)',
+    (static function () use ($dedDb, $argonHash, $dedRepo): bool {
+        [, $ws2] = seedUser($dedDb, 'dedup2@x.com', $argonHash, 'DedupWS2');
+        $ctx2 = new WorkspaceContext($dedDb);
+        $ctx2->set($ws2);
+        $dedRepo->connect($ctx2, 'instagram', '@ai.neeidy', 'REF_WS2', gmdate(NOW_ISO));
+        return (int) $dedDb->one('SELECT COUNT(*) AS n FROM accounts WHERE workspace_id = ?', [$ws2])['n'] === 1;
+    })());
+check('p22/dedup: the UNIQUE index is the backstop — a raw duplicate INSERT is rejected',
+    throws(static fn () => $dedDb->run(
+        "INSERT INTO accounts (workspace_id, platform, handle, external_ref, status, health, created_at, updated_at)
+         VALUES (?, 'instagram', 'ai.neeidy', 'X', 'connected', 'ok', ?, ?)",
+        [$dedWs, $dedNow, $dedNow],
+    )));
+
+// migration 0015 repairs EXISTING duplicates without orphaning anything (K2)
+check('p22/dedup: migration 0015 re-points posts to the canonical row, then deletes the duplicate',
+    (static function () use ($basePath, $argonHash): bool {
+        $db = migratedDb($basePath);
+        [$user, $ws] = seedUser($db, 'repair@x.com', $argonHash, 'RepairWS');
+        $now = gmdate(NOW_ISO);
+        // recreate the pre-fix state: the index must be gone for duplicates to exist
+        $db->run('DROP INDEX uq_accounts_ws_platform_handle');
+        $mk = static function (string $handle, string $status) use ($db, $ws, $now): int {
+            $db->run(
+                'INSERT INTO accounts (workspace_id, platform, handle, external_ref, status, health, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [$ws, 'instagram', $handle, 'REF', $status, 'ok', $now, $now],
+            );
+            return $db->lastInsertId();
+        };
+        $stale = $mk('@ai.neeidy', 'disconnected');   // the duplicate to remove
+        $live = $mk('ai.neeidy', 'connected');        // the canonical row
+        $db->run(
+            "INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+             VALUES (?, 'repair', 'full', '[]', ?, ?)",
+            [$ws, $now, $now],
+        );
+        $wfId = $db->lastInsertId();
+        $db->run(
+            "INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at)
+             VALUES (?, ?, 'trend', '[]', 'completed', ?, ?, ?)",
+            [$ws, $wfId, $user, $now, $now],
+        );
+        $runId = $db->lastInsertId();
+        $db->run(
+            "INSERT INTO posts (workspace_id, run_id, account_id, platform, status, idempotency_key, created_at, updated_at)
+             VALUES (?, ?, ?, 'instagram', 'published', ?, ?, ?)",
+            [$ws, $runId, $stale, 'k1', $now, $now],   // a REAL published post on the doomed row
+        );
+        $postId = $db->lastInsertId();
+
+        $sql = file_get_contents($basePath . '/database/migrations/0015_accounts_dedup.sql');
+        $db->pdo()->exec((string) $sql);
+
+        $post = $db->one('SELECT account_id FROM posts WHERE id = ?', [$postId]);
+        $orphans = $db->all('PRAGMA foreign_key_check');
+
+        return (int) $post['account_id'] === $live                                      // re-pointed, not orphaned
+            && $db->one('SELECT id FROM accounts WHERE id = ?', [$stale]) === null      // duplicate gone
+            && $db->one('SELECT id FROM accounts WHERE id = ?', [$live]) !== null       // canonical kept
+            && $orphans === [];                                                          // FK integrity intact
+    })());
+
+// ── (4) real followers reach the UI, sample data stays labelled ─────────────
+
+$syncFollowDb = migratedDb($basePath);
+[, $sfWs] = seedUser($syncFollowDb, 'follow@x.com', $argonHash, 'FollowWS');
+$sfCtx = new WorkspaceContext($syncFollowDb);
+$sfCtx->set($sfWs);
+$sfRepo = new AccountRepository($syncFollowDb);
+$sfId = $sfRepo->connect($sfCtx, 'instagram', '@ai.neeidy', 'zacct_STALE', gmdate(NOW_ISO));
+$sfCtl = new AccountsController(
+    $view, $sfRepo, new PostRepository($syncFollowDb), new AssetRepository($syncFollowDb),
+    new PublishCounter($syncFollowDb), new WorkspaceSettings($syncFollowDb), $sfCtx, new Csrf(), new Flash(),
+    $p22Provider([$p22Row('REF_REAL', 7, [])]),
+);
+$sfCtl->sync();
+$sfRow = $sfRepo->find($sfCtx, $sfId);
+
+check('p22/sync: one reconcile pass fixes the provider ref AND stores the real audience',
+    $sfRow['external_ref'] === 'REF_REAL' && $sfRow['followers_count'] === 7);
+check('p22/sync: an unreported follower count never overwrites a stored one with 0',
+    (static function () use ($view, $syncFollowDb, $sfRepo, $sfCtx, $sfId, $p22Provider, $p22Row): bool {
+        (new AccountsController(
+            $view, $sfRepo, new PostRepository($syncFollowDb), new AssetRepository($syncFollowDb),
+            new PublishCounter($syncFollowDb), new WorkspaceSettings($syncFollowDb), $sfCtx, new Csrf(), new Flash(),
+            $p22Provider([$p22Row('REF_REAL', null, [])]),
+        ))->sync();
+
+        return $sfRepo->find($sfCtx, $sfId)['followers_count'] === 7;
+    })());
+check('p22/repo: an account the provider never reported keeps a NULL audience (honest gap, not 0)',
+    $sfRepo->find($sfCtx, $sfRepo->connect($sfCtx, 'tiktok', '@never.synced', 'R', gmdate(NOW_ISO)))['followers_count'] === null);
+
+$p22View = new View($basePath . '/templates');
+$p22Real = $p22View->render('partials/account-card', [
+    'account' => ['id' => 7, 'platform' => 'instagram', 'handle' => '@ai.neeidy', 'health' => 'ok', 'status' => 'connected', 'followers_count' => 7],
+    'manage' => false,
+]);
+$p22Sample = $p22View->render('partials/account-card', [
+    'account' => ['id' => 7, 'platform' => 'instagram', 'handle' => '@ai.neeidy', 'health' => 'ok', 'status' => 'connected', 'followers_count' => null],
+    'manage' => false,
+]);
+check('p22/card: a REAL follower count renders bare — no "sample" chip beside it',
+    str_contains($p22Real, '>7</span> ' . View::t('acct.followers'))
+    && substr_count($p22Real, 'acc-card__sample') === 1);   // only the engagement strip keeps the chip
+check('p22/card: a stand-in follower count is CHIPPED as sample (every fabricated number is marked)',
+    substr_count($p22Sample, 'acc-card__sample chip') === 1        // engagement strip
+    && substr_count($p22Sample, 'acc-card__sample--foot') === 1    // the follower marker
+    && !str_contains($p22Sample, '>7</span> ' . View::t('acct.followers')));
+// REGRESSION GUARD: the chip briefly lived inside __who, which truncates with an
+// ellipsis — the marker vanished on a narrow card and a fabricated follower count
+// rendered as if it were measured. The screenshot gate passed anyway (no console
+// error, no overflow), so the invariant is asserted here in markup terms.
+check('p22/card: the footer chip sits OUTSIDE the truncating __who span (an ellipsis must never eat the label)',
+    (static function () use ($p22Sample): bool {
+        $whoTail = strpos($p22Sample, View::t('acct.followers'));
+        $chip = strpos($p22Sample, 'acc-card__sample--foot');
+        if ($whoTail === false || $chip === false) {
+            return false;
+        }
+        $between = substr($p22Sample, $whoTail, $chip - $whoTail);
+
+        return str_contains($between, '</span>');  // __who is closed before the chip opens
+    })());
+check('p22/card: the footer chip is a flex sibling, not clipped content (CSS backs the markup)',
+    preg_match('/\.acc-card__sample--foot\s*\{[^}]*flex:\s*none/s', (string) file_get_contents($basePath . '/public/assets/css/app.css')) === 1);
+check('p22/card: the sample growth line is hidden next to a real audience (no unlabelled fake beside a fact)',
+    !str_contains($p22Real, 'acc-card__grow') && str_contains($p22Sample, 'acc-card__grow'));
+check('p22/card: per-post engagement is STILL sample-framed (the provider reports none yet)',
+    str_contains($p22Real, 'acc-card__eng') && str_contains($p22Real, View::t('acct.sample')));
+check('p22/copy: the sample note claims nothing about unmarked figures being fabricated',
+    stripos(View::t('acct.sample_note'), 'sample') !== false
+    && stripos(View::t('acct.sample_note'), 'connected account') !== false);
+
+// ── (5) the nav pill no longer springs back ────────────────────────────────
+
+$p22Css = (string) file_get_contents($basePath . '/public/assets/css/app.css');
+check('p22/ui: the sliding pill eases to its target (no overshoot curve on transform)',
+    preg_match('/\.nav-item__pill\s*\{[^}]*transition:\s*transform\s+var\(--dur-quick\)\s+var\(--ease-out\)/s', $p22Css) === 1);
+check('p22/ui: --spring is NOT used by the pill transition (that curve is what bounced)',
+    preg_match('/\.nav-item__pill\s*\{[^}]*var\(--spring\)/s', $p22Css) !== 1);
+
+// ── (6) jargon: a machine timestamp never reaches the operator ──────────────
+
+check('p22/jargon: Messages::since humanizes an ISO stamp into a relative phrase',
+    Messages::since('2026-08-22T10:00:30Z', '2026-08-22T10:00:50Z') === View::t('time.just_now')
+    && Messages::since('2026-08-22T09:56:00Z', '2026-08-22T10:00:00Z') === View::t('time.minutes_ago', ['n' => 4])
+    && Messages::since('2026-08-22T07:00:00Z', '2026-08-22T10:00:00Z') === View::t('time.hours_ago', ['n' => 3])
+    && Messages::since('2026-08-19T10:00:00Z', '2026-08-22T10:00:00Z') === View::t('time.days_ago', ['n' => 3]));
+check('p22/jargon: an unparseable stamp falls back to the raw value (never a wrong "just now")',
+    Messages::since('not-a-date', '2026-08-22T10:00:00Z') === 'not-a-date');
+check('p22/jargon: a future/clock-skewed stamp does not produce a negative age',
+    Messages::since('2026-08-22T10:05:00Z', '2026-08-22T10:00:00Z') === View::t('time.just_now'));
+check('p22/jargon: "sample" means ONE thing in the UI — the statistical sense is renamed to "checks"',
+    (static function (): bool {
+        foreach (['en', 'tr'] as $loc) {
+            I18n::setLocale($loc);
+            // the honesty marker keeps the word; the sample-SIZE label must not reuse it
+            if (mb_strtolower(View::t('digest.sample')) === mb_strtolower(View::t('acct.sample'))) {
+                return false;
+            }
+        }
+        I18n::setLocale('en');
+
+        return true;
+    })());
+check('p22/jargon: engineering vocabulary is gone from the budget copy (both languages)',
+    (static function (): bool {
+        foreach (['en' => 'pre-flight', 'tr' => 'ön-uçuş'] as $loc => $term) {
+            I18n::setLocale($loc);
+            $copy = mb_strtolower(View::t('usage.no_cap_body_1') . View::t('usage.no_cap_body_2'));
+            if (str_contains($copy, $term) || trim($copy) === '.') {
+                return false;
+            }
+        }
+        I18n::setLocale('en');
+
+        return true;
+    })());
+check('p22/jargon: trend format chips match ADR-012 (nothing is "shot") and TR avoids the "yüzsüz" idiom',
+    (static function (): bool {
+        I18n::setLocale('en');
+        $en = View::t('trends.format_face') . '|' . View::t('trends.format_faceless');
+        I18n::setLocale('tr');
+        $tr = View::t('trends.format_face') . '|' . View::t('trends.format_faceless');
+        I18n::setLocale('en');
+
+        return !str_contains(mb_strtolower($en), 'shoot')
+            && !str_contains(mb_strtolower($tr), 'yüzsüz')
+            && !str_contains(mb_strtolower($tr), 'çekim');
+    })());
+check('p22/jargon: the trends freshness chip renders the relative phrase, not the Z-suffixed stamp',
+    (static function () use ($basePath): bool {
+        $tpl = (string) file_get_contents($basePath . '/templates/trends/index.php');
+        return str_contains($tpl, 'Messages::since((string) $feed->fetchedAt)')
+            && preg_match('/·\s*<\?=\s*View::e\(\(string\)\s*\$feed->fetchedAt\)/', $tpl) !== 1;
+    })());
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {

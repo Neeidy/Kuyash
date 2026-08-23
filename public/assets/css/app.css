@@ -869,8 +869,12 @@ html.js .sidebar__nav { position: relative; }
   z-index: 0; pointer-events: none; opacity: 0;
   transform: translateY(0);
   /* animate ONLY transform/opacity (§1.2 rule 1): height is set instantly by JS
-     while the pill is still invisible (opacity 0), so there is no height animation */
-  transition: transform var(--dur-quick) var(--spring),
+     while the pill is still invisible (opacity 0), so there is no height animation.
+     EASING: --ease-out, never --spring. The spring curve overshoots (its second
+     control point is 1.56), so the pill shot past the hovered item and sprang
+     back on every move — read as the nav "bouncing back" while browsing tabs.
+     A decelerating curve lands it on target once. */
+  transition: transform var(--dur-quick) var(--ease-out),
               opacity var(--dur-micro) var(--ease-out);
 }
 .nav-item__pill.is-ready { opacity: 1; }
@@ -1279,6 +1283,9 @@ html:not(.js) .topbar__live { display: none; }
 }
 .acc-card__who { font-size: 12.5px; font-weight: 550; color: var(--text); min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the footer's sample marker sits OUTSIDE __who (which truncates) so an
+   unmeasured figure can never lose its label to an ellipsis */
+.acc-card__sample--foot { margin-left: 0; flex: none; }
 .acc-card__grow { display: inline-flex; align-items: center; gap: 4px; flex: none;
   font-size: 12px; font-weight: 600; color: var(--ok); }
 .acc-card__status { display: flex; flex-wrap: wrap; gap: var(--s2); padding: 0 var(--s3) var(--s3); }

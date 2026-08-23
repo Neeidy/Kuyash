@@ -318,7 +318,7 @@ return [
     'digest.on' => 'ON',
     'digest.off' => 'off',
     'digest.quality_label' => 'quality score:',
-    'digest.sample' => 'sample',
+    'digest.sample' => 'checks',
     'digest.policy_label' => 'policy',
     'digest.auto_approved' => 'Auto-approved',
     'digest.none_auto_approved' => 'Nothing was auto-approved on this date.',
@@ -439,9 +439,9 @@ return [
     'settings.save' => 'Save settings',
     'settings.quality_score' => 'Quality score',
     'settings.quality_insufficient' => 'Not enough checks yet — the score appears once at least 5 compliance checks have run (so far: {n}). Until then it can’t trigger an auto-fallback.',
-    'settings.quality_derived' => 'Derived from the last checks: slop average {slop} · block rate {block}% · reject/fail rate (7d) {reject}% · sample {sample}.',
-    'settings.quality_breach' => 'Below 60 with enough sample — Auto mode falls back to Manual automatically. Re-enabling Auto is your call, above.',
-    'settings.quality_ok' => 'Falls back to Manual automatically if the score drops below 60 (needs ≥ 5 checks of sample).',
+    'settings.quality_derived' => 'Derived from the last checks: slop average {slop} · block rate {block}% · reject/fail rate (7d) {reject}% · {sample} checks.',
+    'settings.quality_breach' => 'Below 60 with enough checks — Auto mode falls back to Manual automatically. Re-enabling Auto is your call, above.',
+    'settings.quality_ok' => 'Falls back to Manual automatically if the score drops below 60 (needs ≥ 5 checks).',
 
     // trends
     'trends.title' => 'Trend Radar',
@@ -454,6 +454,12 @@ return [
     'trends.niche_word' => 'Niche',
     'trends.fresh' => 'fresh',
     'trends.stale' => 'stale',
+
+    // relative time: machine timestamps are never shown raw in the UI
+    'time.just_now' => 'just now',
+    'time.minutes_ago' => '{n} min ago',
+    'time.hours_ago' => '{n} h ago',
+    'time.days_ago' => '{n} d ago',
     'trends.region' => 'Region',
     'trends.apply' => 'Apply',
     'trends.api_usage_today' => 'Today’s API usage:',
@@ -461,8 +467,8 @@ return [
     'trends.empty' => 'No trends to show',
     'trends.empty_error' => 'The provider could not be reached and there is no cache yet — {error}',
     'trends.empty_hint' => 'Pick a niche and apply, or refresh to fetch the latest.',
-    'trends.format_face' => 'face · shoot',
-    'trends.format_faceless' => 'faceless · stock',
+    'trends.format_face' => 'reference subject',
+    'trends.format_faceless' => 'stock footage',
     'trends.create_from_trend' => 'Create from trend',
     'trends.create_note' => '“Create from trend” starts a full content run pinned to that topic — research, script, visuals, compliance and publishing all run automatically.',
 
@@ -484,7 +490,7 @@ return [
     'usage.budget' => 'Budget',
     'usage.no_cap_set' => 'no cap set',
     'usage.no_cap_body_1' => 'No monthly budget cap is set, so runs are never blocked on cost. Set a cap in',
-    'usage.no_cap_body_2' => ' to enable the pre-flight budget gate.',
+    'usage.no_cap_body_2' => ' so a run that would exceed it is stopped before it starts.',
     'usage.bar_aria' => '{spent} of {cap} used',
     'usage.spent' => 'spent',
     'usage.cap_word' => 'cap',
@@ -680,8 +686,11 @@ return [
     'acct.followers' => 'followers',
     'acct.growth_today' => '+{n} today',
     'acct.sample' => 'sample',
-    'acct.sample_note' => 'Engagement and follower figures are sample data — real metrics appear once an account goes live.',
-    'acct.video_aria' => 'Latest video preview for {handle}',
+    'acct.sample_note' => 'Every figure marked “sample” is a stand-in, not a measurement. Follower counts without that mark come from the connected account; real per-post engagement appears once the account reports it.',
+    // role="img" makes the tile a leaf for assistive tech, so the visual "sample"
+    // chip inside it is dropped — the accessible name must carry that honesty
+    // itself, and must not claim a video that does not exist.
+    'acct.video_aria' => 'Sample preview tile for {handle} — no video yet',
     'acct.likes_aria' => 'likes',
     'acct.comments_aria' => 'comments',
     'acct.shares_aria' => 'shares',

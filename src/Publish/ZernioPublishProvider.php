@@ -132,6 +132,220 @@ final class ZernioPublishProvider implements PublishProvider
         return $out;
     }
 
+    /**
+     * READ-ONLY audience + per-post engagement. Two GETs, no writes, no spend:
+     *   GET /accounts   → followersCount per account (VERIFIED live: real value)
+     *   GET /analytics  → {overview, posts[], pagination, hasAnalyticsAccess}
+     *
+     * FIELD-MAPPING HONESTY (integrations rule: never invent API behaviour): the
+     * live `posts[]` array was EMPTY at integration time (pagination.total = 0,
+     * account externalPostCount = 0), so the per-post metric key names could not
+     * be verified against real data. Rather than hard-code one guessed name, each
+     * metric is read through a small set of candidate keys (see metricOf) and the
+     * provider's own row is preserved verbatim in `raw`. Consequences:
+     *   • nothing is fabricated — an unmapped metric stays null, never 0;
+     *   • when Zernio starts reporting posts, whatever key it uses is either
+     *     already matched or recoverable from the stored raw payload.
+     *
+     * @return list<array{external_ref: string, platform: string, username: string, followers: int|null, has_analytics: bool, posts: list<array{external_post_id: string, views: int|null, likes: int|null, comments: int|null, shares: int|null}>, raw: array<string, mixed>}>
+     */
+    public function accountMetrics(?string $platform = null, ?string $from = null, ?string $to = null): array
+    {
+        if ($this->base === '' || $this->apiKey === '') {
+            throw new PublishProviderException('Zernio is not configured (ZERNIO_ENDPOINT / ZERNIO_API_KEY missing).');
+        }
+
+        $response = $this->get('/accounts' . ($platform !== null ? '?platform=' . rawurlencode($platform) : ''));
+        if ($response->status !== 200) {
+            throw new PublishProviderException($this->errorMessage($response, 'account metrics'));
+        }
+        $body = $this->decode($response);
+        $hasAnalytics = (bool) ($body['hasAnalyticsAccess'] ?? false);
+
+        $rows = [];
+        foreach ((array) ($body['accounts'] ?? []) as $a) {
+            if (!is_array($a) || (string) ($a['_id'] ?? '') === '') {
+                continue;
+            }
+            $rows[] = [
+                'external_ref' => (string) $a['_id'],
+                'platform' => (string) ($a['platform'] ?? ''),
+                'username' => (string) ($a['username'] ?? ''),
+                'followers' => self::intOrNull($a['followersCount'] ?? null),
+                'has_analytics' => $hasAnalytics,
+                'posts' => [],
+                'raw' => ['account' => self::retainable($a)],
+            ];
+        }
+
+        if ($rows === [] || !$hasAnalytics) {
+            // honest partial result: audience only, per-post engagement unavailable
+            return $rows;
+        }
+
+        $byAccount = $this->analyticsPosts($platform, $from, $to);
+        foreach ($rows as $i => $row) {
+            // ONLY this account's own posts. Install-wide aggregates (the
+            // analytics `overview`, and posts the provider did not tie to an
+            // account) are deliberately NOT copied onto per-account rows: the
+            // API key is install-wide, so fanning those out would put data
+            // derived from one workspace's accounts inside another's row.
+            $rows[$i]['posts'] = $byAccount['posts'][$row['external_ref']] ?? [];
+            $rows[$i]['raw']['unattributed_post_count'] = count($byAccount['unattributed']);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The subset of a provider account object that is safe and useful to persist.
+     *
+     * WHY AN ALLOWLIST: the row is stored verbatim in account_metrics.raw_json so
+     * an unmapped metric can be recovered later — but the live object carries ~43
+     * fields including `byokCredentials`, `tokenExpiresAt`, `platformUserId` and
+     * profile URLs. Kuyash's standing rule is that platform credentials live at
+     * the provider and are NEVER stored here, and a vendor is free to add a field
+     * at any time. Keeping a fixed allowlist means a future `accessToken` cannot
+     * silently land in our database, and no profile PII is retained.
+     *
+     * @param array<string, mixed> $account
+     *
+     * @return array<string, mixed>
+     */
+    private static function retainable(array $account): array
+    {
+        $keep = ['_id', 'platform', 'username', 'followersCount', 'externalPostCount',
+            'isActive', 'platformStatus', 'analyticsLastSyncedAt', 'followersLastUpdated'];
+
+        $out = [];
+        foreach ($keep as $key) {
+            if (array_key_exists($key, $account) && is_scalar($account[$key])) {
+                $out[$key] = $account[$key];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * GET /analytics → per-post rows grouped by the owning account id.
+     *
+     * @return array{posts: array<string, list<array{external_post_id: string, views: int|null, likes: int|null, comments: int|null, shares: int|null}>>, overview: array<string, mixed>, unattributed: list<array<string, mixed>>}
+     */
+    private function analyticsPosts(?string $platform, ?string $from, ?string $to): array
+    {
+        $query = [];
+        if ($platform !== null) {
+            $query['platform'] = $platform;
+        }
+        if ($from !== null) {
+            $query['fromDate'] = $from;
+        }
+        if ($to !== null) {
+            $query['toDate'] = $to;
+        }
+        $path = '/analytics' . ($query === [] ? '' : '?' . http_build_query($query));
+
+        $response = $this->get($path);
+        if ($response->status !== 200) {
+            // analytics is a best-effort enrichment: a failure must not sink the
+            // audience numbers we already have (caller keeps followers + empty posts)
+            return ['posts' => [], 'overview' => [], 'unattributed' => []];
+        }
+        $body = $this->decode($response);
+
+        $grouped = [];
+        $unattributed = [];
+        foreach ((array) ($body['posts'] ?? []) as $p) {
+            if (!is_array($p)) {
+                continue;
+            }
+            $ref = self::firstString($p, 'accountId', 'account_id', 'socialAccountId', 'account');
+            $metrics = [
+                'external_post_id' => self::firstString($p, 'platformPostId', 'externalPostId', '_id', 'id') ?? '',
+                // SYNONYMS ONLY. `impressions` (total displays) and `reach`
+                // (unique accounts) are deliberately NOT accepted as views —
+                // storing them under `views` would put a truthful number behind
+                // a false label, which is the same lie as inventing the number.
+                'views' => self::metricOf($p, 'views', 'viewCount', 'videoViews', 'plays'),
+                'likes' => self::metricOf($p, 'likes', 'likeCount', 'reactions'),
+                'comments' => self::metricOf($p, 'comments', 'commentCount', 'replies'),
+                'shares' => self::metricOf($p, 'shares', 'shareCount', 'reposts'),
+            ];
+            if ($ref === null) {
+                $unattributed[] = $p;
+
+                continue;
+            }
+            $grouped[$ref][] = $metrics;
+        }
+
+        return [
+            'posts' => $grouped,
+            'overview' => (array) ($body['overview'] ?? []),
+            'unattributed' => $unattributed,
+        ];
+    }
+
+    /**
+     * One metric, read through candidate key names and the common nesting
+     * wrappers. Returns null when NONE of them is present — "not reported",
+     * never a zero stand-in.
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function metricOf(array $row, string ...$keys): ?int
+    {
+        $scopes = [$row];
+        foreach (['metrics', 'insights', 'stats', 'analytics'] as $wrapper) {
+            if (isset($row[$wrapper]) && is_array($row[$wrapper])) {
+                $scopes[] = $row[$wrapper];
+            }
+        }
+        foreach ($scopes as $scope) {
+            foreach ($keys as $key) {
+                $value = self::intOrNull($scope[$key] ?? null);
+                if ($value !== null) {
+                    return $value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function firstString(array $row, string ...$keys): ?string
+    {
+        foreach ($keys as $key) {
+            $value = $row[$key] ?? null;
+            if (is_string($value) && $value !== '') {
+                return $value;
+            }
+            // some payloads nest the id: {account: {_id: "..."}}
+            if (is_array($value) && is_string($value['_id'] ?? null) && $value['_id'] !== '') {
+                return $value['_id'];
+            }
+        }
+
+        return null;
+    }
+
+    private static function intOrNull(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_float($value)) {
+            return (int) $value;
+        }
+        if (is_string($value) && $value !== '' && ctype_digit(ltrim($value, '-'))) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
     // ── media ───────────────────────────────────────────────────────────────
 
     /** Resolve the render row → a LOCAL path ffmpeg/curl can read (staging from R2 if needed). */

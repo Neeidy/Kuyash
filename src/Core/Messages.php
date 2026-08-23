@@ -113,6 +113,38 @@ final class Messages
     }
 
     /**
+     * ISO-8601 UTC timestamp → a plain relative phrase ("4 minutes ago").
+     * Storage stays ISO (sortable, unambiguous, audit-grade); only the DISPLAY
+     * is humanized, the same split status()/jobType() already apply to enums.
+     * A machine timestamp is jargon on a dashboard chip — the operator wants to
+     * know how fresh something is, not to parse a Z-suffixed string.
+     *
+     * $nowIso is injectable so the phrasing is testable without a clock.
+     * Unparseable input falls back to the raw value (never a wrong "just now").
+     */
+    public static function since(string $iso, ?string $nowIso = null): string
+    {
+        $then = strtotime($iso);
+        if ($then === false) {
+            return $iso;
+        }
+        $now = $nowIso === null ? time() : (int) strtotime($nowIso);
+        $delta = max(0, $now - $then);
+
+        if ($delta < 60) {
+            return I18n::lookup('time.just_now') ?? 'just now';
+        }
+        if ($delta < 3600) {
+            return I18n::t('time.minutes_ago', ['n' => (string) intdiv($delta, 60)]);
+        }
+        if ($delta < 86400) {
+            return I18n::t('time.hours_ago', ['n' => (string) intdiv($delta, 3600)]);
+        }
+
+        return I18n::t('time.days_ago', ['n' => (string) intdiv($delta, 86400)]);
+    }
+
+    /**
      * Resolve queued flashes into displayable {type, text} pairs.
      *
      * @return list<array{type: string, text: string}>

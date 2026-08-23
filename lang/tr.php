@@ -314,7 +314,7 @@ return [
     'digest.on' => 'AÇIK',
     'digest.off' => 'kapalı',
     'digest.quality_label' => 'kalite puanı:',
-    'digest.sample' => 'örneklem',
+    'digest.sample' => 'kontrol',
     'digest.policy_label' => 'politika',
     'digest.auto_approved' => 'Otomatik onaylanan',
     'digest.none_auto_approved' => 'Bu tarihte otomatik onaylanan bir şey yok.',
@@ -435,9 +435,9 @@ return [
     'settings.save' => 'Ayarları kaydet',
     'settings.quality_score' => 'Kalite puanı',
     'settings.quality_insufficient' => 'Henüz yeterli kontrol yok — puan, en az 5 uyumluluk kontrolü çalıştığında görünür (şu ana kadar: {n}). O zamana dek otomatik geri-dönüşü tetikleyemez.',
-    'settings.quality_derived' => 'Son kontrollerden türetildi: benzerlik ortalaması {slop} · engelleme oranı %{block} · ret/başarısızlık oranı (7g) %{reject} · örneklem {sample}.',
-    'settings.quality_breach' => 'Yeterli örneklemle 60’ın altında — Auto modu otomatik olarak Manuel’e döner. Auto’yu yeniden etkinleştirmek yukarıda sizin kararınız.',
-    'settings.quality_ok' => 'Puan 60’ın altına düşerse otomatik olarak Manuel’e döner (≥ 5 kontrol örneklemi gerekir).',
+    'settings.quality_derived' => 'Son kontrollerden türetildi: benzerlik ortalaması {slop} · engelleme oranı %{block} · ret/başarısızlık oranı (7g) %{reject} · {sample} kontrol.',
+    'settings.quality_breach' => 'Yeterli kontrolle 60’ın altında — Auto modu otomatik olarak Manuel’e döner. Auto’yu yeniden etkinleştirmek yukarıda sizin kararınız.',
+    'settings.quality_ok' => 'Puan 60’ın altına düşerse otomatik olarak Manuel’e döner (en az 5 kontrol gerekir).',
 
     // trends
     'trends.title' => 'Trend Radarı',
@@ -450,6 +450,12 @@ return [
     'trends.niche_word' => 'Niş',
     'trends.fresh' => 'taze',
     'trends.stale' => 'eski',
+
+    // göreli zaman: makine zaman damgası arayüzde asla ham gösterilmez
+    'time.just_now' => 'az önce',
+    'time.minutes_ago' => '{n} dk önce',
+    'time.hours_ago' => '{n} sa önce',
+    'time.days_ago' => '{n} gün önce',
     'trends.region' => 'Bölge',
     'trends.apply' => 'Uygula',
     'trends.api_usage_today' => 'Bugünkü API kullanımı:',
@@ -457,8 +463,8 @@ return [
     'trends.empty' => 'Gösterilecek trend yok',
     'trends.empty_error' => 'Sağlayıcıya ulaşılamadı ve henüz önbellek yok — {error}',
     'trends.empty_hint' => 'Bir niş seçip uygulayın veya en sonuncuları getirmek için yenileyin.',
-    'trends.format_face' => 'yüz · çekim',
-    'trends.format_faceless' => 'yüzsüz · stok',
+    'trends.format_face' => 'referans özne',
+    'trends.format_faceless' => 'stok görüntü',
     'trends.create_from_trend' => 'Trendden oluştur',
     'trends.create_note' => '“Trendden oluştur”, o konuya sabitlenmiş tam bir içerik çalışması başlatır — araştırma, senaryo, görseller, uyumluluk ve yayın hepsi otomatik ilerler.',
 
@@ -479,8 +485,8 @@ return [
     'usage.biggest_suffix' => '(en büyük)',
     'usage.budget' => 'Bütçe',
     'usage.no_cap_set' => 'sınır ayarlı değil',
-    'usage.no_cap_body_1' => 'Aylık bütçe sınırı ayarlı değil, bu yüzden çalışmalar maliyet nedeniyle hiç engellenmez. Ön-uçuş bütçe kapısını etkinleştirmek için şuradan bir sınır ayarlayın:',
-    'usage.no_cap_body_2' => '.',
+    'usage.no_cap_body_1' => 'Aylık bütçe sınırı ayarlı değil, bu yüzden çalışmalar maliyet nedeniyle hiç engellenmez. Şuradan bir sınır ayarlayın:',
+    'usage.no_cap_body_2' => ' — böylece sınırı aşacak bir çalışma, başlamadan durdurulur.',
     'usage.bar_aria' => '{cap} sınırının {spent} kadarı kullanıldı',
     'usage.spent' => 'harcanan',
     'usage.cap_word' => 'sınır',
@@ -676,8 +682,11 @@ return [
     'acct.followers' => 'takipçi',
     'acct.growth_today' => 'bugün +{n}',
     'acct.sample' => 'örnek',
-    'acct.sample_note' => 'Etkileşim ve takipçi rakamları örnek veridir — gerçek metrikler hesap canlıya alındığında görünür.',
-    'acct.video_aria' => '{handle} için son video önizlemesi',
+    'acct.sample_note' => '“Örnek” işaretli her rakam temsilidir, ölçüm değildir. İşaretsiz takipçi sayısı bağlı hesaptan gelir; gerçek gönderi bazlı etkileşim, hesap bunu raporlamaya başlayınca görünür.',
+    // role="img" kutucuğu ekran okuyucu için yaprak yapar → içindeki "örnek" çipi
+    // düşer; erişilebilir ad bu dürüstlüğü kendisi taşımalı ve var olmayan bir
+    // videoyu iddia etmemeli.
+    'acct.video_aria' => '{handle} için örnek önizleme — henüz video yok',
     'acct.likes_aria' => 'beğeni',
     'acct.comments_aria' => 'yorum',
     'acct.shares_aria' => 'paylaşım',

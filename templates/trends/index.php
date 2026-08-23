@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Kuyash\Core\Messages;
 use Kuyash\Core\View;
 use Kuyash\Trend\TrendFeed;
 
@@ -36,9 +37,10 @@ use Kuyash\Trend\TrendFeed;
   <div class="card__head"><h2><?= View::t('trends.niche_word') ?></h2>
     <span class="card__action">
       <?php if ($feed->fetchedAt !== null): ?>
-      <span class="chip chip--<?= $feed->freshness === TrendFeed::FRESH ? 'ok' : 'warn' ?>">
+      <span class="chip chip--<?= $feed->freshness === TrendFeed::FRESH ? 'ok' : 'warn' ?>"
+            title="<?= View::e((string) $feed->fetchedAt) ?>">
         <span class="dot"></span><?= $feed->freshness === TrendFeed::FRESH ? View::t('trends.fresh') : View::t('trends.stale') ?>
-        · <?= View::e((string) $feed->fetchedAt) ?>
+        · <?= View::e(Messages::since((string) $feed->fetchedAt)) ?>
       </span>
       <?php endif; ?>
     </span>

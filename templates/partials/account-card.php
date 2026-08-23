@@ -9,14 +9,24 @@ use Kuyash\Core\View;
  * Account live-stream card (Phase 21 §1). The signature connected-account widget,
  * used on the dashboard ("Connected accounts") and /accounts.
  *
- * REAL data: handle, platform, health, status (and, in manage mode, published-today
- * + the default-reference control). SAMPLE data: the video tile, engagement counts
- * and follower/growth figures — there is no per-account metrics source yet
- * (Cockpit deliberately refuses to fabricate them). They are computed DETERMINISTICALLY
- * from the account so the screen reads like a real product, and are clearly marked
- * "sample" on the card + a section note. The visual tile is a styled gradient
- * preview (ken-burns, transform-only) — never a claim of a real, playable video,
- * and it points at no file, so the media-free visual gate stays 404-free.
+ * REAL data: handle, platform, health, status, the follower count once the
+ * provider has reported one (accounts.followers_count, filled by sync + the daily
+ * snapshot chore), and in manage mode published-today + the default-reference
+ * control.
+ *
+ * SAMPLE data: the video tile, the engagement counts, and the follower/growth
+ * figures ONLY while no real audience number exists. The provider exposes no
+ * per-post engagement yet (its analytics post list comes back empty), so those
+ * counts stay deterministic stand-ins derived from the account — stable across
+ * reloads, and marked "sample" wherever they appear.
+ *
+ * THE RULE THIS FILE ENFORCES: every fabricated number carries the sample chip;
+ * a number without the chip came from the provider. A real follower count is
+ * therefore shown bare, and the sample growth line is hidden next to it rather
+ * than sitting unlabelled beside a real figure (real growth needs two days of
+ * snapshots — a later phase). The visual tile is a styled gradient preview
+ * (ken-burns, transform-only) — never a claim of a real, playable video, and it
+ * points at no file, so the media-free visual gate stays 404-free.
  *
  * @var array<string, mixed> $account  id, platform, handle, health, status, …
  * @var bool                  $manage   true on /accounts → render the management footer
@@ -39,7 +49,10 @@ $seed = crc32($platform . '|' . $handle . '|' . (string) ($account['id'] ?? 0));
 $pick = static fn (int $salt, int $min, int $max): int
     => $min + (int) ((($seed >> ($salt % 16)) ^ ($salt * 2_654_435_761)) % max(1, $max - $min + 1));
 
-$followers = $pick(1, 1_200, 96_000);
+// REAL audience when the provider reported one; the stand-in only fills the gap.
+$realFollowers = ($account['followers_count'] ?? null) === null ? null : (int) $account['followers_count'];
+$followersAreReal = $realFollowers !== null;
+$followers = $realFollowers ?? $pick(1, 1_200, 96_000);
 $likes = $pick(3, 350, 12_000);
 $comments = $pick(5, 6, 480);
 $shares = $pick(7, 18, 3_200);
@@ -104,8 +117,17 @@ $statusTone = ['connected' => 'ok', 'reauth_needed' => 'err'][$status] ?? 'neutr
     </div>
   </div>
   <div class="acc-card__foot">
-    <span class="acc-card__who"><?= View::e($handle) ?> · <span class="num"><?= View::e($fmt($followers)) ?></span> <?= View::t('acct.followers') ?></span>
+    <?php /* the handle already headlines the tile above; repeating it here ate the
+             row and truncated the number itself ("· 3...." — 3.6K or 3M?). The
+             figure is the point of this line, so it gets the space. */ ?>
+    <span class="acc-card__who"><span class="num"><?= View::e($fmt($followers)) ?></span> <?= View::t('acct.followers') ?></span>
+    <?php if (!$followersAreReal): ?>
+    <?php /* the chip MUST live outside __who: that span truncates with an
+             ellipsis, which would silently swallow the honesty marker and leave
+             a fabricated number looking measured */ ?>
+    <span class="acc-card__sample acc-card__sample--foot chip"><?= View::t('acct.sample') ?></span>
     <span class="acc-card__grow num"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 14l7-7 7 7"/></svg> <?= View::t('acct.growth_today', ['n' => (int) $growth]) ?></span>
+    <?php endif; ?>
   </div>
   <div class="acc-card__status">
     <span class="chip chip--<?= $healthTone ?>"><span class="dot dot--<?= $healthTone ?>"></span><?= View::t($healthKey) ?></span>

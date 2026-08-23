@@ -155,34 +155,51 @@ final class AccountsController
     }
 
     /**
-     * Reconcile every local account's external_ref with the provider's REAL
-     * account id (GET /accounts), matched by platform + normalized username. Fixes
-     * a stale/placeholder ref so publish() sends a valid accountId. @param array<string, string> $params
+     * Reconcile every local account against the provider, matched by platform +
+     * normalized username. Fixes a stale/placeholder external_ref so publish()
+     * sends a valid accountId, and stores the REAL audience number in the same
+     * pass (the read also carries followers, so this stays one round trip).
+     *
+     * A follower count the provider does not report leaves the stored value
+     * untouched — never overwritten with a zero. @param array<string, string> $params
      */
     public function sync(array $params = []): Response
     {
         $now = gmdate('Y-m-d\TH:i:s\Z');
         try {
-            $remote = $this->publisher->accounts();
+            $remote = $this->publisher->accountMetrics();
         } catch (PublishProviderException) {
             return $this->back('error', 'account.sync_failed');
         }
 
-        // {platform}|{normalized username} → real provider account id
+        // {platform}|{normalized username} → real provider account id + audience
         $map = [];
         foreach ($remote as $a) {
             $ref = (string) ($a['external_ref'] ?? '');
             if ($ref === '') {
                 continue;
             }
-            $map[(string) ($a['platform'] ?? '') . '|' . $this->normalizeHandle((string) ($a['username'] ?? ''))] = $ref;
+            $key = (string) ($a['platform'] ?? '') . '|' . $this->normalizeHandle((string) ($a['username'] ?? ''));
+            $map[$key] = [
+                'ref' => $ref,
+                'followers' => is_int($a['followers'] ?? null) ? $a['followers'] : null,
+            ];
         }
 
         $updated = 0;
         foreach ($this->accounts->listFor($this->workspace) as $acct) {
             $key = (string) $acct['platform'] . '|' . $this->normalizeHandle((string) $acct['handle']);
-            $ref = $map[$key] ?? null;
-            if ($ref !== null && $this->accounts->setExternalRef($this->workspace, (int) $acct['id'], $ref, $now)) {
+            $match = $map[$key] ?? null;
+            if ($match === null) {
+                continue;
+            }
+            $changed = $this->accounts->setExternalRef($this->workspace, (int) $acct['id'], $match['ref'], $now);
+            if ($match['followers'] !== null
+                && $this->accounts->setFollowers($this->workspace, (int) $acct['id'], $match['followers'], $now)
+            ) {
+                $changed = true;
+            }
+            if ($changed) {
                 $updated++;
             }
         }

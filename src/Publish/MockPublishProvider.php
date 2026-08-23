@@ -85,6 +85,44 @@ final class MockPublishProvider implements PublishProvider
         return $out;
     }
 
+    /**
+     * Deterministic mock audience + per-post engagement (no network). Exercises
+     * the FULL metrics path — follower AND per-post engagement — so the snapshot
+     * chore and its storage are covered offline. Values are a pure function of
+     * the account, so re-running produces identical rows.
+     *
+     * @return list<array{external_ref: string, platform: string, username: string, followers: int|null, has_analytics: bool, posts: list<array{external_post_id: string, views: int|null, likes: int|null, comments: int|null, shares: int|null}>, raw: array<string, mixed>}>
+     */
+    public function accountMetrics(?string $platform = null, ?string $from = null, ?string $to = null): array
+    {
+        $out = [];
+        foreach ($this->accounts($platform) as $a) {
+            $seed = crc32('mockmetrics|' . $a['external_ref']);
+            $posts = [];
+            for ($i = 0; $i < 3; $i++) {
+                $s = crc32('mockpost|' . $a['external_ref'] . '|' . $i);
+                $posts[] = [
+                    'external_post_id' => 'zp_' . substr(hash('sha256', $a['external_ref'] . '|' . $i), 0, 16),
+                    'views' => 400 + ($s % 9_600),
+                    'likes' => 20 + (($s >> 4) % 900),
+                    'comments' => 1 + (($s >> 8) % 120),
+                    'shares' => ($s >> 12) % 240,
+                ];
+            }
+            $out[] = [
+                'external_ref' => $a['external_ref'],
+                'platform' => $a['platform'],
+                'username' => $a['username'],
+                'followers' => 900 + ($seed % 24_000),
+                'has_analytics' => true,
+                'posts' => $posts,
+                'raw' => ['source' => 'mock', 'window' => ['from' => $from, 'to' => $to]],
+            ];
+        }
+
+        return $out;
+    }
+
     public function status(string $externalPostId): PublishOutcome
     {
         // an accepted post converges to live on poll (the lost-webhook path);

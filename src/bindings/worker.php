@@ -8,10 +8,12 @@ declare(strict_types=1);
  * claimed job row (workspace_id re-applied in every write).
  */
 
+use Kuyash\Analytics\DailySnapshot;
 use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Database;
 use Kuyash\Core\ErrorHandler;
+use Kuyash\Publish\PublishProvider;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\ExecutorRegistry;
@@ -35,6 +37,13 @@ return static function (Container $container, string $basePath): void {
     $container->bind(Maintenance::class, static fn (Container $c): Maintenance => new Maintenance(
         $c->get(Database::class),
         (string) $c->get(Config::class)->get('library.storage_root'),
+    ));
+
+    // read-only audience/engagement poll — zero spend, at most one row per
+    // account per UTC day (see DailySnapshot)
+    $container->bind(DailySnapshot::class, static fn (Container $c): DailySnapshot => new DailySnapshot(
+        $c->get(Database::class),
+        $c->get(PublishProvider::class),
     ));
 
     // opaque id: pid + nonce — hostnames would leak into the tenant-visible

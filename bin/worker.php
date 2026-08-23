@@ -18,6 +18,7 @@ declare(strict_types=1);
  * a killed worker's stale job is requeued by the watchdog anyway.
  */
 
+use Kuyash\Analytics\DailySnapshot;
 use Kuyash\Core\ErrorHandler;
 use Kuyash\Publish\Reconciler;
 use Kuyash\Publish\WebhookInbox;
@@ -66,6 +67,8 @@ $maintenance = $container->get(Maintenance::class);
 $webhookInbox = $container->get(WebhookInbox::class);
 /** @var Reconciler $reconciler */
 $reconciler = $container->get(Reconciler::class);
+/** @var DailySnapshot $snapshot */
+$snapshot = $container->get(DailySnapshot::class);
 /** @var Kuyash\Workflow\WorkerHeartbeat $heartbeat */
 $heartbeat = $container->get(Kuyash\Workflow\WorkerHeartbeat::class);
 
@@ -74,6 +77,9 @@ $chores = $maintenance->run(gmdate('Y-m-d\TH:i:s\Z'));
 // pending webhooks and reconciles stale in-flight posts
 $webhookInbox->processPending(gmdate('Y-m-d\TH:i:s\Z'));
 $reconciler->sweep(gmdate('Y-m-d\TH:i:s\Z'));
+// read-only metrics poll; self-limits to one row per account per UTC day, so
+// running it on every start (and on the chore cadence) costs one cheap query
+$snapshot->capture(gmdate('Y-m-d\TH:i:s\Z'));
 $heartbeat->beat(gmdate('Y-m-d\TH:i:s\Z')); // mark alive immediately on start
 fwrite(STDOUT, sprintf(
     "worker: started (maintenance: %d login rows pruned, %d orphan files swept)\n",
@@ -99,6 +105,9 @@ while (!$stop) {
         // reconcile in-flight publishes whose webhook never arrived (15-min
         // staleness threshold, so a 5-min sweep cadence is ample)
         $reconciler->sweep(gmdate('Y-m-d\TH:i:s\Z'));
+        // daily audience/engagement snapshot: the UNIQUE(day) guard makes this
+        // a no-op query for the rest of the day once today's row exists
+        $snapshot->capture(gmdate('Y-m-d\TH:i:s\Z'));
         $lastChores = time();
     }
 

@@ -69,11 +69,42 @@ final class AccountRepository
     }
 
     /**
-     * Create an account from a completed (mock) connect flow. Returns the new id.
-     * external_ref is the Zernio account reference — NOT a token.
+     * Attach an account from a completed connect flow. Returns its id.
+     *
+     * IDEMPOTENT per (workspace, platform, handle): re-connecting an account
+     * Kuyash already knows REVIVES that row instead of appending a second one.
+     * The blind INSERT this replaced is what produced stale duplicate cards —
+     * disconnect() only flips status, so every reconnect used to fork a new row.
+     * Handles are matched the way sync() matches them (case- and @-insensitive),
+     * and migration 0015 adds the matching UNIQUE index as a backstop.
+     *
+     * external_ref is the provider account reference — NOT a token.
      */
     public function connect(WorkspaceContext $ctx, string $platform, string $handle, string $externalRef, string $now): int
     {
+        $existing = $this->db->one(
+            "SELECT id FROM accounts
+             WHERE workspace_id = ? AND platform = ?
+               AND lower(ltrim(handle, '@')) = lower(ltrim(?, '@'))
+             ORDER BY (status = 'connected') DESC, id DESC
+             LIMIT 1",
+            [$ctx->id(), $platform, $handle],
+        );
+
+        if ($existing !== null) {
+            $id = (int) $existing['id'];
+            // refresh the display handle too: the operator may have reconnected
+            // as '@Ai.Neeidy' where we stored 'ai.neeidy'
+            $this->db->run(
+                "UPDATE accounts SET status = 'connected', health = 'ok', external_ref = ?, handle = ?,
+                    connected_at = ?, updated_at = ?
+                 WHERE id = ? AND workspace_id = ?",
+                [$externalRef, $handle, $now, $now, $id, $ctx->id()],
+            );
+
+            return $id;
+        }
+
         $this->db->run(
             "INSERT INTO accounts (workspace_id, platform, handle, external_ref, status, health,
                 connected_at, created_at, updated_at)
@@ -95,6 +126,23 @@ final class AccountRepository
             'UPDATE accounts SET external_ref = ?, updated_at = ?
              WHERE id = ? AND workspace_id = ? AND external_ref != ?',
             [$externalRef, $now, $id, $ctx->id(), $externalRef],
+        )->rowCount() > 0;
+    }
+
+    /**
+     * Store the REAL audience number reported by the provider (sync + the daily
+     * snapshot chore both call this). Tenant-scoped; true when the value changed.
+     * A provider that does not report a follower count leaves the column NULL —
+     * the card then renders its honest "no audience data" state instead of a
+     * fabricated figure.
+     */
+    public function setFollowers(WorkspaceContext $ctx, int $id, int $followers, string $now): bool
+    {
+        return $this->db->run(
+            'UPDATE accounts SET followers_count = ?, followers_synced_at = ?, updated_at = ?
+             WHERE id = ? AND workspace_id = ?
+               AND (followers_count IS NULL OR followers_count != ?)',
+            [$followers, $now, $now, $id, $ctx->id(), $followers],
         )->rowCount() > 0;
     }
 
@@ -163,6 +211,11 @@ final class AccountRepository
         $row['default_reference_asset_id'] = $row['default_reference_asset_id'] === null
             ? null
             : (int) $row['default_reference_asset_id'];
+        // NULL stays NULL: "the provider never reported an audience", which the
+        // UI must show as an honest gap rather than 0 followers.
+        $row['followers_count'] = ($row['followers_count'] ?? null) === null
+            ? null
+            : (int) $row['followers_count'];
 
         return $row;
     }
