@@ -686,6 +686,7 @@ return [
     'acct.followers' => 'followers',
     'acct.growth_today' => '+{n} today',
     'acct.sample' => 'sample',
+    'acct.no_metrics' => 'no data yet',
     'acct.sample_note' => 'Every figure marked “sample” is a stand-in, not a measurement. Follower counts without that mark come from the connected account; real per-post engagement appears once the account reports it.',
     // role="img" makes the tile a leaf for assistive tech, so the visual "sample"
     // chip inside it is dropped — the accessible name must carry that honesty

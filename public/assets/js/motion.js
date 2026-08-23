@@ -39,8 +39,20 @@
       pill.style.height = el.offsetHeight + 'px';
       pill.style.transform = 'translateY(' + el.offsetTop + 'px)';
     }
+    /* Place the pill on the active item BEFORE transitions are armed. On a
+       multi-page app every click is a document load, so this startup placement
+       runs on every screen — if a transform transition were already active the
+       pill would slide down from the top each time (the reported "rebound").
+       Reading offsetHeight forces a style/layout flush, committing the position
+       as the resting value; .is-ready then arms the transition for hover.
+
+       Done synchronously, NOT in requestAnimationFrame: rAF is suspended while a
+       tab is hidden, so a page opened in a background tab never reached .is-ready
+       and the pill stayed at opacity 0 — the highlight was simply missing until
+       the tab was focused. Nothing here needs to wait for a frame. */
     moveTo(activeItem());
-    requestAnimationFrame(function () { pill.classList.add('is-ready'); });
+    void pill.offsetHeight;
+    pill.classList.add('is-ready');
 
     items.forEach(function (a) {
       a.addEventListener('mouseenter', function () { moveTo(a); });

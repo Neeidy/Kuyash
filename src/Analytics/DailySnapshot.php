@@ -126,8 +126,13 @@ final class DailySnapshot
                 $written++;
             }
 
-            // hot value the account cards read; tenant-scoped like every write here
-            if ($followers !== null) {
+            // Hot value the account cards read; tenant-scoped like every write here.
+            // NEVER written from a mock provider: the UI treats a stored follower
+            // count as a real measurement (it renders unmarked), so a deterministic
+            // stand-in must not be able to reach it. The snapshot row above is still
+            // written — tagged with the provider name — so the chore stays idempotent
+            // and the mock run leaves an honest audit trail.
+            if ($followers !== null && $provider !== 'mock') {
                 $this->db->run(
                     'UPDATE accounts SET followers_count = ?, followers_synced_at = ?, updated_at = ?
                      WHERE id = ? AND workspace_id = ?',

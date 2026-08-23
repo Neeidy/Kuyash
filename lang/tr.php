@@ -682,6 +682,7 @@ return [
     'acct.followers' => 'takipçi',
     'acct.growth_today' => 'bugün +{n}',
     'acct.sample' => 'örnek',
+    'acct.no_metrics' => 'henüz veri yok',
     'acct.sample_note' => '“Örnek” işaretli her rakam temsilidir, ölçüm değildir. İşaretsiz takipçi sayısı bağlı hesaptan gelir; gerçek gönderi bazlı etkileşim, hesap bunu raporlamaya başlayınca görünür.',
     // role="img" kutucuğu ekran okuyucu için yaprak yapar → içindeki "örnek" çipi
     // düşer; erişilebilir ad bu dürüstlüğü kendisi taşımalı ve var olmayan bir

@@ -172,6 +172,11 @@ final class AccountsController
             return $this->back('error', 'account.sync_failed');
         }
 
+        // A mock provider's audience is a deterministic stand-in, and the card
+        // renders a stored follower count unmarked (i.e. as measured) — so only a
+        // real provider's number may be persisted. Refs still reconcile either way.
+        $audienceIsReal = $this->publisher->name() !== 'mock';
+
         // {platform}|{normalized username} → real provider account id + audience
         $map = [];
         foreach ($remote as $a) {
@@ -194,7 +199,7 @@ final class AccountsController
                 continue;
             }
             $changed = $this->accounts->setExternalRef($this->workspace, (int) $acct['id'], $match['ref'], $now);
-            if ($match['followers'] !== null
+            if ($audienceIsReal && $match['followers'] !== null
                 && $this->accounts->setFollowers($this->workspace, (int) $acct['id'], $match['followers'], $now)
             ) {
                 $changed = true;

@@ -49,14 +49,46 @@ $seed = crc32($platform . '|' . $handle . '|' . (string) ($account['id'] ?? 0));
 $pick = static fn (int $salt, int $min, int $max): int
     => $min + (int) ((($seed >> ($salt % 16)) ^ ($salt * 2_654_435_761)) % max(1, $max - $min + 1));
 
-// REAL audience when the provider reported one; the stand-in only fills the gap.
-$realFollowers = ($account['followers_count'] ?? null) === null ? null : (int) $account['followers_count'];
-$followersAreReal = $realFollowers !== null;
-$followers = $realFollowers ?? $pick(1, 1_200, 96_000);
-$likes = $pick(3, 350, 12_000);
-$comments = $pick(5, 6, 480);
-$shares = $pick(7, 18, 3_200);
+// Is this account BACKED BY THE PROVIDER? A follower count only exists here
+// after sync/the snapshot chore read it from the live account, so it is the
+// signal that this row describes a genuine connected channel rather than demo
+// seed data. It governs the whole card: a provider-backed account NEVER shows a
+// fabricated figure — not even a chipped one — because a stand-in sitting on a
+// real channel misrepresents that channel. Missing data reads as "no data yet".
+// Demo/seed accounts keep the deterministic stand-ins, clearly chipped, so the
+// screens stay populated without pretending.
+$metric = static fn (string $key): ?int => ($account[$key] ?? null) === null ? null : (int) $account[$key];
+
+$realFollowers = $metric('followers_count');
+
+// A mock provider fabricates its own figures, so a snapshot it produced is NOT a
+// measurement — treat such a card as demo data, or the stand-ins would render
+// unmarked (worse than chipping them). Real providers tag their own name.
+$mockSourced = ($account['metric_provider'] ?? null) === 'mock';
+
+// Any real signal counts, not just followers: the provider fills followersCount
+// asynchronously, so engagement can land first. Keying only on followers would
+// drop such an account into the demo branch and paint fabricated engagement OVER
+// real measured data — the exact inversion of this rule.
+$providerBacked = !$mockSourced && (
+    $realFollowers !== null
+    || ($account['metric_date'] ?? null) !== null
+    || $metric('metric_likes') !== null
+    || $metric('metric_comments') !== null
+    || $metric('metric_shares') !== null
+    || $metric('metric_views') !== null
+);
+$followersAreReal = $providerBacked && $realFollowers !== null;
+
+// On a provider-backed card a missing follower count is a dash, NOT a stand-in:
+// once an account is known to be real, nothing on it may be invented.
+$followers = $providerBacked ? $realFollowers : $pick(1, 1_200, 96_000);
+$likes = $providerBacked ? $metric('metric_likes') : $pick(3, 350, 12_000);
+$comments = $providerBacked ? $metric('metric_comments') : $pick(5, 6, 480);
+$shares = $providerBacked ? $metric('metric_shares') : $pick(7, 18, 3_200);
 $growth = $pick(9, 4, 90);
+// engagement is "reported" only when the provider actually returned a number
+$engagementReported = $providerBacked && ($likes !== null || $comments !== null || $shares !== null);
 
 // Compact 1.5K / 1.2M humanizer.
 $fmt = static function (int $n): string {
@@ -68,6 +100,9 @@ $fmt = static function (int $n): string {
     }
     return (string) $n;
 };
+
+// An unreported metric is a dash — never a 0, never a stand-in.
+$show = static fn (?int $n): string => $n === null ? '—' : $fmt($n);
 
 // Curated dark, cinematic gradients (match the v3 look) — chosen by seed, never muddy.
 $gradients = [
@@ -101,27 +136,35 @@ $statusTone = ['connected' => 'ok', 'reauth_needed' => 'err'][$status] ?? 'neutr
       <span class="acc-card__plat"><?= View::e(Messages::platform($platform)) ?></span>
     </div>
     <div class="acc-card__eng">
-      <span class="acc-eng acc-eng--heart" aria-label="<?= (int) $likes ?> <?= View::t('acct.likes_aria') ?>">
+      <span class="acc-eng acc-eng--heart" aria-label="<?= View::e($show($likes)) ?> <?= View::t('acct.likes_aria') ?>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 8c0-2.5-2-4-4-4-1.5 0-3 1-4 2.5C11 5 9.5 4 8 4 6 4 4 5.5 4 8c0 4 8 9 8 9s8-5 8-9z"/></svg>
-        <span class="num"><?= View::e($fmt($likes)) ?></span>
+        <span class="num"><?= View::e($show($likes)) ?></span>
       </span>
-      <span class="acc-eng" aria-label="<?= (int) $comments ?> <?= View::t('acct.comments_aria') ?>">
+      <span class="acc-eng" aria-label="<?= View::e($show($comments)) ?> <?= View::t('acct.comments_aria') ?>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8 8 0 01-12 7L3 20l1.5-6A8 8 0 1121 11.5z"/></svg>
-        <span class="num"><?= View::e($fmt($comments)) ?></span>
+        <span class="num"><?= View::e($show($comments)) ?></span>
       </span>
-      <span class="acc-eng" aria-label="<?= (int) $shares ?> <?= View::t('acct.shares_aria') ?>">
+      <span class="acc-eng" aria-label="<?= View::e($show($shares)) ?> <?= View::t('acct.shares_aria') ?>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12l16-8-6 16-3-7-7-1z"/></svg>
-        <span class="num"><?= View::e($fmt($shares)) ?></span>
+        <span class="num"><?= View::e($show($shares)) ?></span>
       </span>
+      <?php /* Exactly one of these can appear. A demo account is chipped
+               "sample"; a provider-backed account with nothing reported yet says
+               so plainly. A provider-backed account WITH real numbers gets no
+               badge at all — an unmarked number means a measured number. */ ?>
+      <?php if (!$providerBacked): ?>
       <span class="acc-card__sample chip"><?= View::t('acct.sample') ?></span>
+      <?php elseif (!$engagementReported): ?>
+      <span class="acc-card__sample acc-card__sample--empty chip"><?= View::t('acct.no_metrics') ?></span>
+      <?php endif; ?>
     </div>
   </div>
   <div class="acc-card__foot">
     <?php /* the handle already headlines the tile above; repeating it here ate the
              row and truncated the number itself ("· 3...." — 3.6K or 3M?). The
              figure is the point of this line, so it gets the space. */ ?>
-    <span class="acc-card__who"><span class="num"><?= View::e($fmt($followers)) ?></span> <?= View::t('acct.followers') ?></span>
-    <?php if (!$followersAreReal): ?>
+    <span class="acc-card__who"><span class="num"><?= View::e($show($followers)) ?></span> <?= View::t('acct.followers') ?></span>
+    <?php if (!$providerBacked): ?>
     <?php /* the chip MUST live outside __who: that span truncates with an
              ellipsis, which would silently swallow the honesty marker and leave
              a fabricated number looking measured */ ?>

@@ -35,9 +35,23 @@ final class AccountRepository
         return array_map(self::shape(...), $this->db->all(
             // defense-in-depth: the reference-title JOIN is also workspace-scoped,
             // so a stray asset id can never surface another tenant's title.
-            'SELECT a.*, asset.title AS reference_title
+            // The metrics JOIN takes the newest snapshot for this account; every
+            // column it exposes may be NULL, which the card renders as an honest
+            // "no data yet" rather than substituting a made-up figure.
+            'SELECT a.*, asset.title AS reference_title,
+                    m.views AS metric_views, m.likes AS metric_likes,
+                    m.comments AS metric_comments, m.shares AS metric_shares,
+                    m.snapshot_date AS metric_date,
+                    -- WHICH provider produced the snapshot: the card may only
+                    -- present a figure as measured when it came from a real one
+                    m.provider AS metric_provider
              FROM accounts a
              LEFT JOIN assets asset ON asset.id = a.default_reference_asset_id AND asset.workspace_id = a.workspace_id
+             LEFT JOIN account_metrics m ON m.id = (
+                 SELECT id FROM account_metrics
+                 WHERE account_id = a.id AND workspace_id = a.workspace_id
+                 ORDER BY snapshot_date DESC, id DESC LIMIT 1
+             )
              WHERE a.workspace_id = ?
              ORDER BY a.id DESC LIMIT ' . max(1, min(200, $limit)),
             [$ctx->id()],
@@ -212,10 +226,11 @@ final class AccountRepository
             ? null
             : (int) $row['default_reference_asset_id'];
         // NULL stays NULL: "the provider never reported an audience", which the
-        // UI must show as an honest gap rather than 0 followers.
-        $row['followers_count'] = ($row['followers_count'] ?? null) === null
-            ? null
-            : (int) $row['followers_count'];
+        // UI must show as an honest gap rather than 0 followers. The same holds
+        // for every engagement metric carried by the latest snapshot.
+        foreach (['followers_count', 'metric_views', 'metric_likes', 'metric_comments', 'metric_shares'] as $numeric) {
+            $row[$numeric] = ($row[$numeric] ?? null) === null ? null : (int) $row[$numeric];
+        }
 
         return $row;
     }

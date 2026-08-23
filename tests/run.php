@@ -7157,7 +7157,7 @@ $p22Sample = $p22View->render('partials/account-card', [
 ]);
 check('p22/card: a REAL follower count renders bare — no "sample" chip beside it',
     str_contains($p22Real, '>7</span> ' . View::t('acct.followers'))
-    && substr_count($p22Real, 'acc-card__sample') === 1);   // only the engagement strip keeps the chip
+    && substr_count($p22Real, 'acc-card__sample chip') === 0);   // no stand-in badge anywhere on a real account
 check('p22/card: a stand-in follower count is CHIPPED as sample (every fabricated number is marked)',
     substr_count($p22Sample, 'acc-card__sample chip') === 1        // engagement strip
     && substr_count($p22Sample, 'acc-card__sample--foot') === 1    // the follower marker
@@ -7181,8 +7181,133 @@ check('p22/card: the footer chip is a flex sibling, not clipped content (CSS bac
     preg_match('/\.acc-card__sample--foot\s*\{[^}]*flex:\s*none/s', (string) file_get_contents($basePath . '/public/assets/css/app.css')) === 1);
 check('p22/card: the sample growth line is hidden next to a real audience (no unlabelled fake beside a fact)',
     !str_contains($p22Real, 'acc-card__grow') && str_contains($p22Sample, 'acc-card__grow'));
-check('p22/card: per-post engagement is STILL sample-framed (the provider reports none yet)',
-    str_contains($p22Real, 'acc-card__eng') && str_contains($p22Real, View::t('acct.sample')));
+// INVERTED in the fix round: this used to assert that a real account still showed
+// sample-framed engagement. That is now exactly what must NOT happen — and the old
+// assertion only passed because the class "acc-card__sample--empty" contains the
+// substring "sample", so it would have kept passing if a real chip came back.
+check('p22/card: a provider-backed card carries NO stand-in engagement chip at all',
+    str_contains($p22Real, 'acc-card__eng')
+    && !str_contains($p22Real, 'acc-card__sample chip')
+    && str_contains($p22Real, View::t('acct.no_metrics')));
+// A REAL, connected channel must never carry an invented engagement figure —
+// not even a chipped one. A stand-in sitting on a genuine account misrepresents
+// that account; the honest render is a dash plus "no data yet".
+$p22RealCard = static fn (array $extra = []): string => (new View($basePath . '/templates'))->render('partials/account-card', [
+    'account' => array_merge([
+        'id' => 7, 'platform' => 'instagram', 'handle' => '@ai.neeidy',
+        'health' => 'ok', 'status' => 'connected', 'followers_count' => 7,
+    ], $extra),
+    'manage' => false,
+]);
+
+$p22NoMetrics = $p22RealCard();
+check('p22/compliance: a provider-backed account shows NO fabricated engagement — dashes, not stand-ins',
+    substr_count($p22NoMetrics, '>—</span>') === 3
+    && str_contains($p22NoMetrics, View::t('acct.no_metrics'))
+    && !str_contains($p22NoMetrics, 'acc-card__sample chip'));
+check('p22/compliance: the fabricated engagement numbers are absent from a real account\'s markup',
+    (static function () use ($p22NoMetrics): bool {
+        // the deterministic stand-ins for this seed must not appear anywhere
+        foreach (['9.5K', '1.9K', '298'] as $standIn) {
+            if (str_contains($p22NoMetrics, '>' . $standIn . '</span>')) {
+                return false;
+            }
+        }
+
+        return true;
+    })());
+check('p22/compliance: real reported engagement renders as a plain number with NO badge at all',
+    (static function () use ($p22RealCard): bool {
+        $html = $p22RealCard(['metric_likes' => 12, 'metric_comments' => 3, 'metric_shares' => 0]);
+
+        return str_contains($html, '>12</span>') && str_contains($html, '>3</span>')
+            && !str_contains($html, View::t('acct.no_metrics'))
+            && !str_contains($html, 'acc-card__sample chip');   // unmarked == measured
+    })());
+check('p22/compliance: a demo (non-provider) account KEEPS its chipped stand-ins — screens stay populated',
+    substr_count($p22Sample, 'acc-card__sample chip') === 1
+    && !str_contains($p22Sample, View::t('acct.no_metrics'))
+    && substr_count($p22Sample, '>—</span>') === 0);
+// A mock provider invents its figures. If those reach the card unmarked they read
+// as measurements — which would be WORSE than the chipped stand-ins this round
+// replaced, and it is the DEFAULT state of a fresh install (ZERNIO_MOCK=true).
+check('p22/compliance: a mock-sourced snapshot is treated as demo data, never as a measurement',
+    (static function () use ($p22RealCard): bool {
+        $html = $p22RealCard(['metric_provider' => 'mock', 'metric_date' => '2026-08-23',
+            'metric_likes' => 4242, 'followers_count' => 31337]);
+
+        return str_contains($html, 'acc-card__sample chip')      // chipped as a stand-in
+            && !str_contains($html, '>4242</span>')              // the invented number is not shown as fact
+            && !str_contains($html, View::t('acct.no_metrics'));
+    })());
+check('p22/compliance: a mock provider never writes the audience field the UI renders unmarked',
+    (static function () use ($basePath, $argonHash): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'mocksrc@x.com', $argonHash, 'MockSrcWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $repo = new AccountRepository($db);
+        $mock = new \Kuyash\Publish\MockPublishProvider();
+        $ref = $mock->accounts('instagram')[0]['external_ref'];
+        $repo->connect($ctx, 'instagram', '@demo_instagram', $ref, '2026-08-22T10:00:00Z');
+
+        (new \Kuyash\Analytics\DailySnapshot($db, $mock))->capture('2026-08-22T10:00:00Z');
+
+        $row = $db->one('SELECT provider FROM account_metrics');
+        $acct = $repo->listFor($ctx)[0];
+
+        return $row['provider'] === 'mock'                  // audit trail kept
+            && $acct['followers_count'] === null            // but the "measured" field stays empty
+            && $acct['metric_provider'] === 'mock';         // and the card can tell
+    })());
+// The provider fills followersCount asynchronously, so engagement can arrive
+// first. Keying "is this real?" on followers alone would drop such an account
+// into the demo branch and paint fabricated engagement OVER measured data.
+check('p22/compliance: engagement arriving BEFORE a follower count still counts as a real account',
+    (static function () use ($p22RealCard): bool {
+        $html = $p22RealCard(['followers_count' => null, 'metric_provider' => 'zernio',
+            'metric_date' => '2026-08-23', 'metric_likes' => 12]);
+
+        return str_contains($html, '>12</span>')                 // the measured number is shown
+            && !str_contains($html, 'acc-card__sample chip')     // and nothing is fabricated over it
+            && str_contains($html, '>—</span>');                 // the missing audience is a dash
+    })());
+check('p22/compliance: a real account with NO audience figure shows a dash, never a stand-in follower count',
+    (static function () use ($p22RealCard): bool {
+        $html = $p22RealCard(['followers_count' => null, 'metric_provider' => 'zernio', 'metric_date' => '2026-08-23']);
+
+        return substr_count($html, '>—</span>') === 4            // 3 engagement + the follower line
+            && !str_contains($html, 'acc-card__grow')            // no invented growth line either
+            && !str_contains($html, 'acc-card__sample chip');
+    })());
+check('p22/repo: the account read carries the newest snapshot metrics, workspace-scoped',
+    (static function () use ($basePath, $argonHash): bool {
+        $db = migratedDb($basePath);
+        [, $ws] = seedUser($db, 'metrics@x.com', $argonHash, 'MetricsWS');
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $repo = new AccountRepository($db);
+        $id = $repo->connect($ctx, 'instagram', '@m', 'REF', gmdate(NOW_ISO));
+        foreach ([['2026-08-21', 1], ['2026-08-23', 99], ['2026-08-22', 50]] as [$day, $likes]) {
+            $db->run(
+                "INSERT INTO account_metrics (workspace_id, account_id, snapshot_date, likes, provider, created_at)
+                 VALUES (?, ?, ?, ?, 'x', ?)",
+                [$ws, $id, $day, $likes, gmdate(NOW_ISO)],
+            );
+        }
+        $row = $repo->find($ctx, $id);
+        $listed = $repo->listFor($ctx)[0];
+
+        // sibling workspace must not see these metrics
+        [, $ws2] = seedUser($db, 'metrics2@x.com', $argonHash, 'MetricsWS2');
+        $ctx2 = new WorkspaceContext($db);
+        $ctx2->set($ws2);
+
+        return $listed['metric_likes'] === 99          // newest snapshot wins
+            && $listed['metric_date'] === '2026-08-23'
+            && $row !== null
+            && $repo->listFor($ctx2) === [];
+    })());
 check('p22/copy: the sample note claims nothing about unmarked figures being fabricated',
     stripos(View::t('acct.sample_note'), 'sample') !== false
     && stripos(View::t('acct.sample_note'), 'connected account') !== false);
@@ -7190,10 +7315,31 @@ check('p22/copy: the sample note claims nothing about unmarked figures being fab
 // ── (5) the nav pill no longer springs back ────────────────────────────────
 
 $p22Css = (string) file_get_contents($basePath . '/public/assets/css/app.css');
-check('p22/ui: the sliding pill eases to its target (no overshoot curve on transform)',
-    preg_match('/\.nav-item__pill\s*\{[^}]*transition:\s*transform\s+var\(--dur-quick\)\s+var\(--ease-out\)/s', $p22Css) === 1);
-check('p22/ui: --spring is NOT used by the pill transition (that curve is what bounced)',
-    preg_match('/\.nav-item__pill\s*\{[^}]*var\(--spring\)/s', $p22Css) !== 1);
+$p22Motion = (string) file_get_contents($basePath . '/public/assets/js/motion.js');
+
+// THE REBOUND, properly diagnosed. Kuyash is multi-page: every nav click reloads
+// the document, the pill is re-created at translateY(0) and JS then moves it to
+// the active item. With a transform transition armed in the BASE state that
+// startup move animates, so the indicator flew down from the top on every click.
+// Measured on /settings before the fix: active offsetTop 351, pill translateY(0),
+// a 250ms transform transition "running" immediately after load. Swapping the
+// easing curve (an earlier attempt) could never fix this — the defect is that the
+// first placement is animated at all.
+check('p22/ui: the pill base state has NO transform transition (first placement must not animate)',
+    preg_match('/\.nav-item__pill\s*\{(?:(?!\}).)*transition:(?:(?!\}).)*transform/s', $p22Css) !== 1);
+check('p22/ui: the transform transition is armed only via .is-ready (so hover still glides)',
+    preg_match('/\.nav-item__pill\.is-ready\s*\{[^}]*transition:\s*transform\s+var\(--dur-quick\)\s+var\(--ease-out\)/s', $p22Css) === 1);
+check('p22/ui: --spring is NOT used by the pill (that curve also overshoots)',
+    preg_match('/\.nav-item__pill[^{]*\{[^}]*var\(--spring\)/s', $p22Css) !== 1);
+check('p22/ui: the initial position is committed with a layout flush before transitions are armed',
+    preg_match('/moveTo\(activeItem\(\)\);\s*(?:\/\*.*?\*\/\s*)?void pill\.offsetHeight;/s', $p22Motion) === 1);
+// rAF is suspended in a hidden tab, so a page opened in a background tab never
+// reached .is-ready and the pill stayed invisible (opacity 0) until focus.
+check('p22/ui: .is-ready is applied synchronously, not inside requestAnimationFrame (hidden tabs suspend rAF)',
+    preg_match('/requestAnimationFrame\(function \(\) \{ pill\.classList\.add\(\x27is-ready\x27\)/s', $p22Motion) !== 1
+    && preg_match('/void pill\.offsetHeight;\s*pill\.classList\.add\(\x27is-ready\x27\);/s', $p22Motion) === 1);
+check('p22/ui: revealing the pill is a state flip, not an opacity transition (would also stall while hidden)',
+    preg_match('/\.nav-item__pill\.is-ready\s*\{[^}]*transition:[^;]*opacity/s', $p22Css) !== 1);
 
 // ── (6) jargon: a machine timestamp never reaches the operator ──────────────
 

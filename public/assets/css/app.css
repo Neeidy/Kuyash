@@ -870,14 +870,28 @@ html.js .sidebar__nav { position: relative; }
   transform: translateY(0);
   /* animate ONLY transform/opacity (§1.2 rule 1): height is set instantly by JS
      while the pill is still invisible (opacity 0), so there is no height animation.
-     EASING: --ease-out, never --spring. The spring curve overshoots (its second
-     control point is 1.56), so the pill shot past the hovered item and sprang
-     back on every move — read as the nav "bouncing back" while browsing tabs.
-     A decelerating curve lands it on target once. */
-  transition: transform var(--dur-quick) var(--ease-out),
-              opacity var(--dur-micro) var(--ease-out);
+
+     NO transform transition in this base state — this is the rebound fix.
+     Kuyash is a multi-page app: clicking a nav item reloads the document, the
+     pill is re-created at translateY(0) (the top item) and JS then moves it to
+     the active item. With a transform transition already armed, that startup
+     move ANIMATES — measured on /settings: active offsetTop 351, pill at
+     translateY(0), a 250ms transform transition "running" right after load. So
+     every click made the indicator fly down from the top again, which is the
+     "jumps back to the start and comes again" the operator reported. Easing was
+     never the cause (an earlier pass swapped --spring for --ease-out and the
+     bounce survived) — the cause is that the FIRST placement is animated at all.
+     Transitions are switched on afterwards, via .is-ready, so hover still glides.
+
+     Opacity is not transitioned either: a transition is suspended while the tab
+     is hidden, which left the pill stuck at opacity 0 on a page opened in a
+     background tab. Revealing it is a state flip, not an animation. */
 }
-.nav-item__pill.is-ready { opacity: 1; }
+.nav-item__pill.is-ready {
+  opacity: 1;
+  /* armed only after the initial position is committed (see motion.js) */
+  transition: transform var(--dur-quick) var(--ease-out);
+}
 /* with the pill present, it (not the static bg/marker) is the highlight */
 html.js .nav-item.is-active { background: transparent; color: var(--accent); }
 html.js .nav-item.is-active .nav-item__marker { background: transparent; }
@@ -1286,6 +1300,10 @@ html:not(.js) .topbar__live { display: none; }
 /* the footer's sample marker sits OUTSIDE __who (which truncates) so an
    unmeasured figure can never lose its label to an ellipsis */
 .acc-card__sample--foot { margin-left: 0; flex: none; }
+/* "no data yet" is NOT a sample marker: it states an honest gap on a real
+   channel, so it must not borrow the stand-in badge's voice */
+.acc-card__sample--empty { text-transform: none; letter-spacing: 0.02em;
+  background: rgba(0,0,0,0.35); border-color: rgba(255,255,255,0.16); color: var(--text-2); }
 .acc-card__grow { display: inline-flex; align-items: center; gap: 4px; flex: none;
   font-size: 12px; font-weight: 600; color: var(--ok); }
 .acc-card__status { display: flex; flex-wrap: wrap; gap: var(--s2); padding: 0 var(--s3) var(--s3); }
