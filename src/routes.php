@@ -121,6 +121,14 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/plan/slots', $protected([PlanController::class, 'addSlot']));
     $router->post('/plan/slots/{id}/remove', $protected([PlanController::class, 'removeSlot']));
     $router->post('/plan/slots/{id}/toggle', $protected([PlanController::class, 'toggleSlot']));
+    // Phase 24 — the plan becomes a CALENDAR: dated cells content can be put on,
+    // plus a mode per publishing time (you fill it / Kuyash fills it). Nothing
+    // here publishes: assigning starts work that still stops at the approval gate.
+    $router->post('/plan/slots/{id}/mode', $protected([PlanController::class, 'setSlotMode']));
+    $router->post('/plan/settings', $protected([PlanController::class, 'savePlanSettings']));
+    $router->post('/plan/pause', $protected([PlanController::class, 'togglePause']));
+    $router->post('/plan/day/{id}/assign', $protected([PlanController::class, 'assign']));
+    $router->post('/plan/day/{id}/clear', $protected([PlanController::class, 'unassign']));
     $router->get('/digest', $protected([DigestController::class, 'index']));
 
     // dev-only: verifies the central error handler (log + generic 500)

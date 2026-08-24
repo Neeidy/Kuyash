@@ -13,7 +13,15 @@ use Kuyash\Core\Config;
 use Kuyash\Core\Container;
 use Kuyash\Core\Database;
 use Kuyash\Core\ErrorHandler;
+use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\OccurrenceMaterializer;
+use Kuyash\Publish\OccurrenceRepository;
+use Kuyash\Publish\PlanRunner;
+use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\PublishProvider;
+use Kuyash\Publish\SlotRepository;
+use Kuyash\Workflow\WorkflowRepository;
+use Kuyash\Workspace\WorkspaceSettings;
 use Kuyash\Workflow\Engine;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\ExecutorRegistry;
@@ -44,6 +52,23 @@ return static function (Container $container, string $basePath): void {
     $container->bind(DailySnapshot::class, static fn (Container $c): DailySnapshot => new DailySnapshot(
         $c->get(Database::class),
         $c->get(PublishProvider::class),
+    ));
+
+    // Phase 24: the weekly plan's worker half — materialize the calendar, sweep
+    // times that passed, and start content for automatic times inside their lead
+    // window. Sessionless like every other chore: workspaces are iterated and
+    // their id is passed explicitly.
+    $container->bind(PlanRunner::class, static fn (Container $c): PlanRunner => new PlanRunner(
+        $c->get(Database::class),
+        $c->get(OccurrenceRepository::class),
+        $c->get(OccurrenceMaterializer::class),
+        $c->get(SlotRepository::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(WorkflowRepository::class),
+        $c->get(AccountRepository::class),
+        $c->get(PublishCounter::class),
+        $c->get(Engine::class),
+        $c->get(EventLog::class),
     ));
 
     // opaque id: pid + nonce — hostnames would leak into the tenant-visible

@@ -66,7 +66,33 @@ final class Engine
         ?int $referenceAssetId = null,
         ?string $prompt = null,
     ): int {
-        $wsId = $ctx->id();
+        return $this->startRunFor($ctx->id(), $workflowId, $assetId, $userId, $trendId, $referenceAssetId, $prompt);
+    }
+
+    /**
+     * The same thing, addressed by workspace id instead of by session (Phase 24).
+     *
+     * The WORKER has no session and must keep it that way (see
+     * src/bindings/worker.php), but the weekly plan's automatic times have to be
+     * able to start a run from a chore. This is the house convention already used
+     * by the repositories: web callers pass the context, worker callers pass the
+     * id. startRun() above is now a one-line adapter onto this, so every existing
+     * caller and every tenancy check is unchanged.
+     *
+     * @return int the new run id
+     *
+     * @throws WorkflowException with a message key the caller can flash/log
+     */
+    public function startRunFor(
+        int $workspaceId,
+        int $workflowId,
+        ?int $assetId,
+        int $userId,
+        ?int $trendId = null,
+        ?int $referenceAssetId = null,
+        ?string $prompt = null,
+    ): int {
+        $wsId = $workspaceId;
 
         $workflow = $this->db->one(
             'SELECT * FROM workflows WHERE id = ? AND workspace_id = ?',
@@ -354,6 +380,105 @@ final class Engine
 
             return Decision::Ok;
         });
+    }
+
+    /**
+     * Cancel a run that has not published yet (Phase 24).
+     *
+     * WHY THIS EXISTS: reject() can only act on a job that is sitting at an
+     * approval gate. A planned post the operator changes their mind about can be
+     * anywhere — mid-caption, or already approved with its publish job parked
+     * behind the run_after gate — and there was no honest way to stop it.
+     *
+     * SAFE BY CONSTRUCTION: the publish job is only cancellable while it is
+     * still `queued`. Nothing has been sent to the provider at that point (the
+     * adapter is called when the job is CLAIMED), so cancelling here really does
+     * mean nothing goes out — no un-publish is claimed on the provider's side.
+     * Once it is processing/published this returns AlreadyDecided.
+     *
+     * NOT AN APPROVAL DECISION: this writes no `approvals` row. Cancelling is
+     * not a human rejecting a render, and the truthful-records rule means it
+     * must not be recorded as one.
+     */
+    public function cancelRun(int $workspaceId, int $runId, ?string $userEmail, string $reason): Decision
+    {
+        $run = $this->db->one(
+            'SELECT id, status FROM runs WHERE id = ? AND workspace_id = ?',
+            [$runId, $workspaceId],
+        );
+        if ($run === null) {
+            return Decision::NotFound;
+        }
+        if (in_array((string) $run['status'], Nodes::RUN_TERMINAL, true)) {
+            return Decision::AlreadyDecided;
+        }
+
+        $now = ($this->clock)();
+
+        return $this->db->transaction(function () use ($workspaceId, $runId, $userEmail, $reason, $now): Decision {
+            // A publish already in flight is past the point of no return.
+            $inFlight = $this->db->one(
+                "SELECT COUNT(*) AS n FROM jobs
+                 WHERE run_id = ? AND workspace_id = ? AND type = 'publish'
+                   AND status IN ('processing', 'published')",
+                [$runId, $workspaceId],
+            );
+            if ((int) ($inFlight['n'] ?? 0) > 0) {
+                return Decision::AlreadyDecided;
+            }
+
+            $stopped = $this->db->run(
+                "UPDATE runs SET status = 'cancelled', updated_at = ?
+                 WHERE id = ? AND workspace_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
+                [$now, $runId, $workspaceId],
+            );
+            if ($stopped->rowCount() === 0) {
+                return Decision::AlreadyDecided;
+            }
+
+            $this->db->run(
+                "UPDATE jobs SET status = 'cancelled', finished_at = ?
+                 WHERE run_id = ? AND workspace_id = ?
+                   AND status IN ('queued', 'awaiting_approval', 'awaiting_recording')",
+                [$now, $runId, $workspaceId],
+            );
+
+            // A target that was scheduled but never sent is cancelled too, so the
+            // per-target record matches what actually happened.
+            $this->db->run(
+                "UPDATE posts SET status = 'cancelled', updated_at = ?
+                 WHERE run_id = ? AND workspace_id = ? AND status = 'scheduled'",
+                [$now, $runId, $workspaceId],
+            );
+
+            $this->events->record($workspaceId, 'info', 'transition', 'run.cancelled', [
+                'reason' => $reason,
+                'user' => $userEmail ?? 'system',
+            ], $runId);
+
+            return Decision::Ok;
+        });
+    }
+
+    /**
+     * Set (or clear) the instant a run's publish must wait for (Phase 24).
+     *
+     * Written when a PLANNED run is BORN, not at approval — approve() only
+     * writes publish_after when a time was named, so a value set here survives
+     * an approval that names nothing, and it also reaches runs that never pass
+     * through approve() at all (the compliance agent's auto-approval path).
+     * Without this an auto-approved planned post would ignore its slot and go
+     * out immediately.
+     *
+     * Passing null clears it: a missed slot must not leave a stale past instant
+     * behind, because the queue reads a past instant as "publish now".
+     */
+    public function setPublishAfter(int $workspaceId, int $runId, ?string $publishAfter): bool
+    {
+        return $this->db->run(
+            'UPDATE runs SET publish_after = ?, updated_at = ? WHERE id = ? AND workspace_id = ?',
+            [$publishAfter, ($this->clock)(), $runId, $workspaceId],
+        )->rowCount() > 0;
     }
 
     /* ---------- finalize branches (already inside the caller's tx) ---------- */

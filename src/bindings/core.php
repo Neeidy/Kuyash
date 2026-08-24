@@ -32,6 +32,9 @@ use Kuyash\Publish\PostRepository;
 use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\PublishProvider;
 use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\OccurrenceMaterializer;
+use Kuyash\Publish\PlanBoard;
+use Kuyash\Publish\OccurrenceRepository;
 use Kuyash\Publish\SlotRepository;
 use Kuyash\Publish\SlotResolver;
 use Kuyash\Publish\WebhookInbox;
@@ -192,6 +195,23 @@ return static function (Container $container, string $basePath): void {
         $c->get(Database::class),
     ));
     $container->bind(SlotResolver::class, static fn (): SlotResolver => new SlotResolver());
+
+    // Phase 24: the calendar. Occurrences are the dated cells a slot template
+    // produces; the materializer fills the next two weeks and is idempotent, so
+    // both the plan screen and the worker chore may call it freely. Bound in
+    // CORE (not web) because the sessionless worker needs them too.
+    $container->bind(OccurrenceRepository::class, static fn (Container $c): OccurrenceRepository => new OccurrenceRepository(
+        $c->get(Database::class),
+    ));
+    $container->bind(OccurrenceMaterializer::class, static fn (Container $c): OccurrenceMaterializer => new OccurrenceMaterializer(
+        $c->get(OccurrenceRepository::class),
+        $c->get(SlotResolver::class),
+    ));
+    // derive-only read model: a cell's visible state is computed from the real
+    // run and its real jobs, never stored a second time
+    $container->bind(PlanBoard::class, static fn (Container $c): PlanBoard => new PlanBoard(
+        $c->get(OccurrenceRepository::class),
+    ));
 
     $container->bind(PublishCounter::class, static fn (Container $c): PublishCounter => new PublishCounter(
         $c->get(Database::class),

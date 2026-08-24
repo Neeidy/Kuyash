@@ -62,6 +62,9 @@ use Kuyash\Publish\PublishCounter;
 use Kuyash\Publish\PublishOutcome;
 use Kuyash\Publish\PublishRequest;
 use Kuyash\Publish\Reconciler;
+use Kuyash\Publish\OccurrenceMaterializer;
+use Kuyash\Publish\OccurrenceRepository;
+use Kuyash\Publish\PlanRunner;
 use Kuyash\Publish\SlotRepository;
 use Kuyash\Publish\SlotResolver;
 use Kuyash\Publish\WebhookController;
@@ -309,9 +312,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql', '0016_publish_slots.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql', '0016_publish_slots.sql', '0017_plan_occurrences.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 16);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 17);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -796,6 +799,7 @@ $cingest = new AssetIngest($validator, $probe, $cstorage, $crepo, $cdisks, 10, 3
 $libCtl = new LibraryController(
     $view, $crepo, $cingest, $cstorage, $cctx, new Csrf(), new Flash(),
     new Kuyash\Workspace\WorkspaceSettings($cdb), $libConfig,
+    new OccurrenceRepository($cdb),
 );
 $mediaCtl = new MediaController($crepo, $cstorage, $cdisks, $cctx, 300);
 
@@ -1140,7 +1144,7 @@ function seedReadyVideo(Database $db, int $wsId, string $title = 'Distribute me'
  * the actual Phase 5 content seam. Mechanic tests (Recording/AlwaysThrows) pass
  * non-MockExecutor bases and keep their single executor for all types.
  */
-function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvider $contentProvider = null, bool $autoCompliance = false): array
+function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvider $contentProvider = null, bool $autoCompliance = false, ?\Kuyash\Publish\PublishProvider $publishProvider = null): array
 {
     $clock = static function () use (&$now): string {
         return $now;
@@ -1213,7 +1217,9 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
         $pubAccounts = new \Kuyash\Publish\AccountRepository($db);
         $pubPosts = new \Kuyash\Publish\PostRepository($db);
         $pubExec = new \Kuyash\Publish\ZernioPublishExecutor(
-            $db, new \Kuyash\Publish\MockPublishProvider(), $pubAccounts, $pubPosts, $events, new WorkspaceSettings($db), $clock,
+            // Phase 24 spike: an optional provider lets a test capture the exact
+            // PublishRequest the executor built (default stays the mock).
+            $db, $publishProvider ?? new \Kuyash\Publish\MockPublishProvider(), $pubAccounts, $pubPosts, $events, new WorkspaceSettings($db), $clock,
         );
         $registry->register('publish', new \Kuyash\Compliance\PublishGateExecutor(
             $db, $pubExec, new \Kuyash\Publish\PublishCounter($db), $pubAccounts, $clock,
@@ -1224,6 +1230,38 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
     $worker = new Worker($db, $engine, $registry, $events, $watchdog, 'test-worker:1:abcd', $clock);
 
     return [$engine, $worker, $events, $watchdog];
+}
+
+/**
+ * A fully wired PlanController over a test DB (Phase 24). Mirrors the web
+ * binding so controller tests exercise the real collaborators, not stubs.
+ */
+function makePlanController(Database $db, WorkspaceContext $ctx, View $view): \Kuyash\Controllers\PlanController
+{
+    $occ = new OccurrenceRepository($db);
+    $events = new EventLog($db);
+
+    return new \Kuyash\Controllers\PlanController(
+        $view,
+        new SlotRepository($db),
+        new SlotResolver(),
+        new WorkspaceSettings($db),
+        new PostRepository($db),
+        $ctx,
+        new Csrf(),
+        new Flash(),
+        $occ,
+        new OccurrenceMaterializer($occ, new SlotResolver()),
+        new \Kuyash\Publish\PlanBoard($occ),
+        new AssetRepository($db),
+        new WorkflowRepository($db, new WorkflowValidator()),
+        new Engine($db, $events, new WorkflowValidator()),
+        $events,
+        new Auth($db, new LoginThrottle($db), $ctx),
+        new AccountRepository($db),
+        null,
+        new \Kuyash\Usage\CostEstimator(require dirname(__DIR__) . '/config/usage.php'),
+    );
 }
 
 const FULL_TYPES = ['trend_fetch', 'idea_generation', 'script_draft', 'tts', 'asset_fetch',
@@ -2056,7 +2094,7 @@ while ($p4worker->tick()) {
 }
 $p4auth = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
 $deadHeartbeat = new WorkerHeartbeat(tempDir('hb') . '/none.heartbeat'); // never beaten → "not running"
-$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db));
+$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db);
 $wfCtl = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
     new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
@@ -2132,7 +2170,7 @@ $_SESSION = [];
 $_SESSION['auth_user_id'] = $p4UserB;
 $p4ctx->set($p4WsB);
 $authB = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
-$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db));
+$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db);
 $wfCtlB = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
     new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
@@ -6279,6 +6317,9 @@ check('i18n: every template View::t key exists in en.php', (static function () u
                 if ($k === 'day.') {
                     continue; // dynamic: day.<1-7>, all seven verified below
                 }
+                if ($k === 'plan.reason_') {
+                    continue; // dynamic: every skip reason, all verified below
+                }
                 if (!array_key_exists($k, $enMap)) {
                     return false;
                 }
@@ -6292,6 +6333,16 @@ check('i18n: every template View::t key exists in en.php', (static function () u
     }
     for ($d = 1; $d <= 7; $d++) {   // weekday labels used by the weekly plan
         if (!array_key_exists('day.' . $d, $enMap)) {
+            return false;
+        }
+    }
+    // Phase 24: every reason a planned day can produce nothing must have a
+    // label. An unlabeled reason would reach the calendar as a raw enum — the
+    // exact jargon leak the experience phases spent a round removing.
+    foreach (['no_content', 'not_produced', 'not_approved', 'missed', 'daily_cap', 'budget_cap',
+              'kill_switch', 'plan_paused', 'compliance_block', 'no_owner', 'no_workflow',
+              'no_account', 'cancelled'] as $reason) {
+        if (!array_key_exists('plan.reason_' . $reason, $enMap)) {
             return false;
         }
     }
@@ -7588,6 +7639,7 @@ check('p23/approve: a hand-picked time is read in the workspace zone, not silent
             new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
             new WorkerHeartbeat(tempDir('hb') . '/p23.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings,
+            new OccurrenceRepository($db), $db,
         );
 
         $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
@@ -7620,8 +7672,7 @@ check('p23/approve: an unknown or paused slot REFUSES the approval — never a s
             $view, new JobRepository($db), new RunRepository($db),
             new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
-            new WorkerHeartbeat(tempDir('hb') . '/p23b.heartbeat'), $slots, new SlotResolver(), $settings,
-        );
+            new WorkerHeartbeat(tempDir('hb') . '/p23b.heartbeat'), $slots, new SlotResolver(), $settings, new OccurrenceRepository($db), $db);
         $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
         $reflect->setAccessible(true);
 
@@ -7650,8 +7701,7 @@ check('p23/safety: a past time REFUSES the approval instead of publishing immedi
             $view, new JobRepository($db), new RunRepository($db),
             new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
-            new WorkerHeartbeat(tempDir('hb') . '/p23c.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings,
-        );
+            new WorkerHeartbeat(tempDir('hb') . '/p23c.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings, new OccurrenceRepository($db), $db);
         $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
         $reflect->setAccessible(true);
 
@@ -7719,10 +7769,7 @@ check('p23/honesty: a hand-posted account_id is REFUSED, not quietly widened to 
         $ctx = new WorkspaceContext($db);
         $ctx->set($ws);
         $slots = new SlotRepository($db);
-        $ctl = new PlanController(
-            $view, $slots, new SlotResolver(), new WorkspaceSettings($db),
-            new PostRepository($db), $ctx, new Csrf(), new Flash(),
-        );
+        $ctl = makePlanController($db, $ctx, $view);
         $_POST = ['weekday' => '1', 'time_hhmm' => '09:00', 'account_id' => '7'];
         $ctl->addSlot();
         $_POST = [];
@@ -7929,6 +7976,1495 @@ check('p23/ui: the discovery labels exist in both languages',
 
         return true;
     })());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 24 — TASK 0: RISK SPIKE (no product code yet).
+//
+// The whole feature rests on ONE claim: a weekly slot's wall-clock time survives
+// a DST shift, reaches the queue's run_after gate, and arrives at the publish
+// adapter as the SAME UTC instant. Prove it end to end with the code that
+// already exists — SlotResolver → runs.publish_after → jobs.run_after → the
+// PublishRequest a spy provider receives — before a single new table is added.
+//
+// If this fails, the plan's central seam is wrong and Task 1 must not start.
+echo "== p24/task0: RISK SPIKE — slot time → worker gate → adapter scheduledFor ==\n";
+
+$spikeZone = 'America/New_York';
+// 2026-03-08 is the US DST start. "Now" is Wednesday 2026-03-04 15:00Z (after
+// that day's 09:00 local, which was 14:00Z in EST) → the next Wednesday 09:00
+// falls on 2026-03-11, i.e. AFTER the clocks moved. A naive "+7 days on the
+// timestamp" would land on 14:00Z; the operator asked for 09:00 local, so the
+// correct answer is 13:00Z.
+$spikeNowIso = '2026-03-04T15:00:00Z';
+$spikeExpected = '2026-03-11T13:00:00Z';
+$spikeResolved = (new SlotResolver())->nextOccurrence($spikeZone, 3, '09:00', $spikeNowIso);
+
+check('p24/task0: a DST-crossing weekly slot resolves to the instant that keeps 09:00 local', $spikeResolved === $spikeExpected);
+
+check('p24/task0: that instant survives run_after gating and reaches the adapter as scheduledFor', (static function () use ($basePath, $argonHash, $spikeZone, $spikeExpected, $spikeNowIso): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, 'p24-spike@example.com', $argonHash, 'P24 Spike');
+    $db->run('UPDATE workspaces SET timezone = ? WHERE id = ?', [$spikeZone, $ws]);
+
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $workflows = new WorkflowRepository($db, new WorkflowValidator());
+    $workflows->ensureDefaults($ctx);
+    $dist = $workflows->findByTemplate($ctx, 'distribution');
+    if ($dist === null) {
+        return false;
+    }
+    $assetId = seedReadyVideo($db, $ws, 'Spike clip');
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+         VALUES (?, 'instagram', '@spike', 'zacct_spike', 'connected', 'ok', ?, ?)",
+        [$ws, $spikeNowIso, $spikeNowIso],
+    );
+
+    $now = $spikeNowIso;
+    $spy = new SpyPublishProvider();
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $now, null, false, $spy);
+
+    $runId = $engine->startRun($ctx, (int) $dist['id'], $assetId, $user);
+
+    // Stand-in for what Task 4 will do at assignment time: the planned instant
+    // is written when the run is BORN, not at approval.
+    $db->run('UPDATE runs SET publish_after = ? WHERE id = ? AND workspace_id = ?', [$spikeExpected, $runId, $ws]);
+
+    // drain to the approval gate
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    if ($review === null) {
+        return false;
+    }
+
+    // approve WITHOUT naming a time — the pre-set publish_after must survive
+    if ($engine->approve($ctx, (int) $review['id'], $user, 'p24-spike@example.com', null) !== Decision::Ok) {
+        return false;
+    }
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $survived = (string) ($db->one('SELECT publish_after FROM runs WHERE id = ?', [$runId])['publish_after'] ?? '') === $spikeExpected;
+
+    // the publish job must be PARKED behind the gate, and the spy untouched
+    $publish = $db->one("SELECT status, run_after FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId]);
+    $parked = $publish !== null
+        && (string) $publish['status'] === 'queued'
+        && (string) $publish['run_after'] === $spikeExpected
+        && $spy->requests === [];
+
+    // clocks move past the planned instant → the gate opens
+    $now = '2026-03-11T13:00:30Z';
+    for ($i = 0; $i < 10 && $worker->tick(); $i++) {
+    }
+    $req = $spy->requests[0] ?? null;
+
+    return $survived && $parked
+        && $req instanceof PublishRequest
+        && $req->scheduledFor === $spikeExpected
+        && (string) ($db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId])['status'] ?? '') === 'published';
+})());
+
+// ── Phase 24, Tasks 1-3: the calendar layer, the worker seam, and the chore ──
+
+echo "== p24/calendar: a weekly time becomes dated cells (DST-correct) ==\n";
+
+$p24res = new SlotResolver();
+
+check('p24/calendar: a two-week window over a weekly time yields exactly two dated cells', (static function () use ($p24res): bool {
+    $hits = $p24res->occurrencesBetween('Europe/Istanbul', 1, '09:00', '2026-06-10T00:00:00Z', '2026-06-24T00:00:00Z');
+
+    return count($hits) === 2
+        && $hits[0]['local_date'] === '2026-06-15' && $hits[0]['at'] === '2026-06-15T06:00:00Z'
+        && $hits[1]['local_date'] === '2026-06-22' && $hits[1]['at'] === '2026-06-22T06:00:00Z';
+})());
+
+check('p24/calendar: every cell is strictly inside the window (never in the past, never past the horizon)', (static function () use ($p24res): bool {
+    $from = '2026-06-15T06:00:00Z';   // exactly ON a Monday 09:00 Istanbul
+    $to = '2026-06-30T00:00:00Z';
+    $hits = $p24res->occurrencesBetween('Europe/Istanbul', 1, '09:00', $from, $to);
+    foreach ($hits as $h) {
+        if ($h['at'] <= $from || $h['at'] >= $to) {
+            return false;
+        }
+    }
+
+    // the boundary instant itself is excluded: $from is exactly one of them
+    return count($hits) === 2 && $hits[0]['at'] === '2026-06-22T06:00:00Z';
+})());
+
+check('p24/calendar: crossing a DST shift keeps the operator\'s wall-clock time, moving the UTC instant', (static function () use ($p24res): bool {
+    // 2026-03-08 is the US DST start; the window spans it.
+    $hits = $p24res->occurrencesBetween('America/New_York', 3, '09:00', '2026-03-01T00:00:00Z', '2026-03-20T00:00:00Z');
+
+    return count($hits) === 3
+        && $hits[0]['at'] === '2026-03-04T14:00:00Z'  // EST  → 09:00 local
+        && $hits[1]['at'] === '2026-03-11T13:00:00Z'  // EDT  → still 09:00 local
+        && $hits[2]['at'] === '2026-03-18T13:00:00Z'
+        && $hits[0]['local_date'] === '2026-03-04'
+        && $hits[1]['local_date'] === '2026-03-11';
+})());
+
+check('p24/calendar: the autumn fall-back hour produces ONE cell for that day, not two', (static function () use ($p24res): bool {
+    // 2026-11-01: 01:30 America/New_York happens twice. One local day = one cell.
+    $hits = $p24res->occurrencesBetween('America/New_York', 7, '01:30', '2026-10-28T00:00:00Z', '2026-11-03T00:00:00Z');
+    $dates = array_column($hits, 'local_date');
+
+    return count($hits) === 1 && $dates === ['2026-11-01'] && count(array_unique($dates)) === 1;
+})());
+
+check('p24/calendar: the spring-forward gap resolves to a real instant and the cell says which', (static function () use ($p24res): bool {
+    // 02:30 does not exist on 2026-03-08 in New York; PHP normalizes to 03:30
+    // local. The cell records the instant that WILL fire, so the screen can be
+    // honest about it rather than promising a time that has no moment.
+    $hits = $p24res->occurrencesBetween('America/New_York', 7, '02:30', '2026-03-05T00:00:00Z', '2026-03-10T00:00:00Z');
+
+    return count($hits) === 1
+        && $hits[0]['local_date'] === '2026-03-08'
+        && $hits[0]['at'] === '2026-03-08T07:30:00Z';   // 03:30 EDT
+})());
+
+check('p24/calendar: an unknown zone or a malformed time yields no cells at all (never a guess)', (static function () use ($p24res): bool {
+    return $p24res->occurrencesBetween('Mars/Olympus', 1, '09:00', '2026-06-01T00:00:00Z', '2026-06-30T00:00:00Z') === []
+        && $p24res->occurrencesBetween('UTC', 1, '25:00', '2026-06-01T00:00:00Z', '2026-06-30T00:00:00Z') === []
+        && $p24res->occurrencesBetween('UTC', 9, '09:00', '2026-06-01T00:00:00Z', '2026-06-30T00:00:00Z') === []
+        && $p24res->occurrencesBetween('UTC', 1, '09:00', '2026-06-30T00:00:00Z', '2026-06-01T00:00:00Z') === [];
+})());
+
+echo "== p24/store: calendar cells (idempotency, guarded moves, tenancy) ==\n";
+
+/** A workspace with a timezone, one weekly time, and a ready video. */
+$p24seed = static function (Database $db, string $email, string $zone, string $mode, string $now) use ($argonHash): array {
+    [$user, $ws] = seedUser($db, $email, $argonHash, 'P24 ' . $email);
+    $db->run('UPDATE workspaces SET timezone = ? WHERE id = ?', [$zone, $ws]);
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $slots = new SlotRepository($db);
+    $slotId = $slots->add($ctx, 1, '09:00', null, $now, $mode);
+
+    return [$user, $ws, $ctx, (int) $slotId];
+};
+
+check('p24/store: a publishing time carries who fills it, and rejects anything but the two modes', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $slotId] = $p24seed($db, 'mode@x.com', 'UTC', 'auto', '2026-06-10T00:00:00Z');
+    $slots = new SlotRepository($db);
+    $row = $slots->find($ctx, $slotId);
+
+    return $row !== null && $row['mode'] === 'auto'
+        && $slots->add($ctx, 2, '10:00', null, '2026-06-10T00:00:00Z', 'nonsense') === null
+        && $slots->lastAddFailure() === 'invalid'
+        && $slots->setMode($ctx, $slotId, 'manual', '2026-06-10T00:00:00Z')
+        && $slots->find($ctx, $slotId)['mode'] === 'manual'
+        && $slots->setMode($ctx, $slotId, 'sideways', '2026-06-10T00:00:00Z') === false;
+})());
+
+check('p24/store: adding the same time twice reports a DUPLICATE, not "invalid" (Phase 23 follow-up)', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, , $ctx] = $p24seed($db, 'dup@x.com', 'UTC', 'manual', '2026-06-10T00:00:00Z');
+    $slots = new SlotRepository($db);
+    $again = $slots->add($ctx, 1, '09:00', null, '2026-06-10T00:00:00Z');
+
+    return $again === null && $slots->lastAddFailure() === 'duplicate';
+})());
+
+check('p24/store: materializing twice creates the same cells once (the chore may run all day)', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , ] = $p24seed($db, 'idem@x.com', 'Europe/Istanbul', 'manual', '2026-06-10T00:00:00Z');
+    $occ = new OccurrenceRepository($db);
+    $mat = new OccurrenceMaterializer($occ, new SlotResolver());
+    $slots = (new SlotRepository($db))->listForWorkspace($ws);
+    $now = '2026-06-10T00:00:00Z';
+
+    $first = $mat->materialize($ws, 'Europe/Istanbul', $slots, $now);
+    $second = $mat->materialize($ws, 'Europe/Istanbul', $slots, $now);
+    $count = (int) $db->one('SELECT COUNT(*) AS n FROM slot_occurrences WHERE workspace_id = ?', [$ws])['n'];
+
+    return $first['created'] === 2 && $second['created'] === 0 && $count === 2;
+})());
+
+check('p24/store: a paused time stops producing new days but keeps the ones already there', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $slotId] = $p24seed($db, 'pause@x.com', 'UTC', 'manual', '2026-06-10T00:00:00Z');
+    $occ = new OccurrenceRepository($db);
+    $mat = new OccurrenceMaterializer($occ, new SlotResolver());
+    $slots = new SlotRepository($db);
+    $mat->materialize($ws, 'UTC', $slots->listForWorkspace($ws), '2026-06-10T00:00:00Z');
+    $before = (int) $db->one('SELECT COUNT(*) AS n FROM slot_occurrences WHERE workspace_id = ?', [$ws])['n'];
+
+    $slots->setEnabled($ctx, $slotId, false, '2026-06-10T00:00:00Z');
+    // a later "now" would otherwise reach a third week
+    $mat->materialize($ws, 'UTC', $slots->listForWorkspace($ws), '2026-06-17T00:00:00Z');
+    $after = (int) $db->one('SELECT COUNT(*) AS n FROM slot_occurrences WHERE workspace_id = ?', [$ws])['n'];
+
+    return $before === 2 && $after === 2;
+})());
+
+check('p24/store: changing the timezone re-times EMPTY cells and leaves committed ones alone', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $slotId] = $p24seed($db, 'tz@x.com', 'UTC', 'manual', '2026-06-10T00:00:00Z');
+    $occ = new OccurrenceRepository($db);
+    $mat = new OccurrenceMaterializer($occ, new SlotResolver());
+    $slots = new SlotRepository($db);
+    $now = '2026-06-10T00:00:00Z';
+    $mat->materialize($ws, 'UTC', $slots->listForWorkspace($ws), $now);
+
+    $cells = $db->all('SELECT id, publish_at FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at', [$ws]);
+    // pretend the FIRST cell already carries content
+    $occ->reserve($ws, (int) $cells[0]['id'], null, $now);
+
+    (new WorkspaceSettings($db))->setTimezone($ws, 'Europe/Istanbul');
+    $mat->materialize($ws, 'Europe/Istanbul', $slots->listForWorkspace($ws), $now);
+
+    $after = $db->all('SELECT id, publish_at, status FROM slot_occurrences WHERE workspace_id = ? ORDER BY id', [$ws]);
+    $committed = null;
+    $empty = null;
+    foreach ($after as $row) {
+        if ((int) $row['id'] === (int) $cells[0]['id']) {
+            $committed = $row;
+        } else {
+            $empty = $row;
+        }
+    }
+
+    return $committed !== null && $empty !== null
+        && (string) $committed['publish_at'] === (string) $cells[0]['publish_at']   // untouched commitment
+        && (string) $empty['publish_at'] === '2026-06-22T06:00:00Z';                // re-timed to 09:00 Istanbul
+})());
+
+check('p24/store: taking a cell is a guarded move — a double submit can only win once', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , ] = $p24seed($db, 'guard@x.com', 'UTC', 'manual', '2026-06-10T00:00:00Z');
+    $occ = new OccurrenceRepository($db);
+    (new OccurrenceMaterializer($occ, new SlotResolver()))
+        ->materialize($ws, 'UTC', (new SlotRepository($db))->listForWorkspace($ws), '2026-06-10T00:00:00Z');
+    $id = (int) $db->one('SELECT id FROM slot_occurrences WHERE workspace_id = ? ORDER BY id LIMIT 1', [$ws])['id'];
+    $now = '2026-06-10T00:00:00Z';
+
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $mkRun = static function () use ($db, $ws, $wf, $now): int {
+        $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',(SELECT user_id FROM workspace_users WHERE workspace_id=? LIMIT 1),?,?)", [$ws, $wf, $ws, $now, $now]);
+
+        return $db->lastInsertId();
+    };
+
+    $first = $occ->reserve($ws, $id, null, $now);
+    $second = $occ->reserve($ws, $id, null, $now);
+    $attached = $occ->attachRun($ws, $id, $mkRun(), $now);
+    $attachedTwice = $occ->attachRun($ws, $id, $mkRun(), $now);
+
+    return $first && !$second && $attached && !$attachedTwice;
+})());
+
+check('p24/store: another workspace can neither see nor move this workspace\'s cells', (static function () use ($basePath, $p24seed): bool {
+    $db = migratedDb($basePath);
+    [, $wsA, $ctxA, ] = $p24seed($db, 'iso-a@x.com', 'UTC', 'manual', '2026-06-10T00:00:00Z');
+    [, $wsB, , ] = $p24seed($db, 'iso-b@x.com', 'UTC', 'manual', '2026-06-10T00:00:00Z');
+    $occ = new OccurrenceRepository($db);
+    $mat = new OccurrenceMaterializer($occ, new SlotResolver());
+    $slots = new SlotRepository($db);
+    $now = '2026-06-10T00:00:00Z';
+    $mat->materialize($wsA, 'UTC', $slots->listForWorkspace($wsA), $now);
+    $mat->materialize($wsB, 'UTC', $slots->listForWorkspace($wsB), $now);
+
+    $aId = (int) $db->one('SELECT id FROM slot_occurrences WHERE workspace_id = ? ORDER BY id LIMIT 1', [$wsA])['id'];
+    $ctxB = new WorkspaceContext($db);
+    $ctxB->set($wsB);
+
+    $notVisible = $occ->find($ctxB, $aId) === null;
+    $notReservable = $occ->reserve($wsB, $aId, null, $now) === false;
+    $notSkippable = $occ->markSkipped($wsB, $aId, 'missed', $now) === false;
+    // A's own window still contains only A's cells
+    $ctxA->set($wsA);
+    $ownWindow = $occ->window($ctxA, '2026-06-01T00:00:00Z', '2026-07-01T00:00:00Z');
+    $allMine = array_reduce($ownWindow, static fn (bool $c, array $r): bool => $c && (int) $r['workspace_id'] === $wsA, true);
+
+    return $notVisible && $notReservable && $notSkippable && count($ownWindow) === 2 && $allMine;
+})());
+
+echo "== p24/auto: the plan chore — guardrails first, then production ==\n";
+
+/** PlanRunner over a given engine; every collaborator is the real one. */
+$p24runner = static function (Database $db, Engine $engine): PlanRunner {
+    $occ = new OccurrenceRepository($db);
+
+    return new PlanRunner(
+        $db,
+        $occ,
+        new OccurrenceMaterializer($occ, new SlotResolver()),
+        new SlotRepository($db),
+        new WorkspaceSettings($db),
+        new WorkflowRepository($db, new WorkflowValidator()),
+        new AccountRepository($db),
+        new PublishCounter($db),
+        $engine,
+        new EventLog($db),
+    );
+};
+
+/**
+ * A workspace whose Monday 09:00 UTC time is AUTOMATIC, with a connected
+ * account and the default workflows. "Now" is two hours before that time, i.e.
+ * inside the default three-hour production lead window.
+ */
+$p24auto = static function (Database $db, string $email, bool $withWorkflows = true) use ($argonHash): array {
+    $now = '2026-06-15T07:00:00Z';           // Monday
+    [$user, $ws] = seedUser($db, $email, $argonHash, 'AUTO ' . $email);
+    $db->run('UPDATE workspaces SET timezone = ? WHERE id = ?', ['UTC', $ws]);
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new SlotRepository($db))->add($ctx, 1, '09:00', null, $now, 'auto');
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+         VALUES (?, 'instagram', '@auto', 'zacct_auto', 'connected', 'ok', ?, ?)",
+        [$ws, $now, $now],
+    );
+    if ($withWorkflows) {
+        (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    }
+
+    return [$user, $ws, $ctx, $now];
+};
+
+$p24cells = static fn (Database $db, int $ws): array => $db->all(
+    'SELECT * FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at', [$ws],
+);
+$p24runs = static fn (Database $db, int $ws): int => (int) $db->one(
+    'SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ?', [$ws],
+)['n'];
+
+check('p24/auto: an automatic time inside its lead window produces exactly one piece of content', (static function () use ($basePath, $p24auto, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $now] = $p24auto($db, 'auto-happy@x.com');
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $runner = $p24runner($db, $engine);
+
+    $first = $runner->tick($now);
+    $afterOne = $p24runs($db, $ws);
+    // running again in the same window must NOT start a second one
+    $second = $runner->tick($now);
+
+    $cells = $p24cells($db, $ws);
+    $due = null;
+    foreach ($cells as $cell) {
+        if ((string) $cell['publish_at'] === '2026-06-15T09:00:00Z') {
+            $due = $cell;
+        }
+    }
+    if ($due === null || $due['run_id'] === null) {
+        return false;
+    }
+    $publishAfter = (string) ($db->one('SELECT publish_after FROM runs WHERE id = ?', [(int) $due['run_id']])['publish_after'] ?? '');
+
+    return $first['started'] === 1 && $second['started'] === 0 && $afterOne === 1 && $p24runs($db, $ws) === 1
+        && (string) $due['status'] === 'assigned'
+        // the planned instant is on the run from BIRTH, so approval cannot lose it
+        && $publishAfter === '2026-06-15T09:00:00Z';
+})());
+
+check('p24/auto: a time still outside its lead window is left alone', (static function () use ($basePath, $p24auto, $p24runner, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , ] = $p24auto($db, 'auto-lead@x.com');
+    $clock = '2026-06-15T04:00:00Z';
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $runner = $p24runner($db, $engine);
+
+    // 5 hours out with a 3-hour lead → nothing yet
+    $early = $runner->tick('2026-06-15T04:00:00Z');
+    $none = $p24runs($db, $ws) === 0;
+
+    // 2 hours out → now it is due
+    $late = $runner->tick('2026-06-15T07:00:00Z');
+
+    return $early['started'] === 0 && $none && $late['started'] === 1 && $p24runs($db, $ws) === 1;
+})());
+
+check('p24/auto: pausing automatic production creates nothing and says so on the cell', (static function () use ($basePath, $p24auto, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $now] = $p24auto($db, 'auto-paused@x.com');
+    (new WorkspaceSettings($db))->setPlanPaused($ws, true);
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+
+    $p24runner($db, $engine)->tick($now);
+    $cells = $p24cells($db, $ws);
+
+    return $p24runs($db, $ws) === 0
+        && (string) $cells[0]['status'] === 'open'          // NOT closed — the block can still clear
+        && (string) $cells[0]['skip_reason'] === 'plan_paused';
+})());
+
+check('p24/auto: the kill switch stops automatic production too', (static function () use ($basePath, $p24auto, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $now] = $p24auto($db, 'auto-kill@x.com');
+    (new WorkspaceSettings($db))->setKillSwitch($ws, true);
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+
+    $p24runner($db, $engine)->tick($now);
+
+    return $p24runs($db, $ws) === 0 && (string) $p24cells($db, $ws)[0]['skip_reason'] === 'kill_switch';
+})());
+
+check('p24/auto: with every account at its daily limit nothing is produced and nothing is spent', (static function () use ($basePath, $p24auto, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, , $now] = $p24auto($db, 'auto-cap@x.com');
+    (new WorkspaceSettings($db))->setDailyPostCap($ws, 1);
+    $account = (int) $db->one('SELECT id FROM accounts WHERE workspace_id = ?', [$ws])['id'];
+    // one post already went out today for that account
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','completed',?,?,?)", [$ws, $wf, $user, $now, $now]);
+    $priorRun = $db->lastInsertId();
+    $db->run(
+        "INSERT INTO posts (workspace_id,run_id,account_id,platform,status,idempotency_key,posted_at,created_at,updated_at)
+         VALUES (?,?,?,'instagram','published',?,?,?,?)",
+        [$ws, $priorRun, $account, 'k-cap', '2026-06-15T05:00:00Z', $now, $now],
+    );
+
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $p24runner($db, $engine)->tick($now);
+
+    $usage = (int) $db->one('SELECT COUNT(*) AS n FROM usage_events WHERE workspace_id = ?', [$ws])['n'];
+
+    return $p24runs($db, $ws) === 1                       // only the pre-existing one
+        && $usage === 0
+        && (string) $p24cells($db, $ws)[0]['skip_reason'] === 'daily_cap';
+})());
+
+check('p24/auto: a workspace with no full pipeline reports that, rather than failing quietly', (static function () use ($basePath, $p24auto, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $now] = $p24auto($db, 'auto-nowf@x.com', false);
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+
+    $p24runner($db, $engine)->tick($now);
+
+    return $p24runs($db, $ws) === 0 && (string) $p24cells($db, $ws)[0]['skip_reason'] === 'no_workflow';
+})());
+
+check('p24/auto: with no connected account nothing is produced (it could not go anywhere)', (static function () use ($basePath, $argonHash, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [, $ws] = seedUser($db, 'auto-noacct@x.com', $argonHash, 'NOACCT');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new SlotRepository($db))->add($ctx, 1, '09:00', null, $now, 'auto');
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+
+    $p24runner($db, $engine)->tick($now);
+
+    return $p24runs($db, $ws) === 0 && (string) $p24cells($db, $ws)[0]['skip_reason'] === 'no_account';
+})());
+
+check('p24/auto: an over-budget workspace produces NOTHING — no run row, and the block is audited', (static function () use ($basePath, $p24auto, $p24runner, $p24cells, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $now] = $p24auto($db, 'auto-budget@x.com');
+    // a full run is estimated around 10 cents; a 1-cent cap cannot cover it
+    (new WorkspaceSettings($db))->setBudgetCapCents($ws, 1);
+
+    $events = new EventLog($db);
+    $clock = $now;
+    $engine = new Engine(
+        $db,
+        $events,
+        new WorkflowValidator(),
+        static fn (): string => $clock,
+        null,
+        null,
+        new \Kuyash\Usage\PreflightGate(
+            new \Kuyash\Usage\CostEstimator(require $GLOBALS['basePath'] . '/config/usage.php'),
+            new UsageRepository($db),
+            new WorkspaceSettings($db),
+            $events,
+        ),
+    );
+
+    $p24runner($db, $engine)->tick($now);
+
+    $blocked = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'guardrail.preflight_block'", [$ws]);
+    $cells = $p24cells($db, $ws);
+
+    return $p24runs($db, $ws) === 0                        // no half-started run
+        && $blocked !== null
+        && (string) $cells[0]['status'] === 'open'
+        && (string) $cells[0]['skip_reason'] === 'budget_cap';
+})());
+
+check('p24/auto: two workspaces are produced independently — one being blocked never stops the other', (static function () use ($basePath, $p24auto, $p24runner, $p24runs): bool {
+    $db = migratedDb($basePath);
+    [, $wsA, , $now] = $p24auto($db, 'auto-multi-a@x.com');
+    [, $wsB, , ] = $p24auto($db, 'auto-multi-b@x.com');
+    (new WorkspaceSettings($db))->setKillSwitch($wsA, true);
+
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $p24runner($db, $engine)->tick($now);
+
+    return $p24runs($db, $wsA) === 0 && $p24runs($db, $wsB) === 1;
+})());
+
+echo "== p24/grace: a time that passed is closed honestly, never published late ==\n";
+
+check('p24/grace: a planned publish more than an hour late is cancelled, not fired', (static function () use ($basePath, $argonHash, $p24runner): bool {
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'grace-late@x.com', $argonHash, 'GRACE');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new SlotRepository($db))->add($ctx, 1, '09:00', null, $now, 'manual');
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Late clip');
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+         VALUES (?, 'instagram', '@late', 'zacct_late', 'connected', 'ok', ?, ?)",
+        [$ws, $now, $now],
+    );
+
+    $clock = $now;
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock);
+    $occ = new OccurrenceRepository($db);
+    (new OccurrenceMaterializer($occ, new SlotResolver()))
+        ->materialize($ws, 'UTC', (new SlotRepository($db))->listForWorkspace($ws), $now);
+    $cell = $db->one('SELECT * FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at LIMIT 1', [$ws]);
+    $cellId = (int) $cell['id'];
+    $plannedAt = (string) $cell['publish_at'];   // 2026-06-15T09:00:00Z
+
+    // an operator assigned a video and approved it for that time
+    $occ->reserve($ws, $cellId, $asset, $now);
+    $runId = $engine->startRunFor($ws, (int) $wf['id'], $asset, $user);
+    $engine->setPublishAfter($ws, $runId, $plannedAt);
+    $occ->attachRun($ws, $cellId, $runId, $now);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'grace-late@x.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $queued = (string) ($db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId])['status'] ?? '');
+
+    // the worker was down; it comes back TWO HOURS after the planned time
+    $lateNow = '2026-06-15T11:00:00Z';
+    $clock = $lateNow;
+    $p24runner($db, $engine)->tick($lateNow);
+
+    $publish = $db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId]);
+    $after = $db->one('SELECT status, skip_reason FROM slot_occurrences WHERE id = ?', [$cellId]);
+    $posts = (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id = ? AND status = 'published'", [$runId])['n'];
+
+    return $queued === 'queued'
+        && (string) $publish['status'] === 'cancelled'
+        && (string) $after['status'] === 'skipped'
+        && (string) $after['skip_reason'] === 'missed'
+        && $posts === 0;
+})());
+
+check('p24/grace: within the hour it is still allowed to go out', (static function () use ($basePath, $argonHash, $p24runner): bool {
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'grace-ok@x.com', $argonHash, 'GRACEOK');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new SlotRepository($db))->add($ctx, 1, '09:00', null, $now, 'manual');
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'OK clip');
+
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $occ = new OccurrenceRepository($db);
+    (new OccurrenceMaterializer($occ, new SlotResolver()))
+        ->materialize($ws, 'UTC', (new SlotRepository($db))->listForWorkspace($ws), $now);
+    $cell = $db->one('SELECT * FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at LIMIT 1', [$ws]);
+    $cellId = (int) $cell['id'];
+    $occ->reserve($ws, $cellId, $asset, $now);
+    $runId = $engine->startRunFor($ws, (int) $wf['id'], $asset, $user);
+    $engine->setPublishAfter($ws, $runId, (string) $cell['publish_at']);
+    $occ->attachRun($ws, $cellId, $runId, $now);
+
+    // 30 minutes late — inside the grace window
+    $p24runner($db, $engine)->tick('2026-06-15T09:30:00Z');
+    $after = $db->one('SELECT status FROM slot_occurrences WHERE id = ?', [$cellId]);
+    $run = $db->one('SELECT status FROM runs WHERE id = ?', [$runId]);
+
+    return (string) $after['status'] === 'assigned' && (string) $run['status'] !== 'cancelled';
+})());
+
+check('p24/grace: content still waiting for approval is KEPT, only its stale time is cleared', (static function () use ($basePath, $argonHash, $p24runner): bool {
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'grace-unapproved@x.com', $argonHash, 'GRACEUN');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new SlotRepository($db))->add($ctx, 1, '09:00', null, $now, 'manual');
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Unapproved clip');
+
+    $clock = $now;
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock);
+    $occ = new OccurrenceRepository($db);
+    (new OccurrenceMaterializer($occ, new SlotResolver()))
+        ->materialize($ws, 'UTC', (new SlotRepository($db))->listForWorkspace($ws), $now);
+    $cell = $db->one('SELECT * FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at LIMIT 1', [$ws]);
+    $cellId = (int) $cell['id'];
+    $occ->reserve($ws, $cellId, $asset, $now);
+    $runId = $engine->startRunFor($ws, (int) $wf['id'], $asset, $user);
+    $engine->setPublishAfter($ws, $runId, (string) $cell['publish_at']);
+    $occ->attachRun($ws, $cellId, $runId, $now);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    // deliberately NOT approved
+
+    $clock = '2026-06-15T11:00:00Z';
+    $p24runner($db, $engine)->tick('2026-06-15T11:00:00Z');
+
+    $run = $db->one('SELECT status, publish_after FROM runs WHERE id = ?', [$runId]);
+    $review = $db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'render_review'", [$runId]);
+    $after = $db->one('SELECT status, skip_reason FROM slot_occurrences WHERE id = ?', [$cellId]);
+
+    return (string) $after['status'] === 'skipped'
+        && (string) $after['skip_reason'] === 'not_approved'
+        && (string) $run['status'] !== 'cancelled'            // the work is NOT thrown away
+        && $run['publish_after'] === null                      // …but the stale time is gone
+        && (string) $review['status'] === 'awaiting_approval'; // still approvable
+})());
+
+echo "== p24/engine: the two additions, and the promise that ordinary runs did not change ==\n";
+
+check('p24/engine: a queued publish can be cancelled; one already in flight cannot', (static function () use ($basePath, $argonHash): bool {
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'cancel@x.com', $argonHash, 'CANCEL');
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $mk = static function (string $publishStatus) use ($db, $ws, $wf, $user, $now): int {
+        $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','running',?,?,?)", [$ws, $wf, $user, $now, $now]);
+        $run = $db->lastInsertId();
+        $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'PUBLISH',9,'publish',?,?,?)", [$ws, $run, $publishStatus, $now, $now]);
+
+        return $run;
+    };
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+
+    $queuedRun = $mk('queued');
+    $okQueued = $engine->cancelRun($ws, $queuedRun, 'me@x.com', 'plan.changed_mind') === Decision::Ok
+        && (string) $db->one("SELECT status FROM jobs WHERE run_id = ?", [$queuedRun])['status'] === 'cancelled'
+        && (string) $db->one('SELECT status FROM runs WHERE id = ?', [$queuedRun])['status'] === 'cancelled';
+
+    $flightRun = $mk('processing');
+    $refused = $engine->cancelRun($ws, $flightRun, 'me@x.com', 'plan.too_late') === Decision::AlreadyDecided
+        && (string) $db->one('SELECT status FROM runs WHERE id = ?', [$flightRun])['status'] === 'running';
+
+    // another workspace cannot cancel it
+    $foreign = $engine->cancelRun($ws + 999, $queuedRun, 'x@x.com', 'nope') === Decision::NotFound;
+
+    // cancelling is NOT an approval decision — no approvals row is written
+    $noApproval = (int) $db->one('SELECT COUNT(*) AS n FROM approvals WHERE workspace_id = ?', [$ws])['n'] === 0;
+
+    return $okQueued && $refused && $foreign && $noApproval;
+})());
+
+check('p24/engine: an ORDINARY run is unchanged — approving with no time still publishes right away', (static function () use ($basePath, $argonHash): bool {
+    // REGRESSION LOCK (N2): writing publish_after at birth is a PLAN-only
+    // behaviour. Someone who runs Distribution by hand and approves without
+    // naming a time must still get an immediate publish, exactly as before.
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'ordinary@x.com', $argonHash, 'ORDINARY');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $repo = new WorkflowRepository($db, new WorkflowValidator());
+    $repo->ensureDefaults($ctx);
+    $wf = $repo->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Ordinary clip');
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+         VALUES (?, 'instagram', '@ord', 'zacct_ord', 'connected', 'ok', ?, ?)",
+        [$ws, $now, $now],
+    );
+
+    $clock = $now;
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock);
+    $runId = $engine->startRun($ctx, (int) $wf['id'], $asset, $user);   // NO plan involved
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'ordinary@x.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    $run = $db->one('SELECT publish_after FROM runs WHERE id = ?', [$runId]);
+    $publish = $db->one("SELECT status, run_after FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId]);
+
+    return $run['publish_after'] === null                       // nothing was invented
+        && (string) $publish['status'] === 'published'          // it went out immediately
+        && (string) $publish['run_after'] === $now;
+})());
+
+check('p24/engine: a planned time set at birth survives an approval that names no time', (static function () use ($basePath, $argonHash): bool {
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'preset@x.com', $argonHash, 'PRESET');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $repo = new WorkflowRepository($db, new WorkflowValidator());
+    $repo->ensureDefaults($ctx);
+    $wf = $repo->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Preset clip');
+
+    $clock = $now;
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock);
+    $runId = $engine->startRunFor($ws, (int) $wf['id'], $asset, $user);
+    $engine->setPublishAfter($ws, $runId, '2026-06-15T09:00:00Z');
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'preset@x.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $publish = $db->one("SELECT status, run_after FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId]);
+
+    return (string) $publish['status'] === 'queued' && (string) $publish['run_after'] === '2026-06-15T09:00:00Z';
+})());
+
+echo "== p24/ui: putting a video on a day, and taking it back off ==\n";
+
+/**
+ * A workspace with a Monday 09:00 manual time, a ready video, a connected
+ * account, the default workflows, and a signed-in owner.
+ */
+$p24ctlSeed = static function (Database $db, string $email, string $mode = 'manual') use ($argonHash, $view): array {
+    $now = gmdate(NOW_ISO);
+    [$user, $ws] = seedUser($db, $email, $argonHash, 'CTL ' . $email);
+    $db->run('UPDATE workspaces SET timezone = ? WHERE id = ?', ['UTC', $ws]);
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $_SESSION['auth_user_id'] = $user;
+    (new SlotRepository($db))->add($ctx, ((int) gmdate('N') % 7) + 1, '09:00', null, $now, $mode);
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+         VALUES (?, 'instagram', '@ctl', 'zacct_ctl', 'connected', 'ok', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $asset = seedReadyVideo($db, $ws, 'Plan me');
+    $ctl = makePlanController($db, $ctx, $view);
+    $ctl->index();   // materializes the calendar
+    $cell = $db->one('SELECT * FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at LIMIT 1', [$ws]);
+
+    return [$user, $ws, $ctx, $ctl, $asset, $cell];
+};
+
+check('p24/ui: putting a video on a day starts the work and pins it to that time', (static function () use ($basePath, $p24ctlSeed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, $asset, $cell] = $p24ctlSeed($db, 'put@x.com');
+
+    $_POST = ['asset_id' => (string) $asset];
+    $res = $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+
+    $after = $db->one('SELECT * FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]);
+    if ((string) $after['status'] !== 'assigned' || $after['run_id'] === null) {
+        return false;
+    }
+    $run = $db->one('SELECT publish_after FROM runs WHERE id = ?', [(int) $after['run_id']]);
+    $audited = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'plan.assigned'", [$ws]);
+
+    return $res->status() === 303
+        && (int) $after['asset_id'] === $asset
+        && (string) $run['publish_after'] === (string) $cell['publish_at']
+        && $audited !== null;
+})());
+
+check('p24/ui: a day is refused when it is taken, in the past, automatic, or not yours', (static function () use ($basePath, $p24ctlSeed, $argonHash, $view): bool {
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'refuse@x.com');
+    $flash = static fn (): string => (string) ($_SESSION['flash'][0]['key'] ?? ($_SESSION['_flash'][0]['key'] ?? ''));
+
+    // taken
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $runCount = (int) $db->one('SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ?', [$ws])['n'];
+
+    // in the past
+    $db->run("INSERT INTO slot_occurrences (workspace_id,slot_id,local_date,publish_at,mode,status,created_at,updated_at)
+              VALUES (?, (SELECT id FROM publish_slots WHERE workspace_id=? LIMIT 1), '2020-01-06', '2020-01-06T09:00:00Z', 'manual', 'open', ?, ?)",
+        [$ws, $ws, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+    $pastId = $db->lastInsertId();
+    $ctl->assign(['id' => (string) $pastId]);
+    $pastUntouched = (string) $db->one('SELECT status FROM slot_occurrences WHERE id = ?', [$pastId])['status'] === 'open';
+
+    // automatic day
+    $db->run("INSERT INTO slot_occurrences (workspace_id,slot_id,local_date,publish_at,mode,status,created_at,updated_at)
+              VALUES (?, (SELECT id FROM publish_slots WHERE workspace_id=? LIMIT 1), '2099-01-05', '2099-01-05T09:00:00Z', 'auto', 'open', ?, ?)",
+        [$ws, $ws, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+    $autoId = $db->lastInsertId();
+    $ctl->assign(['id' => (string) $autoId]);
+    $autoUntouched = (string) $db->one('SELECT status FROM slot_occurrences WHERE id = ?', [$autoId])['status'] === 'open';
+
+    // ANOTHER workspace's video
+    [, $wsB] = seedUser($db, 'refuse-b@x.com', $argonHash, 'CTL B');
+    $foreign = seedReadyVideo($db, $wsB, 'Not yours');
+    $db->run("INSERT INTO slot_occurrences (workspace_id,slot_id,local_date,publish_at,mode,status,created_at,updated_at)
+              VALUES (?, (SELECT id FROM publish_slots WHERE workspace_id=? LIMIT 1), '2099-02-05', '2099-02-05T09:00:00Z', 'manual', 'open', ?, ?)",
+        [$ws, $ws, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+    $freeId = $db->lastInsertId();
+    $_POST = ['asset_id' => (string) $foreign];
+    $ctl->assign(['id' => (string) $freeId]);
+    $foreignRefused = (string) $db->one('SELECT status FROM slot_occurrences WHERE id = ?', [$freeId])['status'] === 'open';
+    $_POST = [];
+
+    return $runCount === 1 && $pastUntouched && $autoUntouched && $foreignRefused;
+})());
+
+check('p24/ui: taking a video back off cancels it, and nothing was published', (static function () use ($basePath, $p24ctlSeed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, $asset, $cell] = $p24ctlSeed($db, 'takeoff@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    $runId = (int) $db->one('SELECT run_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['run_id'];
+
+    $ctl->unassign(['id' => (string) $cell['id']]);
+
+    $after = $db->one('SELECT status, run_id, asset_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]);
+    $run = $db->one('SELECT status FROM runs WHERE id = ?', [$runId]);
+    $posts = (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id = ? AND status = 'published'", [$runId])['n'];
+    $approvals = (int) $db->one('SELECT COUNT(*) AS n FROM approvals WHERE workspace_id = ?', [$ws])['n'];
+
+    return (string) $after['status'] === 'open'
+        && $after['run_id'] === null && $after['asset_id'] === null
+        && (string) $run['status'] === 'cancelled'
+        && $posts === 0
+        && $approvals === 0;   // cancelling is not a rejection: no approval record
+})());
+
+check('p24/ui: a video standing on the calendar cannot be deleted from the library', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'libguard@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+
+    $occ = new OccurrenceRepository($db);
+    $inUse = $occ->plannedUsesOfAsset($ctx, $asset, gmdate(NOW_ISO)) === 1;
+
+    // once it is off the calendar again, it is deletable
+    $ctl->unassign(['id' => (string) $cell['id']]);
+    $free = $occ->plannedUsesOfAsset($ctx, $asset, gmdate(NOW_ISO)) === 0;
+
+    return $inUse && $free;
+})());
+
+check('p24/ui: removing a publishing time that still holds videos needs confirming', (static function () use ($basePath, $p24ctlSeed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, $asset, $cell] = $p24ctlSeed($db, 'cascade@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    $slotId = (int) $cell['slot_id'];
+    $runId = (int) $db->one('SELECT run_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['run_id'];
+
+    // no confirmation → nothing happens
+    $ctl->removeSlot(['id' => (string) $slotId]);
+    $stillThere = $db->one('SELECT id FROM publish_slots WHERE id = ?', [$slotId]) !== null;
+
+    // confirmed → the time goes and its day is closed honestly
+    $_POST = ['cascade' => '1'];
+    $ctl->removeSlot(['id' => (string) $slotId]);
+    $_POST = [];
+    $gone = $db->one('SELECT id FROM publish_slots WHERE id = ?', [$slotId]) === null;
+    // the days go with the time (they cannot outlive it), and the run that was
+    // standing on one is cancelled rather than left to publish
+    $daysGone = $db->one('SELECT id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]) === null;
+    $runStopped = (string) $db->one('SELECT status FROM runs WHERE id = ?', [$runId])['status'] === 'cancelled';
+    $recorded = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'guardrail.plan_time_removed'", [$ws]) !== null;
+
+    return $stillThere && $gone && $daysGone && $runStopped && $recorded;
+})());
+
+check('p24/ui: plan changes are audited, like the other guardrails', (static function () use ($basePath, $p24ctlSeed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, , ] = $p24ctlSeed($db, 'audit@x.com');
+
+    $ctl->togglePause();
+    $_POST = ['lead_minutes' => '240'];
+    $ctl->savePlanSettings();
+    $_POST = ['timezone' => 'Europe/Istanbul'];
+    $ctl->saveTimezone();
+    // adding a time goes through the controller here (the seed uses the
+    // repository directly, which is not the audited path)
+    $_POST = ['weekday' => '6', 'time_hhmm' => '20:15', 'mode' => 'auto'];
+    $ctl->addSlot();
+    $_POST = [];
+
+    $keys = array_column(
+        $db->all("SELECT key FROM events WHERE workspace_id = ? AND kind = 'guardrail'", [$ws]),
+        'key',
+    );
+
+    return in_array('guardrail.plan_paused', $keys, true)
+        && in_array('guardrail.plan_lead', $keys, true)
+        && in_array('guardrail.plan_timezone', $keys, true)
+        && in_array('guardrail.plan_time_added', $keys, true);
+})());
+
+check('p24/ui: the lead window refuses values the schema would reject', (static function () use ($basePath, $p24ctlSeed): bool {
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, , ] = $p24ctlSeed($db, 'lead@x.com');
+    $settings = new WorkspaceSettings($db);
+
+    $_POST = ['lead_minutes' => '5'];
+    $ctl->savePlanSettings();
+    $tooSmall = $settings->plan($ws)['auto_lead_minutes'] === 180;
+
+    $_POST = ['lead_minutes' => '99999'];
+    $ctl->savePlanSettings();
+    $tooBig = $settings->plan($ws)['auto_lead_minutes'] === 180;
+
+    $_POST = ['lead_minutes' => '240'];
+    $ctl->savePlanSettings();
+    $_POST = [];
+
+    return $tooSmall && $tooBig && $settings->plan($ws)['auto_lead_minutes'] === 240;
+})());
+
+check('p24/ui: plan writes are throttled per IP, and the flash says so plainly', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, , , ] = $p24ctlSeed($db, 'throttle@x.com');
+    $_SERVER['REMOTE_ADDR'] = '203.0.113.9';
+
+    $occ = new OccurrenceRepository($db);
+    $events = new EventLog($db);
+    $ctl = new \Kuyash\Controllers\PlanController(
+        $view, new SlotRepository($db), new SlotResolver(), new WorkspaceSettings($db),
+        new PostRepository($db), $ctx, new Csrf(), new Flash(), $occ,
+        new OccurrenceMaterializer($occ, new SlotResolver()),
+        new \Kuyash\Publish\PlanBoard($occ), new AssetRepository($db),
+        new WorkflowRepository($db, new WorkflowValidator()),
+        new Engine($db, $events, new WorkflowValidator()), $events,
+        new Auth($db, new LoginThrottle($db), $ctx),
+        new AccountRepository($db),
+        new \Kuyash\Core\RateLimiter($db, 2, 60),   // 2 changes per minute
+    );
+
+    $before = (new WorkspaceSettings($db))->plan($ws)['plan_paused'];
+    $ctl->togglePause();   // 1
+    $ctl->togglePause();   // 2
+    $afterTwo = (new WorkspaceSettings($db))->plan($ws)['plan_paused'];
+    $ctl->togglePause();   // 3 → blocked, state must NOT change
+    $afterThree = (new WorkspaceSettings($db))->plan($ws)['plan_paused'];
+
+    unset($_SERVER['REMOTE_ADDR']);
+
+    return $before === false && $afterTwo === false && $afterThree === false
+        && array_key_exists('rate.limited', require $basePath . '/lang/en.php')
+        && array_key_exists('rate.limited', require $basePath . '/lang/tr.php');
+})());
+
+check('p24/ui: automatic times state their real cost, from the same estimator the budget gate uses', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $db = migratedDb($basePath);
+    // an AUTOMATIC time → the cost line must appear with a real figure
+    [, $ws, $ctx, $ctl, , ] = $p24ctlSeed($db, 'cost@x.com', 'auto');
+    $body = $ctl->index()->body();
+
+    $expected = (new \Kuyash\Usage\CostEstimator(require $basePath . '/config/usage.php'))
+        ->estimateRun('full', (array) ((new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'full')['nodes'] ?? []))['total_cents'];
+
+    // The per-video price is stated BESIDE the choice, so it is known before the
+    // commitment — a manual plan sees it too. What only an automatic plan gets is
+    // the WEEKLY total, which is a claim about what will actually be spent.
+    $db2 = migratedDb($basePath);
+    [, , , $ctl2, , ] = $p24ctlSeed($db2, 'cost-manual@x.com', 'manual');
+    $manualBody = $ctl2->index()->body();
+    $weekly = \Kuyash\Core\Format::cents($expected);   // 1 auto time/week → same figure
+
+    return $expected > 0
+        && str_contains($body, \Kuyash\Core\Format::cents($expected))
+        && str_contains($body, 'a week')                    // the weekly claim
+        && str_contains($manualBody, \Kuyash\Core\Format::cents($expected))
+        && !str_contains($manualBody, 'a week');            // …not made for a manual plan
+})());
+
+echo "== p24/queue: a planned card states its day instead of asking again ==\n";
+
+check('p24/queue: an approval card carries the day it was planned for', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'qplan@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+
+    // drive the run to the approval gate
+    $clock = gmdate(NOW_ISO);
+    [, $worker] = makeRig($db, new MockExecutor(), $clock);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    $queue = new QueueController(
+        $view, new JobRepository($db), new RunRepository($db),
+        new Engine($db, new EventLog($db), new WorkflowValidator()),
+        $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+        new WorkerHeartbeat(tempDir('hb') . '/p24.heartbeat'), new SlotRepository($db), new SlotResolver(),
+        new WorkspaceSettings($db), new OccurrenceRepository($db), $db,
+    );
+    $body = $queue->index()->body();
+
+    $en = require $basePath . '/lang/en.php';
+    $stated = str_replace('{when}', '', $en['queue.planned_for']);
+
+    return str_contains($body, trim($stated))              // the day is STATED…
+        && str_contains($body, 'Publish now instead')      // …with an explicit override
+        && !str_contains($body, 'Or pick an exact time');  // the picker is replaced, not doubled
+})());
+
+check('p24/queue: approving a planned card keeps its day; asking to publish now clears it', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $run = static function (bool $publishNow) use ($basePath, $p24ctlSeed, $view): array {
+        $db = migratedDb($basePath);
+        [$user, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'qkeep' . ($publishNow ? 'n' : 'k') . '@x.com');
+        $_POST = ['asset_id' => (string) $asset];
+        $ctl->assign(['id' => (string) $cell['id']]);
+        $_POST = [];
+
+        $clock = gmdate(NOW_ISO);
+        [$engine, $worker] = makeRig($db, new MockExecutor(), $clock);
+        for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+        }
+        $runId = (int) $db->one('SELECT run_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['run_id'];
+        $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+
+        $queue = new QueueController(
+            $view, new JobRepository($db), new RunRepository($db), $engine,
+            $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+            new WorkerHeartbeat(tempDir('hb') . '/p24b.heartbeat'), new SlotRepository($db), new SlotResolver(),
+            new WorkspaceSettings($db), new OccurrenceRepository($db), $db,
+        );
+        $_POST = $publishNow ? ['publish_now' => '1'] : [];
+        $queue->approve(['id' => (string) $review['id']]);
+        $_POST = [];
+        for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+        }
+
+        return [
+            (string) ($db->one('SELECT publish_after FROM runs WHERE id = ?', [$runId])['publish_after'] ?? 'NULL'),
+            (string) $db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId])['status'],
+            (string) $cell['publish_at'],
+        ];
+    };
+
+    [$keptAfter, $keptStatus, $planned] = $run(false);
+    [$nowAfter, $nowStatus, ] = $run(true);
+
+    return $keptAfter === $planned && $keptStatus === 'queued'     // the planned day survived
+        && $nowAfter === 'NULL' && $nowStatus === 'published';     // the explicit override went out
+})());
+
+echo "== p24/gatefix: the closing gates' findings, each pinned by a test ==\n";
+
+check('p24/gatefix: removing a time cannot strand a run that would then publish immediately', (static function () use ($basePath, $p24ctlSeed): bool {
+    // security H1 / compliance B3: a cell whose time passed MINUTES ago is still
+    // inside the grace window, still holds a live run, and must not be deleted
+    // silently — the leftover run kept a past publish_after, which the queue
+    // reads as "publish now".
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'strand@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    $runId = (int) $db->one('SELECT run_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['run_id'];
+    $slotId = (int) $cell['slot_id'];
+
+    // its moment has just gone by (inside grace — the sweep has not run)
+    $db->run('UPDATE slot_occurrences SET publish_at = ? WHERE id = ?',
+        [gmdate(NOW_ISO, time() - 600), (int) $cell['id']]);
+
+    $occ = new OccurrenceRepository($db);
+    // the confirmation gate MUST see it
+    $seen = count($occ->committedForSlot($ctx, $slotId)) === 1;
+
+    // removing without confirming must refuse
+    $ctl->removeSlot(['id' => (string) $slotId]);
+    $refused = $db->one('SELECT id FROM publish_slots WHERE id = ?', [$slotId]) !== null;
+
+    // confirmed → the run is cancelled, so nothing can publish later
+    $_POST = ['cascade' => '1'];
+    $ctl->removeSlot(['id' => (string) $slotId]);
+    $_POST = [];
+    $runStatus = (string) $db->one('SELECT status FROM runs WHERE id = ?', [$runId])['status'];
+
+    return $seen && $refused
+        && $db->one('SELECT id FROM publish_slots WHERE id = ?', [$slotId]) === null
+        && $runStatus === 'cancelled';
+})());
+
+check('p24/gatefix: the store refuses to delete a time while any of its days still holds a run', (static function () use ($basePath, $p24ctlSeed): bool {
+    // defence in depth behind the controller's confirmation
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'defence@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+
+    // straight at the repository, skipping the controller entirely
+    return (new SlotRepository($db))->remove($ctx, (int) $cell['slot_id']) === false
+        && $db->one('SELECT id FROM publish_slots WHERE id = ?', [(int) $cell['slot_id']]) !== null;
+})());
+
+check('p24/gatefix: a planned post that PUBLISHED is never swept or audited as missed', (static function () use ($basePath, $argonHash, $p24runner): bool {
+    // compliance B1: the sweep closed every successful planned post as 'missed'
+    // and wrote a guardrail warning for it
+    $db = migratedDb($basePath);
+    $now = '2026-06-15T07:00:00Z';
+    [$user, $ws] = seedUser($db, 'published-ok@x.com', $argonHash, 'PUBOK');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new SlotRepository($db))->add($ctx, 1, '09:00', null, $now, 'manual');
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Went out fine');
+    $account = (static function () use ($db, $ws, $now): int {
+        $db->run("INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+                  VALUES (?, 'instagram', '@ok', 'zacct_ok', 'connected', 'ok', ?, ?)", [$ws, $now, $now]);
+
+        return $db->lastInsertId();
+    })();
+
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $occ = new OccurrenceRepository($db);
+    (new OccurrenceMaterializer($occ, new SlotResolver()))
+        ->materialize($ws, 'UTC', (new SlotRepository($db))->listForWorkspace($ws), $now);
+    $cell = $db->one('SELECT * FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at LIMIT 1', [$ws]);
+    $occ->reserve($ws, (int) $cell['id'], $asset, $now);
+    $runId = $engine->startRunFor($ws, (int) $wf['id'], $asset, $user);
+    $engine->setPublishAfter($ws, $runId, (string) $cell['publish_at']);
+    $occ->attachRun($ws, (int) $cell['id'], $runId, $now);
+    // it published, successfully
+    $db->run("UPDATE runs SET status = 'completed' WHERE id = ?", [$runId]);
+    $db->run("INSERT INTO posts (workspace_id,run_id,account_id,platform,status,idempotency_key,posted_at,created_at,updated_at)
+              VALUES (?,?,?,'instagram','published',?,?,?,?)",
+        [$ws, $runId, $account, "run:{$runId}:acct:{$account}:publish", (string) $cell['publish_at'], $now, $now]);
+
+    // …and the sweep runs two hours later
+    $p24runner($db, $engine)->tick('2026-06-15T11:00:00Z');
+
+    $after = $db->one('SELECT status, skip_reason FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]);
+    $falseWarning = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'plan.slot_missed'", [$ws]);
+
+    return (string) $after['status'] === 'assigned'   // untouched — it worked
+        && $after['skip_reason'] === null
+        && $falseWarning === null;                    // no fabricated failure in the audit log
+})());
+
+check('p24/gatefix: the day a publish was missed stays on the calendar, with its reason', (static function () use ($basePath, $p24ctlSeed): bool {
+    // compliance/ux B2: the board windowed from `now`, so the one day that needs
+    // an explanation was the one day that vanished
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, , $cell] = $p24ctlSeed($db, 'visible-miss@x.com');
+    $occ = new OccurrenceRepository($db);
+    // a few hours ago today, closed as missed
+    $db->run("UPDATE slot_occurrences SET publish_at = ?, status = 'skipped', skip_reason = 'no_content' WHERE id = ?",
+        [gmdate(NOW_ISO, time() - 7200), (int) $cell['id']]);
+
+    $board = new \Kuyash\Publish\PlanBoard($occ);
+    $days = $board->calendar($ctx, 'UTC', gmdate(NOW_ISO));
+    $found = null;
+    foreach ($days as $day) {
+        foreach ($day['cells'] as $c) {
+            if ((int) $c['id'] === (int) $cell['id']) {
+                $found = $c;
+            }
+        }
+    }
+    $summary = $board->summary($ctx, 'UTC', gmdate(NOW_ISO));
+
+    return $found !== null
+        && $found['state'] === \Kuyash\Publish\PlanBoard::MISSED
+        && $found['reason'] === 'no_content'
+        && $found['is_past'] === true
+        && $summary['missed'] === 1;   // the dashboard counter can actually move
+})());
+
+check('p24/gatefix: a guardrail holding a day back is reported as stopped, not as a failure', (static function () use ($basePath, $p24ctlSeed): bool {
+    // ux B3: every skipped cell rendered as red "Missed", including days the
+    // operator cleared and days a working guardrail held
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, , , $cell] = $p24ctlSeed($db, 'stopped@x.com');
+    $occ = new OccurrenceRepository($db);
+    $board = new \Kuyash\Publish\PlanBoard($occ);
+    $stateFor = static function (string $reason) use ($db, $cell, $board, $ctx): string {
+        $db->run("UPDATE slot_occurrences SET publish_at = ?, status = 'skipped', skip_reason = ? WHERE id = ?",
+            [gmdate(NOW_ISO, time() - 3600), $reason, (int) $cell['id']]);
+        foreach ($board->calendar($ctx, 'UTC', gmdate(NOW_ISO)) as $day) {
+            foreach ($day['cells'] as $c) {
+                if ((int) $c['id'] === (int) $cell['id']) {
+                    return (string) $c['state'];
+                }
+            }
+        }
+
+        return 'not-found';
+    };
+
+    return $stateFor('cancelled') === \Kuyash\Publish\PlanBoard::STOPPED
+        && $stateFor('daily_cap') === \Kuyash\Publish\PlanBoard::STOPPED
+        && $stateFor('compliance_block') === \Kuyash\Publish\PlanBoard::STOPPED
+        && $stateFor('kill_switch') === \Kuyash\Publish\PlanBoard::STOPPED
+        && $stateFor('no_content') === \Kuyash\Publish\PlanBoard::MISSED
+        && $stateFor('not_approved') === \Kuyash\Publish\PlanBoard::MISSED;
+})());
+
+check('p24/gatefix: the calendar shows the time the QUEUE is holding, not the one the plan wanted', (static function () use ($basePath, $p24ctlSeed): bool {
+    // security M5: the publish gate can defer a capped post; showing the planned
+    // time then is exactly the "read the plan, not the job gate" mistake
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'moved@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    $runId = (int) $db->one('SELECT run_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['run_id'];
+
+    $moved = gmdate(NOW_ISO, strtotime((string) $cell['publish_at']) + 7200);
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at)
+              VALUES (?,?,'PUBLISH',9,'publish','queued',?,?)", [$ws, $runId, $moved, gmdate(NOW_ISO)]);
+
+    $board = new \Kuyash\Publish\PlanBoard($occ = new OccurrenceRepository($db));
+    foreach ($board->calendar($ctx, 'UTC', gmdate(NOW_ISO)) as $day) {
+        foreach ($day['cells'] as $c) {
+            if ((int) $c['id'] === (int) $cell['id']) {
+                return $c['state'] === \Kuyash\Publish\PlanBoard::SCHEDULED
+                    && $c['at'] === $moved       // the REAL gate
+                    && $c['moved'] === true;     // …and it says it moved
+            }
+        }
+    }
+
+    return false;
+})());
+
+check('p24/gatefix: an ordinary library video is still deletable once its day is done with it', (static function () use ($basePath, $p24ctlSeed): bool {
+    // security M3: a published (or swept) day keeps its asset_id for the whole
+    // retention window, and the foreign key turned an ordinary delete into a 500
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'libdel@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    // its day has gone by and was closed
+    $db->run("UPDATE slot_occurrences SET publish_at = ?, status = 'skipped', skip_reason = 'missed', run_id = NULL WHERE id = ?",
+        [gmdate(NOW_ISO, time() - 7200), (int) $cell['id']]);
+
+    $occ = new OccurrenceRepository($db);
+    $stillBlocked = $occ->plannedUsesOfAsset($ctx, $asset, gmdate(NOW_ISO)) === 0;
+    $occ->forgetAssetOnFinishedDays($ctx, $asset, gmdate(NOW_ISO));
+
+    // the delete must now succeed rather than raising a foreign-key error
+    $deleted = (new AssetRepository($db))->delete($ctx, $asset);
+    $dayKept = $db->one('SELECT status, skip_reason, asset_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]);
+
+    return $stillBlocked && $deleted
+        && (string) $dayKept['status'] === 'skipped'
+        && (string) $dayKept['skip_reason'] === 'missed'   // the record survives
+        && $dayKept['asset_id'] === null;
+})());
+
+check('p24/gatefix: retention keeps the day of a run that is still alive', (static function () use ($basePath, $p24ctlSeed): bool {
+    // security L5
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, $asset, $cell] = $p24ctlSeed($db, 'retain@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    $db->run('UPDATE slot_occurrences SET publish_at = ? WHERE id = ?',
+        [gmdate(NOW_ISO, time() - 90 * 86400), (int) $cell['id']]);
+
+    $occ = new OccurrenceRepository($db);
+    $occ->pruneBefore(gmdate(NOW_ISO, time() - 30 * 86400));
+    $kept = $db->one('SELECT id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]) !== null;
+
+    // once the run is over, it prunes
+    $db->run("UPDATE runs SET status = 'completed' WHERE id = (SELECT run_id FROM slot_occurrences WHERE id = ?)", [(int) $cell['id']]);
+    $occ->pruneBefore(gmdate(NOW_ISO, time() - 30 * 86400));
+
+    return $kept && $db->one('SELECT id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']]) === null;
+})());
+
+check('p24/gatefix: a replayed "publish now" cannot touch a decision the engine refused', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    // security M4
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $ctl, $asset, $cell] = $p24ctlSeed($db, 'replay@x.com');
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+    $clock = gmdate(NOW_ISO);
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $runId = (int) $db->one('SELECT run_id FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['run_id'];
+    // a NON-approval job of the same planned run
+    $other = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'caption_generation'", [$runId]);
+
+    $queue = new QueueController(
+        $view, new JobRepository($db), new RunRepository($db), $engine,
+        $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
+        new WorkerHeartbeat(tempDir('hb') . '/p24c.heartbeat'), new SlotRepository($db), new SlotResolver(),
+        new WorkspaceSettings($db), new OccurrenceRepository($db), $db,
+    );
+    $_POST = ['publish_now' => '1'];
+    $queue->approve(['id' => (string) $other['id']]);   // engine will refuse this
+    $_POST = [];
+
+    // the planned instant must be untouched by a refused decision
+    return (string) $db->one('SELECT publish_after FROM runs WHERE id = ?', [$runId])['publish_after']
+        === (string) $cell['publish_at'];
+})());
+
+check('p24/gatefix: a failing plan tick never stops the queue', (static function () use ($basePath): bool {
+    // security M2 — the guard is in bin/worker.php; assert it is really there,
+    // at BOTH call sites, since a throw at the startup one halts all publishing
+    $src = (string) file_get_contents($basePath . '/bin/worker.php');
+    $guards = substr_count($src, 'catch (Throwable $e)');
+    $runnerSrc = (string) file_get_contents($basePath . '/src/Publish/PlanRunner.php');
+
+    return $guards >= 2
+        && str_contains($src, "plan tick failed on startup")
+        && str_contains($runnerSrc, 'plan tick failed for workspace');   // one tenant cannot abort the rest
+})());
+
+check('p24/gatefix: adding to the plan is refused while everything automatic is switched off', (static function () use ($basePath, $p24ctlSeed): bool {
+    // security L7: do not spend on a caption the publish gate will then refuse
+    $db = migratedDb($basePath);
+    [, $ws, , $ctl, $asset, $cell] = $p24ctlSeed($db, 'killassign@x.com');
+    (new WorkspaceSettings($db))->setKillSwitch($ws, true);
+
+    $_POST = ['asset_id' => (string) $asset];
+    $ctl->assign(['id' => (string) $cell['id']]);
+    $_POST = [];
+
+    return (int) $db->one('SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ?', [$ws])['n'] === 0
+        && (string) $db->one('SELECT status FROM slot_occurrences WHERE id = ?', [(int) $cell['id']])['status'] === 'open';
+})());
+
+check('p24/gatefix: a compliance block is not reported with a cause that was not checked', (static function () use ($basePath): bool {
+    // compliance B4: format blocks were being described as slop blocks
+    $en = require $basePath . '/lang/en.php';
+    $tr = require $basePath . '/lang/tr.php';
+
+    return !str_contains(strtolower($en['plan.reason_compliance_block']), 'recent post')
+        && !str_contains(strtolower($tr['plan.reason_compliance_block']), 'benziyordu');
+})());
+
+echo "== p24/ui-fix: themed controls and a discoverable \"I add the video\" path ==\n";
+
+check('p24/ui-fix: radios and checkboxes are painted from the tokens, and the real input stays focusable', (static function () use ($basePath): bool {
+    $css = (string) file_get_contents($basePath . '/public/assets/css/base.css');
+
+    // appearance:none removes only the NATIVE painting — the input itself must
+    // never be display:none'd or moved off-screen, or the thing the user tabs to
+    // and toggles with Space stops being the thing they see.
+    $block = substr($css, strpos($css, 'input[type="radio"],'));
+    $block = substr($block, 0, strpos($block, 'input[type="radio"]:disabled'));
+
+    return str_contains($block, 'appearance: none')
+        && !str_contains($block, 'display: none')
+        && !str_contains($block, 'visibility: hidden')
+        && !str_contains($block, 'position: absolute')
+        && str_contains($block, 'var(--accent)')            // checked state from the token
+        && str_contains($block, 'var(--border-strong)')     // resting border from the token
+        // motion budget: colour + transform only, no blur/spring on a control
+        && !str_contains($block, 'blur(')
+        && !str_contains($block, '--spring')
+        && str_contains($css, ':focus-visible { outline: 1.5px solid var(--accent)');
+})());
+
+check('p24/ui-fix: no control is left painting itself with the browser default', (static function () use ($basePath): bool {
+    // accent-color only tints the NATIVE control, which appearance:none removes —
+    // leaving it behind is a property that silently does nothing.
+    $app = (string) file_get_contents($basePath . '/public/assets/css/app.css');
+
+    return !str_contains($app, 'accent-color');
+})());
+
+check('p24/ui-fix: each mode states what to do next, revealed by its own radio and with no script', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $db = migratedDb($basePath);
+    [, , , $ctl, , ] = $p24ctlSeed($db, 'modehelp@x.com');
+    $body = $ctl->index()->body();
+    $css = (string) file_get_contents($basePath . '/public/assets/css/app.css');
+
+    return str_contains($body, 'Upload your videos to the Library')
+        && str_contains($body, 'Open the Library')
+        && str_contains($body, 'href="/library"')
+        && str_contains($body, 'Kuyash builds it ahead of the time')
+        // a plain sibling selector: it reveals on selection with JS switched off
+        && str_contains($css, '.mode-opt input:checked ~ .mode-opt__help { display: block; }')
+        // …and a link in that guidance has to LOOK like a link
+        && (bool) preg_match('/\.mode-opt__help a[^{]*\{[^}]*color: var\(--accent\)/', $css);
+})());
+
+check('p24/ui-fix: the radio and its label are wired together, so the label is a hit target', (static function () use ($basePath, $p24ctlSeed, $view): bool {
+    $db = migratedDb($basePath);
+    [, , , $ctl, , ] = $p24ctlSeed($db, 'modelabel@x.com');
+    $body = $ctl->index()->body();
+
+    return str_contains($body, 'id="mode-manual"')
+        && str_contains($body, 'for="mode-manual"')
+        && str_contains($body, 'id="mode-auto"')
+        && str_contains($body, 'for="mode-auto"')
+        // one form at a time (empty-state OR populated), so the ids stay unique
+        && substr_count($body, 'id="mode-manual"') === 1;
+})());
+
+check('p24/ui-fix: with nothing in the library, a day says so and points at the Library', (static function () use ($basePath, $argonHash, $view): bool {
+    // the state the normal seed never produces: a brand-new operator who has not
+    // uploaded anything yet must still be able to find the next step
+    $db = migratedDb($basePath);
+    $now = gmdate(NOW_ISO);
+    [$user, $ws] = seedUser($db, 'emptylib@x.com', $argonHash, 'EMPTYLIB');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $_SESSION['auth_user_id'] = $user;
+    (new SlotRepository($db))->add($ctx, ((int) gmdate('N') % 7) + 1, '09:00', null, $now, 'manual');
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    // deliberately NO seedReadyVideo()
+
+    $body = makePlanController($db, $ctx, $view)->index()->body();
+
+    return str_contains($body, 'No videos yet.')
+        && str_contains($body, 'Add one to your library')
+        && str_contains($body, 'href="/library"')
+        // and it must NOT offer a picker with nothing in it
+        && !str_contains($body, 'name="asset_id"');
+})());
+
+check('p24/ui-fix: the guidance reads in plain words in both languages, with no jargon', (static function () use ($basePath): bool {
+    $en = require $basePath . '/lang/en.php';
+    $tr = require $basePath . '/lang/tr.php';
+    $keys = ['plan.mode_manual_help', 'plan.mode_manual_help_link', 'plan.mode_auto_help', 'plan.mode_auto_help_cost'];
+
+    foreach ($keys as $k) {
+        if (!array_key_exists($k, $en) || !array_key_exists($k, $tr)) {
+            return false;
+        }
+        foreach (['slot', 'occurrence', 'assign', 'render_review', 'pipeline'] as $jargon) {
+            if (str_contains(strtolower($en[$k]), $jargon)) {
+                return false;
+            }
+        }
+    }
+
+    return str_contains($tr['plan.mode_manual_help'], 'Kütüphane')
+        && str_contains($en['plan.mode_manual_help'], 'Library');
+})());
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {

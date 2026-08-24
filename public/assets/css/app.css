@@ -250,13 +250,13 @@ button.lang-switch__opt:hover { color: var(--text); background: var(--surface-2)
 /* native date/time controls: render the picker dark (color-scheme) and match
    the other form fields. The only instance (publish-schedule) sits OUTSIDE
    .field, so target the types directly. Token-only — no width/layout change. */
-input[type="datetime-local"], input[type="date"], input[type="time"] {
+input[type="datetime-local"], input[type="date"], input[type="time"], input[type="number"] {
   color-scheme: dark;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-ctl);
   padding: 8px var(--s3); color: var(--text); font-size: 13px;
   transition: border-color var(--dur-micro) var(--ease-out);
 }
-input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]:focus {
+input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]:focus, input[type="number"]:focus {
   border-color: var(--accent); outline: none;
 }
 .field-row { display: flex; gap: var(--s3); align-items: flex-end; flex-wrap: wrap; }
@@ -709,14 +709,14 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
   padding: var(--s3) var(--s4); cursor: pointer; font-size: 13px; line-height: 1.55;
 }
 .mode-option.is-picked { border-color: var(--accent); background: var(--surface-2); }
-.mode-option input { margin-top: 3px; accent-color: var(--accent); flex: none; }
+.mode-option input { margin-top: 3px; flex: none; }
 /* Phase 10: per-platform AI-disclosure toggles */
 .ai-toggle {
   display: flex; gap: var(--s3); align-items: center; width: 100%;
   border: 1px solid var(--border); border-radius: 10px;
   padding: var(--s3) var(--s4); cursor: pointer; font-size: 13px; line-height: 1.5;
 }
-.ai-toggle input { accent-color: var(--accent); flex: none; width: 16px; height: 16px; }
+.ai-toggle input { flex: none; }
 
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s4); width: 100%; max-width: 560px; }
 /* two class selectors (0,2,0) so the hint beats base.css `.field > span` (0,1,1)
@@ -794,7 +794,8 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
   padding: 6px; background: var(--surface-2); transition: border-color 0.12s ease;
 }
 .photo-pick__item:hover { border-color: var(--accent); }
-.photo-pick__item input { position: absolute; top: 8px; left: 8px; accent-color: var(--accent); }
+.photo-pick__item input { position: absolute; top: 8px; left: 8px;
+  border-color: var(--text-2); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55); }
 .photo-pick__item:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 /* keyboard focus is visible while tabbing the radio cards (not just on check) */
 .photo-pick__item:has(input:focus-visible) { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
@@ -1399,7 +1400,10 @@ html:not(.js) .topbar__live { display: none; }
 .approve-card__schedule { min-width: 0; }
 .approve-card__schedule .field { min-width: 0; margin-bottom: 0; }
 .approve-card__schedule select { min-width: 0; width: 100%; max-width: 100%; }
-.approve-card__schedule input { min-width: 0; width: 100%; max-width: 240px; }
+/* :not([type=checkbox]) — the full-width rule was written for the date field and
+   was stretching the "publish now instead" checkbox to 240px, shoving its own
+   label to the far side of the card */
+.approve-card__schedule input:not([type="checkbox"]) { min-width: 0; width: 100%; max-width: 240px; }
 .slot-list { list-style: none; margin: var(--s3) 0; padding: 0; display: flex; flex-direction: column; gap: 1px;
   background: var(--border); border: 1px solid var(--border); border-radius: var(--r-card); overflow: hidden; }
 .slot { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
@@ -1410,11 +1414,14 @@ html:not(.js) .topbar__live { display: none; }
 .slot__when .num { font-variant-numeric: tabular-nums; }
 .slot__who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot__next { flex: none; }
-.slot__actions { display: flex; gap: var(--s2); margin-left: auto; }
+.slot__actions { display: flex; gap: var(--s2); margin-left: auto; flex-wrap: wrap; min-width: 0; }
 .slot-empty { margin: var(--s3) 0; }
 @media (max-width: 640px) {
   .slot { align-items: flex-start; }
   .slot__actions { margin-left: 0; width: 100%; }
+  /* the destructive label states what it will do; it must be readable in full,
+     so here it is allowed to wrap rather than be cut by the list's overflow */
+  .slot__actions .btn { white-space: normal; text-align: left; }
 }
 
 /* ---- styled file picker (Quick Create): the native control is replaced by the
@@ -1432,3 +1439,148 @@ html:not(.js) .topbar__live { display: none; }
 .filepick__name { font-size: 12.5px; color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filepick__name.is-set { color: var(--text-2); }
 .next-publish__plan { margin-left: var(--s3); font-size: 12px; white-space: nowrap; }
+
+
+/* ── Phase 24: the plan as a calendar ─────────────────────────────────────
+   375px is a DAY LIST (a seven-column grid is unreadable on a phone — the same
+   call the pipeline makes when it stacks); 768px and up becomes a week grid.
+   No new dependency: CSS grid over the existing tokens. */
+.cal {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s3);
+  grid-template-columns: 1fr;
+}
+.cal__day {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+  padding: var(--s3);
+  min-width: 0;
+}
+.cal__day--today { border-color: var(--accent); }
+.cal__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+  flex-wrap: wrap;
+}
+.cal__dow { font-weight: 500; font-size: 14px; margin: 0; }
+.cal__date { color: var(--text-2); font-size: 13px; }
+.cal__quiet { font-size: 13px; margin: 0; }
+
+.cell {
+  border-top: 1px solid var(--border);
+  padding-top: var(--s2);
+  margin-top: var(--s2);
+  min-width: 0;
+}
+.cell:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+.cell__when {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.cell__state { font-size: 12px; color: var(--text-2); }
+.cell--scheduled .cell__state,
+.cell--published .cell__state { color: var(--accent); }
+.cell--missed .cell__state,
+.cell--stopped .cell__state { color: var(--err); }
+.cell__title {
+  margin: var(--s1) 0 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell__note { margin: var(--s1) 0 0; font-size: 12px; }
+.cell__actions {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+  max-width: 100%;
+}
+.cell__assign {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+/* a day column is far narrower than the shared 200px select floor (the same
+   trap the approval card hit in Phase 23) — inside a cell the controls simply
+   fill the column instead */
+.cell__actions .field, .cell__assign .field { min-width: 0; margin-bottom: 0; }
+.cell__assign select { min-width: 0; width: 100%; max-width: 100%; }
+.cell__assign .btn { width: 100%; }
+
+.mode-choice {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mode-choice__opt {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 13px;
+}
+
+/* one choice + its own guidance. The help is revealed by the radio beside it —
+   a plain sibling selector, so it needs no script and survives JS being off. */
+.mode-opt {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0 var(--s2);
+}
+.mode-opt label { font-size: 13px; cursor: pointer; }
+.mode-opt__help {
+  grid-column: 2;
+  margin: 2px 0 var(--s1);
+  font-size: 12px;
+  color: var(--text-2);
+  max-width: 34rem;
+  display: none;
+}
+.mode-opt input:checked ~ .mode-opt__help { display: block; }
+
+.mode-opt__help a, .field__hint a, .callout a, .note a { color: var(--accent); }
+/* nowrap ONLY where there is room for it: in a ~110px calendar cell it clipped
+   the link straight through the card edge (the overflow check cannot see this —
+   the document never gets wider). */
+.mode-opt__help a, .callout a { white-space: nowrap; }
+.cell__actions .field__hint a { white-space: normal; overflow-wrap: anywhere; }
+.mode-opt__help a:hover, .field__hint a:hover, .callout a:hover, .note a:hover { text-decoration: underline; }
+
+/* the mode choice carries guidance now, so it is a block of its own rather than
+   one more control squeezed onto the add-a-time row */
+.slot-add .mode-choice { flex: 1 1 100%; }
+
+/* the planned time on an approval card — a statement, not another question */
+/* This block also carries .approve-card__schedule, which is flex-direction:
+   column — so align-items here is the HORIZONTAL axis, and `center` shrank each
+   child to a narrow shrink-to-fit box (the checkbox label wrapped onto three
+   lines). Stretch them instead and keep the reading order down the column. */
+.approve-card__planned {
+  align-items: stretch;
+  gap: var(--s1);
+  max-width: 100%;
+}
+.approve-card__planned .mode-choice__opt { width: 100%; }
+
+@media (min-width: 768px) {
+  .cal { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--s2); }
+  .cal__day { padding: var(--s2); }
+  .cal__head { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .cell__actions, .cell__assign { flex-direction: column; align-items: stretch; }
+}

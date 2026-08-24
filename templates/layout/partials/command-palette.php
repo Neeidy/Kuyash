@@ -37,6 +37,10 @@ use Kuyash\Core\View;
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l6 3-6 3-6-3z"/><path d="M2 8l6 3 6-3M2 11l6 3 6-3"/></svg></span>
         <?= View::t('nav.queue') ?>
       </li>
+      <li class="cmdk__item" role="option" aria-selected="false" data-href="/plan">
+        <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg></span>
+        <?= View::t('nav.plan') ?>
+      </li>
       <li class="cmdk__item" role="option" aria-selected="false" data-href="/accounts">
         <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5.2" r="2.6"/><path d="M3 13.5c0-2.6 2.2-4.3 5-4.3s5 1.7 5 4.3"/></svg></span>
         <?= View::t('nav.accounts') ?>

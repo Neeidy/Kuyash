@@ -133,6 +133,8 @@ return static function (Container $container, string $basePath): void {
         $c->get(UsageRepository::class),
         $c->get(AccountRepository::class),
         $c->get(JobRepository::class),
+        $c->get(\Kuyash\Publish\PlanBoard::class),
+        $c->get(WorkspaceSettings::class),
     ));
 
     $container->bind(DashboardController::class, static fn (Container $c): DashboardController => new DashboardController(
@@ -190,6 +192,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(Flash::class),
         $c->get(WorkspaceSettings::class),
         (array) $c->get(Config::class)->get('library'),
+        $c->get(\Kuyash\Publish\OccurrenceRepository::class),
     ));
 
     $container->bind(MediaController::class, static fn (Container $c): MediaController => new MediaController(
@@ -234,6 +237,9 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(Flash::class),
         $c->get(\Kuyash\Publish\PublishProvider::class),
+        // one live provider call per click, against an undocumented vendor
+        // rate limit: 20 syncs / 60s per IP
+        new RateLimiter($c->get(Database::class), 20, 60),
     ));
 
     $container->bind(WebhookController::class, static fn (Container $c): WebhookController => new WebhookController(
@@ -266,6 +272,19 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceContext::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+        $c->get(\Kuyash\Publish\OccurrenceRepository::class),
+        $c->get(\Kuyash\Publish\OccurrenceMaterializer::class),
+        $c->get(\Kuyash\Publish\PlanBoard::class),
+        $c->get(\Kuyash\Library\AssetRepository::class),
+        $c->get(\Kuyash\Workflow\WorkflowRepository::class),
+        $c->get(\Kuyash\Workflow\Engine::class),
+        $c->get(\Kuyash\Workflow\EventLog::class),
+        $c->get(\Kuyash\Auth\Auth::class),
+        $c->get(\Kuyash\Publish\AccountRepository::class),
+        // per-IP throttle on plan writes: 60 changes / 60s. Far above any human
+        // editing a weekly plan, low enough that a stuck script cannot churn it.
+        new RateLimiter($c->get(Database::class), 60, 60),
+        $c->get(\Kuyash\Usage\CostEstimator::class),
     ));
 
     $container->bind(QueueController::class, static fn (Container $c): QueueController => new QueueController(
@@ -281,6 +300,8 @@ return static function (Container $container, string $basePath): void {
         $c->get(SlotRepository::class),
         $c->get(SlotResolver::class),
         $c->get(WorkspaceSettings::class),
+        $c->get(\Kuyash\Publish\OccurrenceRepository::class),
+        $c->get(Database::class),
     ));
 
     $container->bind(SettingsController::class, static fn (Container $c): SettingsController => new SettingsController(

@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use Kuyash\Analytics\DailySnapshot;
 use Kuyash\Core\ErrorHandler;
+use Kuyash\Publish\PlanRunner;
 use Kuyash\Publish\Reconciler;
 use Kuyash\Publish\WebhookInbox;
 use Kuyash\Workflow\Maintenance;
@@ -71,6 +72,8 @@ $reconciler = $container->get(Reconciler::class);
 $snapshot = $container->get(DailySnapshot::class);
 /** @var Kuyash\Workflow\WorkerHeartbeat $heartbeat */
 $heartbeat = $container->get(Kuyash\Workflow\WorkerHeartbeat::class);
+/** @var PlanRunner $plan */
+$plan = $container->get(PlanRunner::class);
 
 $chores = $maintenance->run(gmdate('Y-m-d\TH:i:s\Z'));
 // publish maintenance once on start too, so a `--once` drain also processes any
@@ -80,11 +83,26 @@ $reconciler->sweep(gmdate('Y-m-d\TH:i:s\Z'));
 // read-only metrics poll; self-limits to one row per account per UTC day, so
 // running it on every start (and on the chore cadence) costs one cheap query
 $snapshot->capture(gmdate('Y-m-d\TH:i:s\Z'));
+// Phase 24 — the weekly plan, run BEFORE the first job is ever claimed. Order is
+// load-bearing: a worker that was down over a planned time must CLOSE those
+// stale publishes, not wake up and fire a day's worth of them at once.
+// A failing plan tick must NEVER stop the queue: this runs before the first
+// claim, and an uncaught throw here (SQLite lock contention with a /plan page
+// view is enough) would exit the worker and silently halt ALL publishing.
+$planCounts = ['materialized' => 0, 'swept' => 0, 'started' => 0];
+try {
+    $planCounts = $plan->tick(gmdate('Y-m-d\TH:i:s\Z'));
+} catch (Throwable $e) {
+    error_log('Kuyash: plan tick failed on startup — ' . $e->getMessage());
+}
 $heartbeat->beat(gmdate('Y-m-d\TH:i:s\Z')); // mark alive immediately on start
 fwrite(STDOUT, sprintf(
-    "worker: started (maintenance: %d login rows pruned, %d orphan files swept)\n",
+    "worker: started (maintenance: %d login rows pruned, %d orphan files swept; plan: %d slot(s) added, %d closed, %d started)\n",
     $chores['pruned_login_attempts'],
     $chores['swept_orphans'],
+    $planCounts['materialized'],
+    $planCounts['swept'],
+    $planCounts['started'],
 ));
 
 $processed = 0;
@@ -108,6 +126,14 @@ while (!$stop) {
         // daily audience/engagement snapshot: the UNIQUE(day) guard makes this
         // a no-op query for the rest of the day once today's row exists
         $snapshot->capture(gmdate('Y-m-d\TH:i:s\Z'));
+        // weekly plan: fill the calendar, close times that passed, and start
+        // content for automatic times inside their lead window. Guarded for the
+        // same reason as the startup call — the queue keeps running regardless.
+        try {
+            $plan->tick(gmdate('Y-m-d\TH:i:s\Z'));
+        } catch (Throwable $e) {
+            error_log('Kuyash: plan tick failed — ' . $e->getMessage());
+        }
         $lastChores = time();
     }
 

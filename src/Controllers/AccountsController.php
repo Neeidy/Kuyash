@@ -7,6 +7,7 @@ namespace Kuyash\Controllers;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Flash;
 use Kuyash\Core\Messages;
+use Kuyash\Core\RateLimiter;
 use Kuyash\Core\Response;
 use Kuyash\Core\View;
 use Kuyash\Library\AssetRepository;
@@ -30,6 +31,9 @@ final class AccountsController
 {
     private const STATE_KEY = 'oauth_state';
 
+    /** Per-IP throttle bucket for the live account sync. */
+    private const RATE_BUCKET = 'accounts_sync';
+
     public function __construct(
         private readonly View $view,
         private readonly AccountRepository $accounts,
@@ -41,6 +45,8 @@ final class AccountsController
         private readonly Csrf $csrf,
         private readonly Flash $flash,
         private readonly PublishProvider $publisher,
+        // Optional (null = no throttling) so existing constructions stay valid.
+        private readonly ?RateLimiter $rateLimiter = null,
     ) {
     }
 
@@ -165,6 +171,15 @@ final class AccountsController
      */
     public function sync(array $params = []): Response
     {
+        // Throttle FIRST: this is the one authenticated button that makes a live
+        // provider call per click, against an undocumented vendor rate limit
+        // (a Phase 22 follow-up).
+        if ($this->rateLimiter !== null
+            && $this->rateLimiter->tooMany(self::RATE_BUCKET, (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'))
+        ) {
+            return $this->back('error', 'rate.limited');
+        }
+
         $now = gmdate('Y-m-d\TH:i:s\Z');
         try {
             $remote = $this->publisher->accountMetrics();

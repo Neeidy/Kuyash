@@ -94,8 +94,28 @@ use Kuyash\Core\View;
         <div class="approve-card__actions">
           <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve">
             <?= $csrfField ?>
-            <?php if ($job['type'] === 'render_review'): ?>
+            <?php if ($job['type'] === 'render_review' && ($job['planned_at'] ?? null) !== null): ?>
+            <?php /* PLANNED: the day already answered "when", so this states it
+                     instead of asking again. Going out sooner is still possible,
+                     but only as a deliberate, separate choice — never a silent
+                     fall-through to "publish now". */ ?>
+            <div class="approve-card__schedule approve-card__planned">
+              <span class="muted"><?= View::t('queue.planned_for', ['when' => Messages::until((string) $job['planned_at'])]) ?></span>
+              <span class="field__hint"><?= View::t('queue.planned_keep') ?></span>
+              <label class="mode-choice__opt">
+                <input type="checkbox" name="publish_now" value="1"> <?= View::t('queue.planned_now') ?>
+              </label>
+              <?php /* ticking the box abandons the planned day — say so here, at
+                       the point of commitment, not only in the label above */ ?>
+              <span class="field__hint"><?= View::t('queue.planned_now_hint') ?></span>
+            </div>
+            <?php elseif ($job['type'] === 'render_review'): ?>
             <div class="approve-card__schedule">
+              <?php if (($job['planned_missed'] ?? false) === true): ?>
+              <?php /* its planned time went by while it waited — say so, and give
+                       back the full picker rather than a dead time */ ?>
+              <span class="field__hint"><?= View::t('queue.planned_missed') ?></span>
+              <?php endif; ?>
               <span class="muted"><?= View::t('queue.schedule_label', ['zone' => $timezone]) ?></span>
               <?php if ($slots !== []): ?>
               <?php /* the weekly plan first: picking a planned time is the common

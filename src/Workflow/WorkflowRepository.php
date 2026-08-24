@@ -83,9 +83,22 @@ final class WorkflowRepository
     /** The workspace's workflow for a given template (e.g. quick_create), or null. */
     public function findByTemplate(WorkspaceContext $ctx, string $template): ?array
     {
+        return $this->findByTemplateFor($ctx->id(), $template);
+    }
+
+    /**
+     * The same lookup addressed by workspace id — the WORKER face (Phase 24).
+     * The plan chore is sessionless and resolves the workspace's `full` workflow
+     * this way rather than being handed a configured id: one less setting that
+     * could point at a deleted or foreign row.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function findByTemplateFor(int $workspaceId, string $template): ?array
+    {
         $row = $this->db->one(
             'SELECT * FROM workflows WHERE workspace_id = ? AND template = ? ORDER BY id ASC LIMIT 1',
-            [$ctx->id(), $template],
+            [$workspaceId, $template],
         );
 
         return $row === null ? null : self::shape($row);

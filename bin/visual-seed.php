@@ -313,11 +313,49 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
     // a slot is operator configuration, so seeding it populates the settings
     // screen and the approval picker without asserting anything about results.
     $db->run("UPDATE workspaces SET timezone = 'Europe/Istanbul' WHERE id = ?", [$workspaceId]);
-    foreach ([[1, '09:00'], [3, '18:30'], [5, '12:00']] as [$weekday, $time]) {
+    // Phase 24: two of the three times are filled by the operator, one by Kuyash,
+    // so the calendar shows BOTH modes. Still pure configuration — no invented
+    // metric, and (below) no fabricated "published" day.
+    foreach ([[1, '09:00', 'manual'], [3, '18:30', 'auto'], [5, '12:00', 'manual']] as [$weekday, $time, $mode]) {
         $db->run(
-            'INSERT INTO publish_slots (workspace_id, account_id, weekday, time_hhmm, enabled, created_at, updated_at)
-             VALUES (?, NULL, ?, ?, 1, ?, ?)',
-            [$workspaceId, $weekday, $time, $now, $now],
+            'INSERT INTO publish_slots (workspace_id, account_id, weekday, time_hhmm, mode, enabled, created_at, updated_at)
+             VALUES (?, NULL, ?, ?, ?, 1, ?, ?)',
+            [$workspaceId, $weekday, $time, $mode, $now, $now],
+        );
+    }
+
+    // Calendar cells for the next two weeks. Seeded through the REAL materializer
+    // so the screenshots show what the product actually produces, and left in
+    // 'open' state only: a demo must never render a day as "Published" for a post
+    // that never happened (the Phase 22 honesty rule, applied to the calendar).
+    $seedOcc = new Kuyash\Publish\OccurrenceRepository($db);
+    (new Kuyash\Publish\OccurrenceMaterializer($seedOcc, new Kuyash\Publish\SlotResolver()))->materialize(
+        $workspaceId,
+        'Europe/Istanbul',
+        (new Kuyash\Publish\SlotRepository($db))->listForWorkspace($workspaceId),
+        $now,
+    );
+
+    // Attach the workspace's existing awaiting-approval run to the first calendar
+    // day, so the screenshots cover the PLANNED approval card (a stated day plus
+    // the "publish now instead" override) rather than only the plain picker.
+    // Real rows, real wiring — no fabricated outcome: the day reads "Waiting for
+    // you", which is exactly what it is.
+    $seedAwaiting = $db->one(
+        "SELECT run_id FROM jobs WHERE workspace_id = ? AND status = 'awaiting_approval'
+           AND type = 'render_review' ORDER BY id ASC LIMIT 1",
+        [$workspaceId],
+    );
+    $seedCell = $db->one(
+        'SELECT id, publish_at FROM slot_occurrences WHERE workspace_id = ? ORDER BY publish_at ASC LIMIT 1',
+        [$workspaceId],
+    );
+    if ($seedAwaiting !== null && $seedCell !== null) {
+        $seedOcc->reserve($workspaceId, (int) $seedCell['id'], null, $now);
+        $seedOcc->attachRun($workspaceId, (int) $seedCell['id'], (int) $seedAwaiting['run_id'], $now);
+        $db->run(
+            'UPDATE runs SET publish_after = ? WHERE id = ? AND workspace_id = ?',
+            [(string) $seedCell['publish_at'], (int) $seedAwaiting['run_id'], $workspaceId],
         );
     }
 

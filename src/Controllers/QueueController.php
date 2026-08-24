@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Kuyash\Controllers;
 
+use Kuyash\Core\Database;
 use Kuyash\Auth\Auth;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Flash;
 use Kuyash\Core\Messages;
 use Kuyash\Core\Response;
 use Kuyash\Core\View;
+use Kuyash\Publish\OccurrenceRepository;
 use Kuyash\Publish\SlotRepository;
 use Kuyash\Publish\SlotResolver;
 use Kuyash\Workflow\Decision;
@@ -40,6 +42,8 @@ final class QueueController
         private readonly SlotRepository $slots,
         private readonly SlotResolver $slotResolver,
         private readonly WorkspaceSettings $settings,
+        private readonly OccurrenceRepository $occurrences,
+        private readonly Database $db,
     ) {
     }
 
@@ -52,7 +56,7 @@ final class QueueController
             'workspaceName' => $this->workspace->currentName(),
             'csrfField' => $this->csrf->field(),
             'flashes' => Messages::resolveFlashes($this->flash),
-            'awaiting' => $this->jobs->awaitingApproval($this->workspace),
+            'awaiting' => $this->withPlannedDay($this->jobs->awaitingApproval($this->workspace)),
             'jobs' => $this->jobs->listFor($this->workspace),
             'runs' => $this->runs->listFor($this->workspace, 20),
             'workerAlive' => $this->heartbeat->isAlive(gmdate('Y-m-d\TH:i:s\Z')),
@@ -111,7 +115,16 @@ final class QueueController
         $email = (string) ($user['email'] ?? '');
 
         $scheduledAt = null;
+        $plannedKept = null;
         if ($action === 'approve') {
+            // A PLANNED render already carries its day on the run (written when
+            // the run was born). Approving it must keep that day unless the
+            // operator explicitly asks for something else — and "publish now
+            // instead" has to CLEAR the stored instant, because approve() only
+            // ever writes a time, it never removes one.
+            $planned = $this->plannedFor((int) $id);
+            $publishNow = $planned !== null && trim((string) ($_POST['publish_now'] ?? '')) === '1';
+
             $schedule = $this->requestedSchedule();
             // A scheduling intent that cannot be honoured must NOT silently become
             // "publish now". Publishing is irreversible on a live account, so an
@@ -127,17 +140,99 @@ final class QueueController
             ? $this->engine->approve($this->workspace, (int) $id, $userId, $email, $scheduledAt)
             : $this->engine->reject($this->workspace, (int) $id, $userId, $email);
 
+        if ($action === 'approve' && $decision === Decision::Ok) {
+            // Only NOW, once the approval actually took: clearing the planned
+            // instant before the engine decides would mutate a run whose
+            // approval was then refused as already-decided.
+            if (($publishNow ?? false) && $planned !== null) {
+                $this->engine->setPublishAfter($this->workspace->id(), (int) $planned['run_id'], null);
+            }
+            // Report the instant the RUN carries, not the one the plan wanted —
+            // a confirmation that names a time the queue is not holding is a
+            // lie, however small.
+            $plannedKept = $this->actualPublishAfter((int) $id);
+        }
+
         return match ($decision) {
             Decision::NotFound => $this->notFound(),
             Decision::AlreadyDecided => $this->backToQueue('error', 'approval.already_decided'),
             Decision::Ok => $action === 'approve'
                 // name the time back to the operator: a scheduling feature whose
                 // confirmation does not mention the schedule is half-built
-                ? ($scheduledAt === null
+                ? (($scheduledAt ?? $plannedKept) === null
                     ? $this->backToQueue('success', 'approval.approved')
-                    : $this->backToQueue('success', 'approval.approved_scheduled', ['when' => Messages::until($scheduledAt)]))
+                    : $this->backToQueue('success', 'approval.approved_scheduled', ['when' => Messages::until((string) ($scheduledAt ?? $plannedKept))]))
                 : $this->backToQueue('success', 'approval.rejected'),
         };
+    }
+
+    /**
+     * Attach the calendar day a card was planned for, so the approval form can
+     * state it instead of asking again (Phase 24). A day whose time has already
+     * gone by is NOT attached: the sweep has cleared its stale instant, and the
+     * operator must be offered a fresh choice rather than a dead one.
+     *
+     * @param list<array<string, mixed>> $jobs
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function withPlannedDay(array $jobs): array
+    {
+        $cells = $this->occurrences->byRunIds(
+            $this->workspace,
+            array_map(static fn (array $j): int => (int) ($j['run_id'] ?? 0), $jobs),
+        );
+        if ($cells === []) {
+            return $jobs;
+        }
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+
+        foreach ($jobs as $i => $job) {
+            $cell = $cells[(int) ($job['run_id'] ?? 0)] ?? null;
+            $jobs[$i]['planned_at'] = $cell !== null && (string) $cell['publish_at'] > $now
+                ? (string) $cell['publish_at']
+                : null;
+            $jobs[$i]['planned_missed'] = $cell !== null && (string) $cell['publish_at'] <= $now;
+        }
+
+        return $jobs;
+    }
+
+    /**
+     * The still-upcoming calendar day behind an awaiting job, or null.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function plannedFor(int $jobId): ?array
+    {
+        // It must be the publish-time approval gate, and it must still be open:
+        // resolving any job of a planned run let a replayed POST reach the
+        // "publish now" branch on a decision the engine then refused.
+        $job = $this->db->one(
+            "SELECT run_id FROM jobs
+             WHERE id = ? AND workspace_id = ? AND type = 'render_review' AND status = 'awaiting_approval'",
+            [$jobId, $this->workspace->id()],
+        );
+        if ($job === null) {
+            return null;
+        }
+        $cell = $this->occurrences->byRunIds($this->workspace, [(int) $job['run_id']])[(int) $job['run_id']] ?? null;
+
+        return $cell !== null && (string) $cell['publish_at'] > gmdate('Y-m-d\TH:i:s\Z') ? $cell : null;
+    }
+
+    /** The instant the run behind this job is really gated on, or null. */
+    private function actualPublishAfter(int $jobId): ?string
+    {
+        $row = $this->db->one(
+            'SELECT r.publish_after FROM jobs j
+             JOIN runs r ON r.id = j.run_id AND r.workspace_id = j.workspace_id
+             WHERE j.id = ? AND j.workspace_id = ?',
+            [$jobId, $this->workspace->id()],
+        );
+        $value = $row['publish_after'] ?? null;
+
+        return $value === null ? null : (string) $value;
     }
 
     /**

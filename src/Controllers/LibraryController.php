@@ -15,6 +15,7 @@ use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
 use Kuyash\Library\InvalidUploadException;
 use Kuyash\Library\UploadedFile;
+use Kuyash\Publish\OccurrenceRepository;
 use Kuyash\Workspace\WorkspaceContext;
 use Kuyash\Workspace\WorkspaceSettings;
 
@@ -34,6 +35,7 @@ final class LibraryController
         private readonly WorkspaceSettings $settings,
         /** @var array<string, mixed> */
         private readonly array $libraryConfig,
+        private readonly OccurrenceRepository $occurrences,
     ) {
     }
 
@@ -139,6 +141,19 @@ final class LibraryController
         if ($asset === null) {
             return $this->notFound();
         }
+
+        // Phase 24: a video that is standing on the calendar is in use. Deleting
+        // it would leave a planned day pointing at nothing, so the operator is
+        // told to clear the day first rather than discovering it later.
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $planned = $this->occurrences->plannedUsesOfAsset($this->workspace, (int) $asset['id'], $now);
+        if ($planned > 0) {
+            return $this->backToLibrary('error', 'asset.delete_planned');
+        }
+        // Days that are DONE with this video still hold a foreign key to it —
+        // a published day keeps its asset_id for the whole retention window — so
+        // release those references first or the delete fails outright.
+        $this->occurrences->forgetAssetOnFinishedDays($this->workspace, (int) $asset['id'], $now);
 
         // row first (DB is the source of truth), unlink after — an orphan
         // file in a private dir is harmless; a live row pointing at nothing

@@ -7,6 +7,8 @@ namespace Kuyash\Workflow;
 use Kuyash\Core\Database;
 use Kuyash\Media\AssetCache;
 use Kuyash\Publish\AccountRepository;
+use Kuyash\Publish\PlanBoard;
+use Kuyash\Workspace\WorkspaceSettings;
 use Kuyash\Usage\CreditLedger;
 use Kuyash\Usage\UsageRepository;
 use Kuyash\Workspace\WorkspaceContext;
@@ -33,6 +35,11 @@ final class Cockpit
         private readonly UsageRepository $usage,
         private readonly AccountRepository $accountRepo,
         private readonly JobRepository $jobs,
+        // Phase 24 — optional so every existing construction site (and the tests
+        // that build a Cockpit by hand) keeps working unchanged; a null board
+        // simply means the plan line is not shown.
+        private readonly ?PlanBoard $board = null,
+        private readonly ?WorkspaceSettings $settings = null,
     ) {
     }
 
@@ -63,6 +70,11 @@ final class Cockpit
             // from the real job gate, not from the slot plan — a slot is only a
             // template, this is a scheduled fact.
             'nextPublish' => $this->nextPublish($ws, $now),
+            // Phase 24: a one-line read of the week's plan. Derive-only, and a
+            // zero stays a zero — nothing here is invented to fill the line.
+            'planWeek' => ($this->board === null || $this->settings === null)
+                ? null
+                : $this->board->summary($ctx, $this->settings->timezone($ws), $now),
         ];
     }
 

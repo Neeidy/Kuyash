@@ -17,6 +17,11 @@ use Kuyash\Publish\SlotResolver;
  */
 final class WorkspaceSettings
 {
+    /** Phase 24 lead window bounds — mirror the 0017 CHECK. */
+    public const LEAD_MIN = 30;
+    public const LEAD_MAX = 1440;
+    public const LEAD_DEFAULT = 180;
+
     public const CAP_MIN = 1;
     public const CAP_MAX = 10;
 
@@ -156,6 +161,55 @@ final class WorkspaceSettings
         );
 
         return true;
+    }
+
+    /**
+     * Weekly-plan settings (Phase 24).
+     *
+     * `auto_lead_minutes` is how far ahead an AUTOMATIC publishing time produces
+     * its content. The pipeline itself takes minutes; the rest of the window
+     * exists so a HUMAN can approve it before the time arrives — Phase 24 never
+     * publishes unapproved content.
+     *
+     * `plan_paused` stops Kuyash from CREATING content. It is narrower than the
+     * compliance kill switch on purpose: posts a person already approved keep
+     * their time. Guardrails constrain autonomy, not people.
+     *
+     * @return array{auto_lead_minutes: int, plan_paused: bool}
+     */
+    public function plan(int $workspaceId): array
+    {
+        $row = $this->db->one(
+            'SELECT auto_lead_minutes, plan_paused FROM workspaces WHERE id = ?',
+            [$workspaceId],
+        ) ?? [];
+
+        return [
+            'auto_lead_minutes' => (int) ($row['auto_lead_minutes'] ?? self::LEAD_DEFAULT),
+            'plan_paused' => (int) ($row['plan_paused'] ?? 0) === 1,
+        ];
+    }
+
+    /** Rejects anything outside the schema's 30…1440 CHECK rather than letting SQLite throw. */
+    public function setAutoLeadMinutes(int $workspaceId, int $minutes): bool
+    {
+        if ($minutes < self::LEAD_MIN || $minutes > self::LEAD_MAX) {
+            return false;
+        }
+        $this->db->run(
+            'UPDATE workspaces SET auto_lead_minutes = ?, updated_at = ? WHERE id = ?',
+            [$minutes, gmdate(self::ISO), $workspaceId],
+        );
+
+        return true;
+    }
+
+    public function setPlanPaused(int $workspaceId, bool $paused): void
+    {
+        $this->db->run(
+            'UPDATE workspaces SET plan_paused = ?, updated_at = ? WHERE id = ?',
+            [$paused ? 1 : 0, gmdate(self::ISO), $workspaceId],
+        );
     }
 
     /**

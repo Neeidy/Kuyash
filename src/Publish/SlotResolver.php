@@ -29,6 +29,9 @@ final class SlotResolver
 {
     private const ISO = 'Y-m-d\TH:i:s\Z';
 
+    /** Runaway guard for occurrencesBetween — a year of weekly slots is 53. */
+    private const MAX_OCCURRENCES = 128;
+
     /**
      * The next UTC instant matching this slot, strictly after $nowIso.
      *
@@ -68,6 +71,59 @@ final class SlotResolver
         }
 
         return $candidate->setTimezone(new DateTimeZone('UTC'))->format(self::ISO);
+    }
+
+    /**
+     * Every instant this slot lands on inside a window — the calendar's rows
+     * (Phase 24). Each entry carries BOTH the UTC instant and the LOCAL calendar
+     * day it belongs to, because the day is the occurrence's identity: a
+     * daylight-saving shift moves the instant but must never split one Monday
+     * into two cells, nor merge two into one.
+     *
+     * Built on nextOccurrence, so the DST rule above is applied once and reused
+     * rather than re-derived. Still pure: the caller supplies the window.
+     *
+     * @param string $fromIso exclusive lower bound, ISO-8601 UTC
+     * @param string $toIso   exclusive upper bound, ISO-8601 UTC
+     *
+     * @return list<array{local_date: string, at: string}> ascending; empty when
+     *         the slot/timezone is invalid or nothing falls inside the window
+     */
+    public function occurrencesBetween(string $timezone, int $weekday, string $hhmm, string $fromIso, string $toIso): array
+    {
+        if ($fromIso >= $toIso || !self::isValidTimezone($timezone)) {
+            return [];
+        }
+
+        try {
+            $zone = new DateTimeZone($timezone);
+        } catch (Throwable) {
+            return [];
+        }
+
+        $out = [];
+        $cursor = $fromIso;
+        // A weekly slot yields at most one instant per 7 days; the cap is a
+        // runaway guard, not a business limit (a year of weeks is 53).
+        for ($i = 0; $i < self::MAX_OCCURRENCES; $i++) {
+            $at = $this->nextOccurrence($timezone, $weekday, $hhmm, $cursor);
+            if ($at === null || $at >= $toIso) {
+                break;
+            }
+
+            try {
+                $local = (new DateTimeImmutable($at, new DateTimeZone('UTC')))->setTimezone($zone);
+            } catch (Throwable) {
+                break;
+            }
+            $out[] = ['local_date' => $local->format('Y-m-d'), 'at' => $at];
+
+            // nextOccurrence is STRICTLY after its argument, so handing it the
+            // instant we just took always advances — no infinite loop is possible.
+            $cursor = $at;
+        }
+
+        return $out;
     }
 
     /**
