@@ -414,3 +414,118 @@ The real publish path is exercised by unit tests against fakes (all 8 documented
 
 **Verification.** 821 PASS / 0 FAIL (+adapter mapping ×13, AI disclosure ×5, webhook event-id
 ×2, settings/migration). Schemas cross-checked against the committed raw `openapi.yaml`.
+
+## ADR-022: The weekly plan becomes a calendar, with two modes (Phase 24, 2026-08-23)
+
+Phase 23 shipped weekly **time templates** ("Mon 09:00" in `workspaces.timezone`,
+resolved by a pure DST-correct `SlotResolver`). What it could not do is **hold**
+anything: content was bound to a time only at the moment of approval, one item at a
+time, so an operator could say "send this to the next Tuesday" but never "put THIS
+video on Tuesday the 24th". Phase 24 adds the missing noun — a dated **occurrence**
+— and a **mode** saying who fills each time.
+
+**Risk-first.** Before any product code, a spike proved the central seam end to end
+with existing code only: a DST-crossing `America/New_York` Wed 09:00 resolves to
+`2026-03-11T13:00:00Z`, survives `runs.publish_after` → the queue's `run_after` gate
+→ and arrives at the adapter as exactly that `scheduledFor`. Everything after is a
+delta on a proven path (`p24/task0`, 2 checks).
+
+**migration 0017 (additive only):** `publish_slots.mode` ('manual'|'auto', default
+manual — the honest truth about existing rows); `workspaces.auto_lead_minutes`
+(30–1440, default 180) + `plan_paused`; and **`slot_occurrences`** — the calendar
+cell. Identity is `UNIQUE(slot_id, local_date)`: the LOCAL day, not the instant, so a
+daylight-saving shift moves `publish_at` without ever splitting one Monday into two
+cells. `UNIQUE(run_id) WHERE run_id IS NOT NULL` makes "start content for this cell"
+safe to retry. **`status` is deliberately only `open|assigned|skipped`** — "preparing
+/ waiting for you / scheduled / published" are READ from the run and its jobs by the
+derive-only `PlanBoard`, never stored a second time (Phase 22/23's standing rule:
+read the real job gate, not the plan). One state machine, not two.
+
+**The load-bearing decision: `runs.publish_after` is written at run BIRTH, not at
+approval.** `Engine::approve` only ever *writes* a time (never clears one), so a
+pre-set instant survives an approval that names nothing — and, critically, it also
+reaches runs that never pass through `approve()` at all, which is the compliance
+agent's `finalizeAutoApproved` path. Written at approval instead, an auto-approved
+planned post would have ignored its slot and published immediately. Two new Engine
+methods carry this: **`setPublishAfter`** (nullable — a missed slot must not leave a
+past instant behind, because the queue reads a past instant as "publish now") and
+**`cancelRun`** (guarded; refuses once the publish job is `processing`/`published`,
+and writes NO `approvals` row — cancelling is not a human rejection). **`startRun`
+now delegates to `startRunFor(int $workspaceId, …)`** so the sessionless worker can
+create a run without a `WorkspaceContext` ever being bound there (the house rule the
+repositories already follow); every existing caller and tenancy check is unchanged.
+
+**`PlanRunner`** is the worker half, on the ordinary chore cadence **and on worker
+startup BEFORE the first claim** — order is load-bearing: a worker down over a
+planned time must CLOSE those stale publishes, not wake up and fire a day of them.
+Three steps per workspace: materialize (idempotent), **sweep** (`GRACE_MINUTES = 60`;
+inside the window it still goes out, beyond it the queued publish is cancelled and
+the cell is closed with a real reason), then **produce**. Production runs every
+guardrail *before a single row exists*: `plan_paused` → `kill_switch` → per-account
+daily cap (`PublishCounter`) → connected accounts → owner (`runs.created_by` is NOT
+NULL, so an automatic run is attributed to the real owner) → `full` workflow →
+`PreflightGate` inside `startRunFor` (throws `BudgetExceededException` before any
+row: **no half-started run, no spend**). A block is **NOTED, not closed**
+(`noteBlocked`, audited only when the reason CHANGES — the `finalizeDeferred`
+discipline): a cap resets and a switch goes back on, so declaring the cell missed
+early would be a lie.
+
+**Approval is not weakened.** `script_draft` remains a human gate for automatic runs
+(`Nodes::APPROVAL_TYPES` untouched), so the default automatic flow is exactly "Kuyash
+writes it, then it waits for you". **ADR-015's locked auto-approval scope is NOT
+extended**; fully-unattended publishing stays a separate, compliance-gated task.
+`approval_mode` remains `'manual'` by default and no second autonomy toggle was
+added — `plan_paused` is deliberately narrower (it stops PRODUCTION; posts a human
+already approved keep their time).
+
+**Two real defects found while building, both fixed:** deleting a publishing time
+threw a FK violation once its cells existed (`SlotRepository::remove` now drops the
+time and its days in one transaction — a day has no meaning without its time, and
+the audit trail lives in the append-only event log); and `.sr-only` was used in
+markup but **never defined in CSS**, so "hidden" labels had been rendering in full
+since Phase 23. Also: `input[type="number"]` matched neither styled selector list
+(the same Phase-15 drift), and a calendar cell is far narrower than the shared 200px
+select floor (the trap the approval card hit in Phase 23).
+
+**UI:** `/plan` is calendar-first — a **day list at 375px**, a **7-column week grid
+at 768px+** (CSS grid over existing tokens, no new dependency). Cell states carry
+zero jargon ("Empty", "Kuyash will make one", "Waiting for you", "Ready to go out",
+"Missed" + the real reason). The queue's planned card **states** its day instead of
+asking again, with "publish now instead" as a deliberate, separate choice that
+explicitly CLEARS the stored instant. **Phase 23 debts closed:** plan mutations are
+now audited as `guardrail.*`, `slots.invalid` no longer conflates a duplicate with
+bad input, and the plan routes plus `/accounts/sync` are per-IP throttled.
+**Truthfulness:** the visual seed materializes cells through the real materializer
+and leaves them `open` only — a demo never renders a day as "Published" for a post
+that never happened.
+
+**All three closing gates returned NO-GO, and every blocker was fixed in the same
+round** — each pinned by a test in the `p24/gatefix` group. The convergent one (all
+three found it) was the worst: removing a publishing time filtered its committed
+days on `publish_at > now`, so a day inside the grace window was deleted without
+confirmation and without cancelling its run — leaving a run holding a PAST
+`publish_after`, which the queue reads as "publish now". Approving that leftover
+card later would have published immediately, from a time the operator had deleted,
+with no plan record that it was ever planned. That is the same failure class Phase
+23 rated CRITICAL. Fixed on both sides: the confirmation now covers every day
+carrying work whatever its time, and `SlotRepository::remove()` refuses outright
+while any day still points at a run. Also fixed: a successfully-published day was
+swept and audited as `missed` (a fabricated failure per post, every day); the board
+windowed from `now`, so the one day needing an explanation was the one day that
+vanished and the dashboard's missed counter could never leave zero; every `skipped`
+day rendered as a red "Missed", including days the operator cleared and days a
+guardrail deliberately held; an uncaught `PlanRunner::tick()` on the worker's
+pre-claim path could kill the worker and silently halt ALL publishing; deleting an
+ordinary old library video hit a foreign key and 500'd; the approval confirmation
+reported the PLAN's time rather than the one the run actually carries, and a
+replayed `publish_now` could mutate a run whose approval the engine then refused;
+the calendar ignored the real queue gate it had already selected; and
+`plan.reason_compliance_block` named slop as the cause of blocks that may have been
+format.
+
+Verification: **994 PASS / 0 FAIL** (+53); full visual gate **75 PNG / 0 console
+errors / 0 horizontal overflow**; 12 nav routes live 200; live end-to-end (assign →
+run #4 → `publish_after` = the cell's instant → approve naming no time → instant
+SURVIVED, record `manual`/real user/no policy). Dev DB migrated to 0017 after a
+WAL-safe backup: 0 FK violations, existing times defaulted to `manual`. Deferred:
+`.claude/docs/phase-24-followups.md`.

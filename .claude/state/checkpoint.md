@@ -7,80 +7,65 @@
 ## Son güncelleme
 
 - Tarih: 2026-08-23
-- Güncelleyen: Claude (**FAZ 23 — PLANLI PAYLAŞIM (haftalık slot) tamamlandı. 932 PASS/0 FAIL (+36), görsel gate
-  69 PNG/0 hata/0 taşma, route 12/12 200.** Yeni: migration **0016** (`publish_slots` + `workspaces.timezone`),
-  `SlotResolver` (saf, saatsiz; "Pzt 09:00 <dilim>" → sonraki UTC anı, **DST-doğru**), `SlotRepository` (tenant-scoped
-  CRUD), settings'te "Haftalık yayın planı" kartı, onay kuyruğunda slot seçici, dashboard'da "Sıradaki yayın" +
-  canlı geri sayım (Faz-10 ertelemesi kapandı). **ENGINE DEĞİŞMEDİ** — slot yalnızca manuel yolun ürettiği aynı ISO
-  anını üretir, akış `Engine::approve` → `runs.publish_after` → `run_after` gate. **Bulup düzelttiğim tutarsızlık:**
-  zaman-dilimsiz `datetime-local` UTC sanılıyordu; workspace UTC+3 iken 09:00 yazan operatör 12:00'de yayınlardı →
-  artık iki yol da workspace dilimini kullanıyor, etiket gerçek dilimi söylüyor. Görsel gate 375px'te 10px taşma
-  yakaladı → tarayıcıda ölçüp kök-neden bulundu (`.approve-card__actions` `flex:none` küçülemiyordu) → `max-width`.
-  **GATE'LER:** security **GO-koşullu**, ux **NO-GO** → hepsi aynı turda kapatıldı, **932 PASS**: (M1, security,
-  KRİTİK) çözülemeyen zamanlama sessizce "hemen yayınla"ya düşüyordu — canlı hesapta geri dönülemez erken post;
-  `requestedSchedule()` artık 3 durumu ayırıyor (istenmedi / gerçek an / **reddet**), geçmiş+365g horizon kontrolü,
-  onay DURDURULUYOR ve nedeni söyleniyor. (B1, ux) slot başına hesap seçicisi HİÇBİR kod tarafından okunmuyordu →
-  UI'dan kaldırıldı, elle POST edilen `account_id` reddediliyor (sistemin yapmadığını iddia etmeme kuralı).
-  (B2, ux) her YENİ workspace'in ilk gördüğü ekranda ham `{zone}` yazıyordu → düzeltildi. (S1) Reject butonu
-  havada kalıyordu → `align-items:flex-end`. (S2) onay flash'ı artık zamanı söylüyor (Flash params desteği).
-  (L1/L2/L3/L6) account_id fail-open, CHECK 24:00 açığı, slot cap=50, N+1 tz sorgusu. Kalanlar →
-  `.claude/docs/phase-23-followups.md`.
-  **CİLA TURU (kullanıcı isteği; 940 PASS, gate temiz):** (1) `/quick` sayfasındaki native "Choose File" kontrolü
-  uygulamanın kendi butonuyla değiştirildi (`.filepick`): gerçek input DOM'da ve klavyeyle erişilebilir kalır
-  (`clip-path` ile gizli, display:none DEĞİL), picker'ı `<label>` açar (JS'siz çalışır), JS yalnızca seçilen dosya
-  adını yazar. "Fotoğraf seç" butonu "AI klip oluştur" ile birebir aynı ölçüde (33px yükseklik / 6px radius /
-  12.5px — tarayıcıda ölçüldü). (2) **Planlı paylaşım bulunamıyordu** (ux S9+S6 followup'ları) → plan kartı
-  Ayarlar'da "Onay modu"nun hemen ALTINA taşındı (Kalite puanı'nın üstü), `id="plan"` anchor eklendi; dashboard
-  "Sıradaki yayın" bandından ve (plan yokken) onay formundan `/settings#plan` linkleri. (3) ux S7: kalan "Slot
-  saatleri" jargonu temizlendi.
-  **AYRI EKRAN (kullanıcı isteği; 941 PASS, gate 75 PNG/0 hata):** Haftalık plan artık Ayarlar kartı DEĞİL, kendi
-  ekranı — sol menüde **"Haftalık plan" / "Weekly plan"** (Kuyruk ile Hesaplar arasında). Yeni `PlanController` +
-  `templates/plan/index.php`; slot/timezone route'ları `/settings/*` → **`/plan/*`** taşındı; SettingsController
-  slot mantığından tamamen arındırıldı (tek ev kuralı). Ekran planı (niyet) ile kuyruğu (gerçek) ayrı gösteriyor:
-  üstte "Sıradaki yayın" bandı + geri sayım, altında saatler ve dilim kartları, ayrıca dürüst not: "Hiçbir şey
-  kendiliğinden yayınlanmaz". `tools/visual/routes.json`'a `/plan` eklendi (nav ekranı 12 → **13**).
-  Önceki: **FAZ 22 DÜZELTME TURU — 2 bug kapatıldı, 892 PASS/0 FAIL, görsel gate 69 PNG/0 hata,
-  route 12/12 200.** (1) Nav pill rebound: gerçek kök-neden **MPA sayfa-yükleme animasyonu** (easing değil) —
-  base'te transform transition kaldırıldı + `void offsetHeight` + senkron `.is-ready`; **gerçek TIKLAMA kanıtı:**
-  /accounts(211px) → Trends tıkla → /trends pill **doğrudan 70px**, `runningTransform: 0`, görünür. Ek keşif: rAF
-  gizli sekmede askıda → pill opacity 0 kalıyordu, düzeltildi. (2) Gerçek hesapta uydurma engagement KALDIRILDI:
-  @ai.neeidy artık `— — — [veri yok]` + `7 followers`; @smoke_tt demo `7K/406/509 [örnek]` KORUNDU. **896 PASS
-  (+23).** **Gate'ler:** ux **GO** (bağımsız yeniden ölçüm: 3 probe noktasında `runningTransform:0`, `opacity:1`;
-  0 blocker); compliance önce **NO-GO** → 3 blocker düzeltildi → yeniden doğrulandı: (H1) **mock sağlayıcının
-  uydurduğu sayılar rozetsiz "ölçüm" gibi görünüyordu** (ZERNIO_MOCK=true varsayılanında fix öncesinden kötü) →
-  mock artık `accounts.followers_count`'a YAZMAZ (snapshot satırı `provider='mock'` ile denetim için kalır) +
-  kart `metric_provider='mock'` ise demo dalına düşer; (H2a) `$providerBacked` yalnız follower'a bakıyordu →
-  engagement follower'dan ÖNCE gelirse gerçek verinin üstüne uydurma basardı → sinyal genişletildi (herhangi
-  gerçek metrik/snapshot); ayrıca gerçek hesapta follower yoksa artık `—` (uydurma follower YOK); (M1) eski test
-  yanlış invariant'ı doğruluyordu (`acc-card__sample--empty` substring'i yüzünden geçiyordu) → tersine çevrildi.
-  Aşağıdaki önceki tur özeti geçerli: **FAZ 22 — PANEL + GERÇEK VERİ tamamlandı (token `START PHASE 14` verildi; phase-plan'de 14–21
-  DOLU olduğu için kullanıcı onayıyla **Faz 22** olarak numaralandı; Planlı Paylaşım = Faz 23).** **873 PASS/0 FAIL
-  (+34)**; 12 route 200 (0×500); görsel gate 69 PNG / 0 console-error / 0 overflow. **CANLI UÇTAN UCA KANIT (zero-cost,
-  yayın/üretim YOK):** worker `DailySnapshot` turu → `account_metrics` id1: **followers=7 (GERÇEK Zernio)**,
-  has_analytics=1, **post_count=0 + views/likes NULL (dürüst boş, 0 DEĞİL)**, provider=zernio; `accounts.followers_count=7`;
-  `usage_events`/`credit_transactions` **0 satır = zero-cost kanıtı**. Dashboard: `@ai.neeidy · 7 followers` (çipsiz=gerçek)
-  vs `@smoke_tt · 61.2K followers [örnek] +69 today` (çipli=uydurma). **K1** adapter follower+engagement birlikte
-  (`accountMetrics()`); per-post alan adları canlıda BOŞ geldiği için uydurulmadı → defansif çok-anahtarlı map +
-  `raw_json` saklama. **K2** dev DB WAL-safe yedek `kuyash.pre-p22-dedup.20260823T130328Z.bak.sqlite` → 0015 migration:
-  posts re-point → id2 (stale IG dup) SİLİNDİ → UNIQUE index; **5 post hâlâ id3'te, 0 FK ihlali, id1 mock demo KORUNDU**.
-  **K3** phase-plan.md'ye Faz 22 + Faz 23 eklendi (14–21 kayıtları KORUNDU). Yakalanan regresyon: sample çipi
-  `.acc-card__who` (ellipsis) içinde yutuluyordu → dışarı alındı + regresyon testi. UI: pill `--spring`→`--ease-out`.
-  Jargon: `Messages::since()` → trends "fresh · 3 min ago" (ham ISO title'da).
-  Önceki: ASSEMBLY R2-staging fix (`62c76fe`) + ws#2 ölü-asset temizliği; FAZ 10 Zernio (`6891f8b`). Detay ↓ oturum-log.)
+- Güncelleyen: Claude (**FAZ 24 — HAFTALIK PLAN ARTIK TAKVİM + İKİ MOD tamamlandı. 994 PASS/0 FAIL (+53),
+  görsel gate 75 PNG/0 hata/0 taşma, 12 nav route canlı 200.** Faz 23 haftalık **şablon** teslim etmişti ama
+  şablon hiçbir şey TUTAMIYORDU — içerik ancak onay anında, teker teker bir saate bağlanıyordu. Faz 24 eksik ismi
+  ekliyor: **tarihli hücre (occurrence)** + her saate bir **mod** (videoyu ben eklerim / Kuyash hazırlasın).
+  **RİSK-ÖNCE:** ürün kodu yazmadan Görev-0 spike'ı mevcut kodla seam'i uçtan uca kanıtladı — DST'yi aşan
+  `America/New_York` Çar 09:00 → `2026-03-11T13:00:00Z`, `runs.publish_after` → `run_after` gate → adapter'a
+  birebir aynı `scheduledFor`. **Migration 0017 (tamamı ADDITIVE):** `publish_slots.mode`, `workspaces.auto_lead_minutes`
+  (30–1440, vars. 180) + `plan_paused`, ve **`slot_occurrences`** — kimlik `UNIQUE(slot_id, local_date)` yani YEREL
+  gün, böylece DST anı oynatır ama bir Pazartesi'yi asla ikizlemez; `UNIQUE(run_id)` çift-run kilidi.
+  **`status` bilinçli olarak dar** (`open|assigned|skipped`) — "hazırlanıyor/onay bekliyor/zamanlandı/yayınlandı"
+  `PlanBoard` tarafından gerçek run+job'dan TÜRETİLİR, ikinci bir state machine yok.
+  **TAŞIYICI KARAR:** `runs.publish_after` **run DOĞARKEN** yazılıyor, onayda değil — `Engine::approve` saati yalnız
+  YAZAR (hiç silmez), dolayısıyla önceden set edilmiş an, hiçbir şey seçilmeden yapılan onayda korunur VE
+  `approve()`'dan hiç geçmeyen otomatik-onay yoluna (`finalizeAutoApproved`) da ulaşır. Onayda yazsaydık
+  otomatik onaylanan planlı içerik slotunu yok sayıp HEMEN yayınlardı. Yeni motor metotları: `setPublishAfter`
+  (null'lanabilir), `cancelRun` (korumalı; publish `processing`/`published` ise reddeder, `approvals` satırı YAZMAZ —
+  iptal insan reddi değildir), `startRun` → `startRunFor(int $wsId, …)` delegasyonu (worker sessionless kalıyor).
+  **`PlanRunner`** worker yarısı: chore kadansında VE worker başlangıcında **ilk claim'den ÖNCE** (sıra taşıyıcı —
+  3 gün kapalı kalmış worker eski yayınları KAPATMALI, hepsini birden ateşlememeli). Üretim her guardrail'i
+  **tek satır oluşmadan önce** kontrol eder; engel **KAPATILMAZ, NOT EDİLİR** (cap sıfırlanır, switch geri açılır —
+  erken "kaçtı" demek yalan olurdu).
+  **ÜÇ KAPANIŞ GATE'İ DE NO-GO DÖNDÜ; TÜM BLOCKER'LAR AYNI TURDA KAPATILDI**, her biri `p24/gatefix` testiyle
+  çivilendi (12 test). En kötüsü (üçünün de bulduğu): saat silmede `committedForSlot` `publish_at > now` filtreliyordu →
+  grace penceresindeki gün onaysız siliniyor, run'ı iptal edilmiyor → geride **geçmiş `publish_after`** taşıyan run
+  kalıyor, kuyruk onu "hemen yayınla" okuyor → operatörün SİLDİĞİ bir saatten, plan kaydı olmadan anında yayın.
+  Faz 23'ün KRİTİK dediği sınıfın aynısı. İki taraftan da kapatıldı. Ayrıca: **yayınlanmış** gün `missed` diye
+  süpürülüp denetim kaydına sahte hata yazıyordu; board `now`'dan pencereliyordu → açıklama gereken TEK gün
+  kayboluyordu ve dashboard "kaçtı" sayacı asla sıfırdan çıkamıyordu; her `skipped` kırmızı "Kaçtı" idi (operatörün
+  kendi temizlediği gün ve görevini yapan guardrail dahil); yakalanmayan `PlanRunner::tick()` worker'ı claim'den
+  ÖNCE öldürüp **tüm yayını sessizce durdurabiliyordu**; sıradan eski bir kütüphane videosunu silmek FK'ye çarpıp
+  500 veriyordu; onay bildirimi run'ın gerçek anını değil PLANIN anını söylüyordu ve tekrar-POST edilen
+  `publish_now` motorun reddettiği bir kararda state değiştirebiliyordu; takvim zaten SELECT ettiği gerçek kuyruk
+  gate'ini yok sayıyordu; `plan.reason_compliance_block` format bloklarını da slop diye adlandırıyordu.
+  **Kendim bulduğum 2 kusur (gate'lerden önce):** saat silmek FK ihlaliyle 500 veriyordu (occurrence'lar), ve
+  `.sr-only` markup'ta kullanılıyor ama CSS'te **hiç tanımlı değildi** — Faz 23'ten beri "gizli" etiketler tam
+  görünüyordu. Ayrıca `input[type="number"]` iki stil listesinde de yoktu (Faz 15 drift'inin aynısı).
+  **UI:** `/plan` takvim-merkezli — 375px gün-listesi, 768px+ 7-sütun hafta ızgarası (CSS grid, yeni bağımlılık yok).
+  Sıfır jargon; hücre "Kaçtı" ise gerçek nedeni söyler. Kuyrukta planlı kart gününü **söyler** (sormaz), "bunun
+  yerine hemen yayınla" ayrı ve sonucu yazılı bir seçim. **Faz 23 borçları kapandı:** plan mutasyonları
+  `guardrail.*` denetleniyor, duplicate ≠ invalid, plan yazmaları + `/accounts/sync` IP-başına throttle'lı.
+  **ONAY ZAYIFLATILMADI:** `script_draft` otomatik run'da da insan kapısı; **ADR-015'in kilitli auto-onay kapsamı
+  GENİŞLETİLMEDİ**; `approval_mode` varsayılanı `manual` (N1). Tam-gözetimsiz yol = **Görev 8, bu fazda YOK**.
+  Dev DB 0017'ye migrate edildi (WAL-safe yedek `kuyash.pre-0017.20260823T185852Z.bak.sqlite`; 0 FK ihlali,
+  mevcut saatler dürüstçe `manual`). Detay → **ADR-022**, `.claude/docs/phase-24-plan.md`,
+  `.claude/docs/phase-24-followups.md`.)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 23 (Planlı Paylaşım) TAMAM — kabul/commit bekliyor. 932 PASS / 0 FAIL; 2 gate kapatıldı.** `publish_slots` (haftalık
-  gün+saat şablonu, ops. hesap-daraltma) + `workspaces.timezone`; `SlotResolver` saf/DST-doğru; `SlotRepository`
-  tenant-scoped; /settings plan kartı (dilim + slot listesi + duraklat/kaldır + ekle); /queue slot seçici;
-  dashboard "Sıradaki yayın" + canlı geri sayım. Yeni route'lar: POST /settings/timezone, /settings/slots,
-  /settings/slots/{id}/remove, /settings/slots/{id}/toggle. Dev DB 0016'ya migrate edildi (yedek
-  `kuyash.pre-0016.*.bak.sqlite`); ws#2 dilimi Europe/Istanbul, 2 slot tanımlı (Pzt 09:00, Prş 18:30).
-  **KAPSAM DIŞI BIRAKILAN (gerekçeli):** adapter'daki `timezone: 'UTC'` hardcode'u KALDIRILMADI — `publish_after`
-  zaten UTC instant, UTC instant + 'UTC' tutarlı ve DOĞRULANMIŞ olan; workspace dilimini adaptöre taşımak Zernio'nun
-  doğrulanmamış scheduledFor+timezone semantiğine girerdi (yanlış saatte yayın riski, integrations "never hallucinate"
-  kuralı). Dilim UI/çözümleme katmanında kullanılıyor. Per-account FARKLI saatte yayın da kapsam dışı (engine fan-out
-  değişikliği gerektirir) — slot şeması `account_id` ile buna hazır.
+- Aşama: **FAZ 24 (Haftalık Plan = Takvim + İki Mod) TAMAM — kabul/commit bekliyor. 994 PASS / 0 FAIL;
+  3 gate NO-GO → tüm blocker'lar kapatıldı, 12 `p24/gatefix` testiyle çivilendi.** Yeni dosyalar:
+  `database/migrations/0017_plan_occurrences.sql`, `src/Publish/OccurrenceRepository.php`,
+  `OccurrenceMaterializer.php`, `PlanBoard.php`, `PlanRunner.php`. Yeni route'lar: POST /plan/day/{id}/assign,
+  /plan/day/{id}/clear, /plan/settings, /plan/pause, /plan/slots/{id}/mode. `SlotResolver::occurrencesBetween`
+  (saf, DST-doğru), `Engine::startRunFor` / `cancelRun` / `setPublishAfter`, `SlotRepository::listForWorkspace` /
+  `setMode` / `lastAddFailure`, `WorkspaceSettings::plan/setAutoLeadMinutes/setPlanPaused`,
+  `WorkflowRepository::findByTemplateFor`. `bin/worker.php` plan tick'i claim'den ÖNCE + try/catch'li.
+  **KAPSAM DIŞI (gerekçeli):** Görev 8 tam-gözetimsiz (`script_draft` oto-onayı) — ADR-015'in kilitli kapsamını
+  genişletir, ayrı compliance kapısı ister; AI-video plandan tetiklenmez (stok+TTS); toplu yükleme yok;
+  per-account FARKLI saat hâlâ yok (`account_id` okunmuyor); caption elle düzenleme ayrı bilet.
   **Önceki aşama:** FAZ 22 + DÜZELTME TURU TAMAM. 892 PASS / 0 FAIL. Düzeltme turu 2 bug: (1) **nav pill rebound GERÇEK
   kök-neden** — MPA'da her tıklama = sayfa yükleme; pill `translateY(0)`'da doğup aktif item'a **animasyonla**
   gidiyordu (kanıt: /settings offsetTop 351, pill 0, `getAnimations()` 250ms transform "running"). İlk fix (easing
@@ -192,36 +177,15 @@
 
 ## Sıradaki adım
 
-0. **FAZ 23 + cila + ayrı "Haftalık plan" ekranı TAMAM ve PUSH'LU** (`ce4d380`, `c269328`, `b97510b`, `7563d0c`).
-   941 PASS / 0 FAIL; görsel gate 75 PNG / 0 hata; 13 nav route 200. Yeni faz/iş yoksa followup'lardan seçilir.
+0. **FAZ 24 TAMAM — kabul + commit + push bekliyor** (working tree'de, commit YOK). 994 PASS / 0 FAIL;
+   görsel gate 75 PNG / 0 hata; 12 nav route canlı 200; secret taraması temiz. Dev DB 0017'de.
+   **Sıradaki iş seçenekleri:** (a) **Görev 8 — tam gözetimsiz yayın**: plan-kaynaklı run'larda `script_draft`
+   oto-onayı. ADR-015'in KİLİTLİ auto-onay kapsamını genişletir (`script_draft` öncesinde compliance verdict'i
+   YOK) → **kullanıcı kararı + compliance-reviewer GO şart**. Alternatif: "her AI içerik bir insan onayından
+   geçer"i kalıcı ürün vaadi yapıp bu yolu hiç açmamak. (b) **Caption/hashtag elle düzenleme** — distribution-only
+   operatör için en değerli tek ekleme (kendi videonu yükle, sistem yalnız planlasın/yayınlasın senaryosu);
+   bugün AI yazar, sen yalnız onaylar/reddedersin. (c) `.claude/docs/phase-24-followups.md`'den seçim.
 
-   **AÇIK ÜRÜN SORUSU (kullanıcı, 2026-08-23) — cevaplandı, iş BEKLİYOR:** "İçerikleri biz üretmesek, kendi
-   videolarımı yükleyip bir influencer SADECE plan/yayın için bu sistemi kullanabilir mi?" **CEVAP: EVET, zaten
-   destekli.** `Nodes::DISTRIBUTION` zinciri = `LIBRARY → CAPTION → HASHTAGS → MUSIC NOTE/STYLE → PREVIEW →
-   COMPLIANCE → PUBLISH` (TREND/IDEA/SCRIPT/VOICE/VISUALS/ASSEMBLE **yok** → TTS/stok/ffmpeg/AI-video devrede
-   değil). Kanıt: ws#2'de "Distribution" workflow'u (id=2) kayıtlı ve run #1/#2 **completed**. Akış: kütüphaneye
-   kendi videonu yükle → Distribution çalıştır → sistem yalnız caption+hashtag üretir (cent-altı OpenAI) → kuyrukta
-   onayla + Haftalık plan'dan saat seç → compliance + AI etiketi + Zernio yayın.
-   **DÜRÜST SINIRLAR (kullanıcıya söylendi):** (a) **caption/hashtag ELLE DÜZENLENEMİYOR** — AI üretir, sen yalnız
-   onaylar/reddedersin; bu senaryoyu ciddiye alırsak EN DEĞERLİ tek ekleme budur (onay ekranında caption düzenleme).
-   (b) toplu yükleme yok (1 video = 1 run). (c) plan otomatik içerik ÜRETMEZ (bilinçli; slot yalnız onay anında
-   "ne zaman"ı cevaplar). (d) video kurgulama/altyazı yakma yok — yüklenen dosya olduğu gibi yayınlanır.
-   **Faz 23 bilinen sınırlar:** (a) per-account FARKLI saatte yayın yok (engine fan-out gerektirir; slot şeması
-   `account_id` ile hazır) — bir run tüm hesaplara tek anda yayınlanır; (b) adapter'a workspace dilimi taşınmadı
-   (gerekçe yukarıda); (c) slot yalnızca ONAY anında uygulanır — otomatik "her slotta bir içerik üret" YOK
-   (bilinçli: cron motoru değil).
-   **Faz 22 bilinen sınırlar:** (a) per-post engagement Zernio'da hâlâ boş (`posts:[]`) → GERÇEK hesapta artık
-   `—` + "veri yok" gösteriliyor (uydurma YOK); sağlayıcı raporlamaya başlayınca snapshot chore ŞEMA DEĞİŞİKLİĞİ
-   OLMADAN doldurur. (b) Gerçek büyüme (growth) iki günlük snapshot birikince hesaplanabilir — şu an gerçek hesapta
-   growth satırı gizli. (c) Görsel gate seed'inde `followers_count` yok → PNG'ler DEMO yolunu gösterir; gerçek yol
-   canlı DB + tarayıcı ile doğrulandı.
-   **Devredilen follow-up (gate'lerden):** `account_metrics` retention/pruning, `POST /accounts/sync` rate-limit,
-   /usage+/digest ham ay damgaları, 375px'te sample-note konumu, `views` metriği için matched-key kaydı.
-   **Düzeltme turundan devredilenler:** (H2b) `connectCallback` follower yazmıyor → connect ile ilk sync arası
-   gerçek kanal demo dalında görünür; kalıcı çözüm demo satırlarını `sample_data` bayrağıyla işaretleyip
-   uydurmayı YALNIZCA ona bağlamak. (M2) `role="img"` tüm kutucuğu yaprak yapıyor → "veri yok" rozeti ve gerçek
-   sayılar ekran okuyucuya ulaşmıyor. (L) gerçek kartta gradient kutucuk artık işaretsiz; `acct.sample_note`
-   "veri yok" durumundan söz etmiyor; görsel seed'de `followers_count` yok → gerçek yol PNG'lerde görünmüyor.
 1. **FAZ 10 önceki kararı (hâlâ açık):** `ZERNIO_MOCK=false` şu an ON; ilk kontrollü gerçek yayın kullanıcı
    inisiyatifinde (render_review Manual onay kapısı publish öncesi durdurur).
 2. **Operatör enable-time (production-readiness.md):** R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra
@@ -253,17 +217,22 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+- 2026-08-23 — **FAZ 24: HAFTALIK PLAN = TAKVİM + İKİ MOD — 994 PASS/0 FAIL (+53), görsel gate 75 PNG/0 hata, 12 route canlı 200.** Faz 23'ün haftalık ŞABLONU hiçbir şey tutamıyordu; Faz 24 tarihli hücreyi (`slot_occurrences`, kimlik = saat × YEREL gün) ve saat-başına modu ekliyor. **Görev 0 RİSK SPIKE önce, ürün kodu yazmadan:** DST'yi aşan NY Çar 09:00 → `13:00Z` → `publish_after` → `run_after` gate → adapter'a birebir aynı `scheduledFor` (mevcut kodla, uçtan uca kanıt). **Taşıyıcı karar:** `publish_after` run DOĞARKEN yazılır — `approve()` saati yalnız yazar, asla silmez, ve otomatik-onay yolu `approve()`'dan hiç geçmez; onayda yazsaydık otomatik onaylanan planlı içerik slotunu yok sayıp hemen yayınlardı. `startRun` → `startRunFor(int $wsId,…)` delegasyonu (worker sessionless KALDI). `PlanRunner` chore claim'den ÖNCE koşar (3 gün kapalı worker eski yayınları kapatmalı, ateşlememeli); engel KAPATILMAZ, NOT EDİLİR. **3 GATE DE NO-GO; hepsi aynı turda kapatıldı (12 `p24/gatefix` testi).** Üçünün de bulduğu kritik: saat silmede `committedForSlot` `publish_at > now` filtreliyordu → grace penceresindeki gün onaysız silinip run'ı iptal edilmiyordu → geride geçmiş `publish_after` taşıyan run kalıyor, kuyruk "hemen yayınla" okuyor → SİLİNMİŞ bir saatten, plan kaydı olmadan anında yayın (Faz 23'ün KRİTİK sınıfı). Ayrıca: yayınlanmış gün `missed` süpürülüp denetime SAHTE hata yazıyordu; board `now`'dan pencereliyordu → açıklama gereken tek gün kayboluyor, dashboard "kaçtı" sayacı asla sıfırdan çıkamıyordu; her `skipped` kırmızı "Kaçtı" idi (operatörün temizlediği gün + görevini yapan guardrail dahil); yakalanmayan `PlanRunner::tick()` worker'ı claim'den ÖNCE öldürüp TÜM yayını sessizce durdurabiliyordu; sıradan eski kütüphane videosunu silmek FK'ye çarpıp 500 veriyordu; onay bildirimi PLANIN anını söylüyordu (run'ınkini değil) ve tekrar-POST `publish_now` reddedilen kararda state değiştirebiliyordu; takvim zaten SELECT ettiği gerçek kuyruk gate'ini yok sayıyordu; compliance blok gerekçesi format bloklarını slop diye adlandırıyordu. **Kendim bulduğum 2 kusur:** saat silmek FK ihlaliyle 500 (occurrence'lar) ve **`.sr-only` CSS'te hiç tanımlı değildi** — Faz 23'ten beri "gizli" etiketler tam görünüyordu; ayrıca `input[type=number]` stil listelerinde yoktu (Faz 15 drift'i). **ONAY ZAYIFLATILMADI:** `script_draft` insan kapısı kaldı, ADR-015 kapsamı genişletilmedi, `approval_mode` varsayılanı `manual`. Dev DB 0017 (WAL-safe yedek, 0 FK ihlali).
+
 - 2026-08-23 — **FAZ 23: PLANLI PAYLAŞIM (haftalık slot) — 924 PASS/0 FAIL (+28), görsel gate 69 PNG/0 hata/0 taşma, route 12/12 200.** Premis doğrulandı: tek-anlık zamanlama ZATEN uçtan uca çalışıyordu (onay → `runs.publish_after` → kuyruğun `run_after` gate'i → adapter `scheduledFor`), eksik olan tekrarlı plandı → bu faz onun ÜSTÜNE kuruldu, **ENGINE'E DOKUNULMADI**. **Yeni:** migration **0016** `publish_slots` (workspace_id, ops. account_id, weekday 1-7 ISO, time_hhmm 'HH:MM', enabled; UNIQUE `COALESCE(account_id,0)` çünkü SQLite NULL'ları ayrı sayar) + `workspaces.timezone`; **`SlotResolver`** (SAF: saat okumaz, DB'ye bakmaz — "Pzt 09:00 <dilim>" → sonraki UTC anı; **DST-doğru**: gün kaydırmasından sonra duvar-saati YENİDEN uygulanır, canlı kanıt NY kış `14:00Z` / yaz `13:00Z` / DST'yi AŞAN hafta `13:00Z` yani yerel 09:00 korunuyor); **`SlotRepository`** (tenant-scoped CRUD, başka workspace'in hesabına daraltma REDDEDİLİR); `WorkspaceSettings::timezone/setTimezone` (tzdata doğrulamalı). **UI:** /settings "Haftalık yayın planı" kartı (dilim seçici + slot listesi "sıradaki 15 sa içinde" + Duraklat/Kaldır + ekleme satırı), /queue onay formunda slot seçici (varsayılan "Onaylanır onaylanmaz yayınla"), dashboard "Sıradaki yayın" bandı + canlı geri sayım (**Faz-10 ertelemesi kapandı**; geri sayım data-* attribute'larından okur → i18n tek kaynak, JS kapalıyken sunucu ifadesi kalır). **BULUP DÜZELTTİĞİM TUTARSIZLIK:** zaman-dilimsiz `datetime-local` sessizce UTC sanılıyordu — workspace UTC+3 iken 09:00 yazan operatör 12:00 yerel saatte yayınlardı; artık slot da manuel giriş de workspace dilimini kullanıyor, etiket gerçek dilimi söylüyor ("saatler Europe/Istanbul"). **Görsel gate 375px'te 10px taşma YAKALADI** → tahmin etmek yerine tarayıcıda DOM zinciri ölçüldü → kök-neden `.approve-card__actions` `flex:none` (küçülemiyor, parent 317px < içerik 343px) → `max-width:100%` → ölçümle temiz (scrollWidth 375 = viewport). **KAPSAM DIŞI (gerekçeli):** adapter `timezone:'UTC'` hardcode'u KALDIRILMADI — `publish_after` zaten UTC instant, UTC+UTC tutarlı ve doğrulanmış; workspace dilimini adaptöre taşımak Zernio'nun doğrulanmamış scheduledFor+timezone semantiğine girip yanlış saatte yayın riski yaratırdı (integrations "never hallucinate"). Per-account farklı saat de kapsam dışı (engine fan-out) — şema `account_id` ile hazır. `bin/visual-seed.php`'ye 3 slot + dilim eklendi (slot = operatör yapılandırması, uydurma metrik değil).
 
 - 2026-08-23 — **FAZ 22 DÜZELTME TURU (yeni faz değil): 2 bug kapatıldı — 892 PASS/0 FAIL (+19).** **BUG1 nav pill rebound — İLK FIX YANLIŞ HEDEFLENMİŞTİ.** Gerçek kök-neden tarayıcıda ÖLÇÜLDÜ: Kuyash MPA → her nav tıklaması = tam sayfa yükleme → pill JS ile `translateY(0)`'da (en üst) doğuyor, sonra aktif item'a taşınıyor; base CSS'te transform transition ARMED olduğu için bu **başlangıç yerleşimi animasyona dönüşüyordu**. Kanıt (/settings, fix öncesi): aktif `offsetTop=351`, pill `translateY(0)`, `getAnimations()` → transform transition `playState:"running"`, `duration:250ms`. Yani gösterge her tıklamada yukarıdan aşağı uçuyordu = kullanıcının "başa atıp tekrar geliyor" şikayeti. Easing swap (`--spring`→`--ease-out`) bunu ASLA çözemezdi çünkü sorun eğri değil, **ilk yerleşimin animasyonlu olması**. FIX: `.nav-item__pill` base state'inde transform transition YOK → `moveTo(activeItem())` + `void pill.offsetHeight` (layout flush, konumu taban değer olarak commit et) → `.is-ready` transition'ı ARM eder (hover hâlâ akıcı). **Ek keşif:** `.is-ready` rAF içindeydi; rAF gizli sekmede askıya alınır → arka planda açılan sayfada pill hiç `.is-ready` almıyor, `opacity:0` kalıyordu (gösterge yok) → **senkron** yapıldı; opacity de transition'dan çıkarıldı (aynı nedenle takılıyordu). **GERÇEK TIKLAMA KANITI:** /accounts (aktif 211px) → Trends'e gerçek `click()` → /trends yüklendi → pill `translateY=70` = aktif `offsetTop=70`, `runningTransform=0`, `opacity=1`. Hover ölçümü: mouseenter → transform transition `running=1` (akıcılık korundu). **BUG2 gerçek hesapta uydurma engagement (COMPLIANCE).** Teşhis: @ai.neeidy (gerçek, connected, followers_count=7) kartı `9.5K/298/1.9K` **crc32 uydurma** engagement gösteriyordu ("sample" çipli olsa bile gerçek kanalda temsili sayı = yanlış beyan). FIX: tek sinyal `$providerBacked` (`followers_count !== null` = sync/chore bu hesabı canlı sağlayıcıdan okudu) TÜM kartı yönetiyor — gerçek hesap: engagement snapshot'tan gerçek değer, raporlanmayan `—` + nötr "veri yok" rozeti (stand-in HİÇ hesaplanmıyor); demo/seed hesap: deterministik stand-in + `[örnek]` çipi KORUNDU (ekranlar dolu kalır). `AccountRepository::listFor` en yeni `account_metrics` snapshot'ını LEFT JOIN ediyor (ws-scoped subquery), `shape()` NULL'ı NULL bırakıyor; yeni `acct.no_metrics` (en+tr) + `.acc-card__sample--empty` nötr stil (dürüst boşluk, stand-in rozetinin sesini ödünç almaz). **CANLI KANIT:** @ai.neeidy `— — — [no data yet]` + `7 followers`; @smoke_tt `7K 406 509 [sample]` + `61.2K [sample] +69 today`. Demo verisi SİLİNMEDİ (accounts 2 satır, posts 5), `.env` flag flip YOK, engine/şema-çekirdeği/node-graph dokunulmadı. Görsel gate 69 PNG/0 console-error/0 overflow; route 12/12 200.
 
 - 2026-08-23 — **FAZ 22: PANEL + GERÇEK VERİ — 6 görev tamam (873 PASS/0 FAIL, +34 test).** (1) **Analytics seam (K1):** `PublishProvider::accountMetrics()` (follower + per-post engagement BİRLİKTE — dar follower-only adapter yasaklıydı); gerçek `ZernioPublishProvider` impl GET /accounts (followersCount) + GET /analytics; **per-post alan adları canlıda BOŞ geldiği için UYDURULMADI** → defansif çok-anahtarlı map (views/viewCount/impressions…) + `raw_json`'da ham payload saklama (integrations "never hallucinate" kuralına dürüst yanıt); deterministik Mock impl. (2) **Snapshot chore:** yeni `src/Analytics/DailySnapshot.php` (worker sessionless → ws açıkça iterate, her write'ta workspace_id), migration **0014** `account_metrics` (UNIQUE ws+account+gün → INSERT OR IGNORE) + `accounts.followers_count/followers_synced_at`; **zero-cost** (usage/credit YAZMAZ); worker start + 300s chore'a bağlandı. (3) **Follower wiring:** `setFollowers()` + `sync()` tek turda ref reconcile + gerçek follower; raporlanmayan follower stored değeri EZMEZ. (4) **Dedup (K2):** `connect()` blind INSERT → revive-existing (case/@-insensitive); migration **0015** re-point posts → dup sil → UNIQUE index; dev DB'ye WAL-safe yedekle uygulandı (`kuyash.pre-p22-dedup.20260823T130328Z.bak.sqlite`) → **id2 silindi, 5 post hâlâ id3'te, 0 FK ihlali, id1 mock demo + etiketli demo verisi KORUNDU**. (5) **UI:** pill `--spring`(overshoot 1.56)→`--ease-out` = "geri sekme" bitti. (6) **Jargon:** `Messages::since()` → /trends "fresh · 3 min ago" (ham ISO yalnız title'da); 11 ekranda görünür ham ISO = 0. **CANLI KANIT:** account_metrics id1 `followers=7 GERÇEK`, `post_count=0 + views NULL` (dürüst boş), 0 usage satırı; dashboard `@ai.neeidy · 7 followers` (çipsiz) vs `@smoke_tt · 61.2K [örnek]`. **Kendi yakaladığım regresyon:** sample çipi `.acc-card__who` ellipsis'i içinde YUTULUYORDU (görsel gate PASS demişti) → çip dışarı alındı + `.acc-card__sample--foot` + regresyon testi. **K3:** phase-plan.md → Faz 22 + Faz 23 eklendi (14–21 KORUNDU; token `START PHASE 14` idi ama o numara i18n'e ait → kullanıcı onayıyla 22). 16 dosya + 3 yeni; secret yok.
+
 - 2026-08-22 — **SALT-OKUMA SAĞLIK KONTROLÜ + İNCELEME + 2-FAZLIK PLAN (ONAYLI, kod YOK, FAZ TOKEN'I BEKLİYOR).** Sistem sağlıklı ayağa kalktı: 839 PASS/0 FAIL, 12 route 200 (0×500), migration güncel (0013 doğrulandı), worker healthy-idle (PID 14205), dev server 8082 (PID 13685); tek mutasyon = 2 process başlatma (repo/DB dokunulmadı, git temiz). **CANLI Zernio read-only probe (yayın/para YOK):** GET /accounts gerçek `followersCount=7` + `hasAnalyticsAccess=true`; GET /analytics HTTP 200 doğru şekilli (overview/posts/pagination) AMA per-post BOŞ (`posts:[]`, `total:0`, `externalPostCount:0`) → per-post metrik Zernio sync populate edene dek yok, follower bugün gerçek. GET /posts/{id} zengin metadata ama metrik alanı YOK. **Bulgular:** (1) accounts dedup BUG — `connect()` körlemesine INSERT, `(ws,platform,handle)` UNIQUE yok → id2 stale-disconnected dup (@ai.neeidy ×2, 06-13→id2 + 06-14→id3, sync ikisinin ref'ini çekti). (2) UI BUG — kayan-pill `transform … var(--spring)` (cubic-bezier 0.34,**1.56**,…) overshoot = "sekmelerde geri sekme"; fix app.css:873 --spring→--ease-out. (3) posts 3/4/5 GERÇEK IG reel (24-hex ext_id + instagram.com/reel URL; post5 bugün). Dangling/orphan YOK, demo verisi dürüstçe etiketli (crc32 account-card = salt sunum, "örnek" çipi). **Plan onaylandı** (`~/.claude/plans/daha-detayl...hopcroft.md`): Faz1 (analytics adapter+snapshot / follower wiring / dedup+temizlik / UI fix / demo seed / jargon) + Faz2 (haftalık slot scheduling). Kullanıcı kararları: dedup=fix+id2 temizle, Faz2=tam slot, metrik=gerçek follower+etiketli örnek engagement. **phase-discipline: `START PHASE N` token'ı gelene dek kod YAZILMAYACAK.** Bug: gerçek publish `400 Invalid accountId format [invalid_field_value]`. POST /posts `platforms[].accountId = accounts.external_ref`, ama connect bunu UYDURUYORDU (`AccountsController.connectCallback`: `zacct_`+random) — gerçek Zernio SocialAccount `_id`'si (24-hex, GET /accounts) yerine. openapi: accountId="The Zernio SocialAccount ID"; canlı `_id=6a2f250a5f7d1751abb4803a`. FIX (adapter/controller/data; engine/şema/node-graph DEĞİŞMEDİ): `accounts()` PublishProvider arayüzüne taşındı (Mock + test Spy impl); `AccountRepository::setExternalRef()`; `connectCallback` artık gerçek _id'yi `accounts()` ile çözüyor (platform+@/case-insensitive username; eşleşmezse fallback); yeni `AccountsController::sync()` + `POST /accounts/sync` + /accounts "Hesapları eşitle" butonu tüm hesapların external_ref'ini canlı _id'ye reconcile ediyor. UI vendor-neutral (jargon-gate gereği "Zernio" kelimesi UI metninden çıkarıldı). **839 PASS/0 FAIL (+7):** payload accountId=external_ref verbatim, 400 invalid_field_value→REJECTED, sync reconcile (match/no-match/normalize), setExternalRef, connectCallback gerçek _id, mock accounts() 24-hex. secret yok; 10 dosya. **CANLI UÇTAN UCA KANIT (yayın YOK):** gerçek provider GET /accounts `@ai.neeidy _id=6a2f250a5f7d1751abb4803a` → ws#2 #3 external_ref reconcile (WAL-safe yedek) → gerçek `postPayload` `platforms[0].accountId`=o _id (MATCH, 24-hex). ws#2 #3 data-fix UYGULANDI → panelden gerçek publish retry hazır.
+
 - 2026-06-15 — **ASSEMBLY R2-STAGING FIX (commit `62c76fe`, push'lu) + ws#2 ölü-asset temizliği (salt veri) + GERÇEK YAYIN AÇILDI.** Bug: STORAGE_DRIVER=r2'de ffmpeg girdisi (R2'ye taşınmış/evicted) yerelde yok → "No such file (exit 254)" tüm run'ları blokluyordu. FIX (asset-resolution katmanı; engine/şema/node-graph DEĞİŞMEDİ): `AssemblyEngine::localInput()` visual+audio için yerel-yoksa default durable disk'ten (R2) canonical'a stage, hiçbirinde yoksa dürüst `FfmpegException` (kriptik çökme yerine); `AssetCache::remember()` HIT artık yerel dosyayı doğruluyor → R2'den restore / kurtarılamazsa yerinde re-produce (opsiyonel `StorageManager`, nullable). **832 PASS/0 FAIL (+7)**: cache restore/re-produce/regresyon + R2-sim assembly E2E; secret yok. **Canlı retry #13/#18:** stale-kod worker (PID 3027) önce eski kodla tüketti → durdurdum, taze worker fix'li → hata ham ffmpeg'den "assembly input ... unrecoverable"a döndü → **ASIL neden VERİ KAYBI**: referans asset #3 "Smoke clip" `storage_disk=local` + yerel YOK + R2'de YOK (baytlar kayıp, canlı probe). **Temizlik (WAL-safe yedek `kuyash.pre-deadasset-cleanup.*`):** #13/#18 dead-lettered (terminal); ws#2 `avatar_asset_id`(=3)→NULL; asset #3 hard-delete → ws#2 0 ready asset. **#4 CANLI KANIT:** gerçek `AssetFetchExecutor` ws#2 faceless+face → `source=stock provider=pexels`, 5.3MB klip İNDİ (eski 'face'→ölü-avatar yolu elendi). **AÇIK:** worker PID 34294 (13:56 başladı, fix 13:59 commit) fix'i yüklememiş olabilir → kullanıcı `php bin/worker.php` RESTART etmeli; yoksa yeni R2-migration run'ları hâlâ patlar.
+
 - 2026-06-15 — **GENERATION STACK GERÇEĞE AÇILDI + TTS streaming-WAV BUG FIX (commit `6b0c56f`, push'lu).** `.env`: `OPENAI_MOCK=false` + `TTS_MOCK=false` + `STOCK_MOCK=false` (STORAGE_DRIVER=r2; ZERNIO_MOCK=true + VIDEO_MOCK=true KALDI). Her sağlayıcı küçük canlı çağrıyla doğrulandı: OpenAI text 200+usage (`OpenAiTextProvider`, gpt-4o-mini, gerçek fikir; tek minik çağrı sub-cent→cost 0); Pexels 720×1280 dikey klip indirdi+ffmpeg (`PexelsStockProvider`); R2 **6/6 PASS** bucket PRIVATE. **TTS bug bulundu+fix:** OpenAI WAV'ı *streaming* döndürüyor (data chunk size = `0xFFFFFFFF` placeholder, header hexdump kanıtı) → `WavWriter::durationOf` **89478s** ölçtü (gerçek ffprobe 2.35s). FIX: sentinel ise gerçek payload = `fstat(filesize)−payload_offset`; normal/trailing-chunk WAV DOKUNULMADI (declared size). +3 test → **825 PASS/0 FAIL** (regresyon yok). Gerçek TTS yeniden doğrulandı: adapter **4.45s = ffprobe 4.45s** → `TTS_MOCK=false` KALDI. İlk turda TTS bug yüzünden geçici mock'a alınmıştı; fix sonrası gerçek. `.env` yedeği `.env.bak.pre-gen-20260615T012753Z`. **DİKKAT: generation artık GERÇEK PARA harcar; bütçe cap'leri PreflightGate ile etkin.** Pipeline ÇALIŞTIRILMADI (kullanıcı panelden yapacak). Değişen kod sadece `src/Media/WavWriter.php`+`tests/run.php`; secret yok.
+
 - 2026-06-14 — **PHASE 10: ZERNIO GERÇEK PUBLISH ADAPTER + per-platform AI-disclosure — KABUL + COMMIT `6891f8b` + PUSH (ZERNIO_MOCK=true KALDI, gerçek yayın YOK).** Ham `openapi.yaml` (1.4MB) curl+parse ile şema BİREBİR (uydurma yok). Gerçek `ZernioPublishProvider`: presign+PUT upload, POST /posts, status, salt-okunur accounts(), 429 backoff, {error,code,reason} → PublishOutcome. **AI-LABEL:** YouTube `containsSyntheticMedia` + TikTok `videoMadeWithAi` native bayrak VAR, IG YOK → **hibrit+per-platform toggle**: Ayarlar→AI ifşası (migration **0013**, 3 boolean default 1), IG caption "Made with AI"/"AI ile üretildi" (owner locale), kapatınca `compliance.ai_disclosure_suppressed` truthful audit. Webhook event-id `payload.id`/`X-Zernio-Event-Id`. **CANLI salt-okunur GET /accounts → IG `@ai.neeidy` (kanıt; yayın yok).** Docs: zernio-notes + spec + **ADR-021**. **822 PASS/0 FAIL**; secret-scan temiz. **4 GATE GO:** qa, security (0 HIGH-MED; header-format bug'ı canlı 401 yakaladı+düzeltildi), compliance (truthful effective-flag + audit), integration (ilk NO-GO 4 uydurma alan platformResults/contentType:reels/per-platform error → B1-B4 `post.platforms[]`/shareToFeed/errorCategory → yeniden GO). 17 dosya commit (feat/publish) + checkpoint (chore/state). **+ DEV-DB FIX:** /settings 500 (no such column ai_disclose_instagram) = 0013 canlı dev DB'ye uygulanmamıştı (KOD/migration uyumsuzluğu DEĞİL) → WAL-safe yedek `kuyash.pre-0013.bak.sqlite` + `bin/migrate.php` (dev DB migration=13, 3 ws default ON) → /settings 200 + 3 toggle, 10 nav ekranı 200/0-SQL-hata.
 
 - 2026-06-14 — **GO-LIVE PREP + R2 GATE + DASHBOARD BÜTÇE GERÇEĞE BAĞLANDI (hepsi main'e push'lu).** (a) Go-live planı sunuldu (servis-bazı credential/.env + Zernio 12-madde doc-gate [0/12 elde] + IG Business ön-koşulu); MOCK smoke izole DB'de uçtan uca **PASS** (trend→onay→pipeline→48 event→completed). (b) **R2 gate düzeltildi** (`bin/r2-smoke.php` `35bb7ac`): imzasız GET'te HTTP 400'ü gövde-temelli redde çevirdi (sızıntı=obje baytları döndü mü; PRIVATE=400/401/403 VE gövde gizli) → canlı bucket **6/6 PASS** (gövde R2 hata-XML'i, sızıntı yok). `.env`'de `STORAGE_DRIVER=r2` (kullanıcı bıraktı). (c) **Dashboard BYO-key bütçe** (`8716803`): "remaining balance"→**"remaining budget"** (cap−MTD spend / "no monthly limit"); `Cockpit::business` budget_cap+remaining + cost-per-content gerçek usage & 0-harcamada "no data"; sahte dev-DB finansı silindi (ws#2: $50 grant+$1.50 adjust+$0.95 usage → temiz $0; WAL-safe yedek `kuyash.pre-finance-reset.*.bak`; ws#1/#3 dokunulmadı). Bütçe enforcement zaten wire'lı (PreflightGate) — kanıtlandı: **$1 cap, $7.02 quick_create AI-video run → BudgetExceededException; $0.10 stok run → başlar.** **801 PASS/0 FAIL** (+5 test). origin/main `8716803`.
 
 - 2026-06-14 — **FAZ 21 — 3. TUR REDDİ → 4 MADDELİK HEDEFLİ DÜZELTME BİTTİ (UNCOMMITTED; COMMIT/PUSH/MERGE YOK).** Kullanıcı F21'i hâlâ kabul etmedi, SADECE 4 iş istedi (başka ekran/refactor YOK; engine/queue/worker/migration DOKUNULMADI). (1) Workspace adı düzenlenebilir: `WorkspaceSettings::setName`+`SettingsController::saveName`+`POST /settings/name` ($protected/CSRF/tenant-scoped/≤60, ADDITIVE `workspaces.name`, migration yok) + /settings kartı + topbar `.mode-chip__name` TEAL GRADIENT (DB adı okur). (2) Metin rampası GÖRÜNÜR teal: `--text #d7ece5/--text-2 #8fbeb3/--text-3 #84b2a9` (G−R +21/+47/+46 ≫ eski +6; AA ≥7.06; luminance düşmedi). (3) Live dot `@keyframes live-beat` nabız+glow (accent+--glow, reduced-motion sabit). (4) Pipeline drawer GERÇEK per-aşama çıktı: `Cockpit::pipeline` node'lara `results` (read-only SELECT) + pipeline.php 12 node tipini render (hepsi `View::e` escape, wait→"başlamadı"/veri-yok→"çıktı yok"); visual-seed Run A TREND/IDEA/SCRIPT gerçekçi result_json (DEV-only). ~50 lang anahtarı (en+tr parite). **796 PASS/0 FAIL (+20 test); visual 69 PNG/0 err/0 overflow/exit 0; canlı-app curl: rename persist+CSRF 403+tenant-izole, dashboard'da gerçek node çıktısı; topbar yakın-çekim teal teyit.** 4 GATE GO/0 blocker (qa/security 0 HIGH-MED+2 LOW/ux piksel-teal/compliance truthful). 13 dosya working tree'de; İNSAN KAPISI bekliyor.
-- 2026-06-14 — **FAZ 21: İLK SUNUM `e0f2541` REDDEDİLDİ → 6 MADDELİK DÜZELTME `cc8df98` → 4 GATE GO; İNSAN KAPISI bekliyor.** İlk F21 (§1 hesap canlı-akış widget'ı `account-card.php` [gradient video-tile + ♥/💬/↗ + takipçi/büyüme; DETERMİNİSTİK ÖRNEK crc32, medya-free, DÜRÜST çerçeveli] + dashboard/accounts/queue v3 + `Messages::jobType/platform` + temel jargon scrub + inline player + login branding) salt sunum+i18n+mock; kullanıcı /logs+/queue artığı jargon + 5 iç ekranın "eski" durması + inline player'ın oynamaması üzerinden REDDETTİ. **6 DÜZELTME:** (A1) /logs TAM temizlik — `Messages::event()` {type}/{platform}/{slop→%}/{node} DISPLAY-humanize (stored row HAM=audit korunur) + event.* reword (worker/watchdog/policy/WARN-BLOCK) + {kind} "[compliance]"→"Uyumluluk" + visual-seed GERÇEK event key/param; (A2) /queue render_review "(mock)…policy mock-v0" → durum-bazlı "Compliance: passed · AI label required" (ham summary basılmaz); (A3) /settings+/digest standalone "policy kuyash-v1" çipleri + auto_desc sürümü KALDIRILDI (sürüm yalnız truthful onay KAYITLARINDA); (B) 5 ekran gerçek v3: glow primary CTA + trends gradient-skor/hover/stagger + library play-affordance+populated grid + quick/digest/settings `.card--primary` focal; (C) metin rampası teal-fısıltı (sadece hue, `--text/-2/-3`; luminance korundu/yükseldi → AA, --text-3 ≥5.0 her yüzey); (D6) inline player GERÇEKTEN OYNAR — committed mock fixture `tools/visual/fixtures/preview.{mp4,jpg}` seed'le render storage'a + awaiting render_review'ye `draft_render_id` → **/render/1 200 video/mp4 + 206 range (curl-kanıt)**, SSE `/live` snapshot emit. **+** canonical node `Messages::node()` ile liste/feed humanize (VOICE→"Voiceover"; graph view'larda canonical KALIR), `[hidden]` CSS fix (boyut-uyarısı koşulsuz görünüyordu), published_today oranı reword. `tests/run.php` **776 PASS/0 FAIL**; visual **69 PNG / 0 err / 0 overflow / exit 0**; parite **564=564**. **4 gate GO:** ux (2 blocker [/queue ham node enum + fixture commitsiz] DÜZELTİLDİ+yeniden doğrulandı), qa (scope: tek `src/`=Messages facade; engine/route/DB/controller DOKUNULMADI; build-free), security (0 HIGH/MED; 2 LOW info), **compliance hard-gate** (truthful records [policy yalnız kayıtta] + AI label + sample dürüst + audit korundu). F21 tip `cc8df98`. **İNSAN KAPISI (tek, sonda) BEKLİYOR — push/merge YOK.**
