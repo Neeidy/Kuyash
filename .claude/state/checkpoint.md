@@ -108,6 +108,16 @@
 
 ## Açık konular / bekleyenler
 
+- **DÜZELTME — gerçek dev DB `0016`'da, `0017` DEĞİL.** Faz 24 oturum logu "Dev DB 0017"
+  diyor; ölçtüm, YANLIŞ: `migrations` son satırı `0016_publish_slots.sql`, `slot_occurrences`
+  tablosu YOK. `kuyash.pre-0017.20260823T185852Z.bak.sqlite` yedeği var (migration
+  hazırlanmış ama uygulanmamış). **Sonuç:** Faz 24'ün haftalık takvimi bu DB'de ölü —
+  `PlanRunner::tick()` her worker başlangıcında ve her 300 sn chore'da "no such table:
+  slot_occurrences" ile patlıyor. Faz 24 bunu BİLEREK yakalıyor (yayın durmasın diye),
+  o yüzden fark edilmemiş; yayın yolu etkilenmiyor, plan özelliği çalışmıyor.
+  **Karar kullanıcının:** WAL-safe yedek + `php bin/migrate.php` ile 0017'ye taşımak.
+  Ben uygulamadım — canlı dev DB'ye migration istenmeden yapılacak bir iş değil.
+
 - `.env` lokal dev/debug=true; `.env.example` prod/false (bilinçli ayrım).
 - Port 8080'de eski bir `php -S` süreci dinliyor — dev için 8082 kullan.
 - Followups: phase-5-followups.md (Faz 6/9/11 tetikleyicileri: 401 non-retryable, semantik
