@@ -111,6 +111,43 @@ final class Database
         }
     }
 
+    /**
+     * Like transaction(), but takes the write lock UP FRONT (`BEGIN IMMEDIATE`).
+     *
+     * PDO's beginTransaction() issues a plain DEFERRED `BEGIN`. A closure that
+     * READS before it WRITES therefore holds a read snapshot, and in WAL that
+     * transaction can no longer upgrade to a writer once any other connection
+     * has committed in the meantime — SQLite answers SQLITE_BUSY_SNAPSHOT, which
+     * `busy_timeout` deliberately does NOT cover, so it surfaces immediately as
+     * "database is locked". Read-then-write paths that race the worker (which
+     * commits on every job claim and every event) need this instead.
+     *
+     * DOES NOT NEST. PDO does not know a hand-issued BEGIN is open, so a
+     * transaction() call inside this closure would try to start a second one and
+     * fail. Keep the closure to plain reads and run() calls.
+     */
+    public function immediateTransaction(Closure $fn): mixed
+    {
+        $pdo = $this->pdo();
+        $pdo->exec('BEGIN IMMEDIATE');
+
+        try {
+            $result = $fn($this);
+            $pdo->exec('COMMIT');
+
+            return $result;
+        } catch (Throwable $e) {
+            // inTransaction() does not track a hand-issued BEGIN, so this asks
+            // SQLite itself rather than PDO's bookkeeping.
+            try {
+                $pdo->exec('ROLLBACK');
+            } catch (Throwable) {
+                // already rolled back by SQLite (e.g. a failed BEGIN) — nothing to undo
+            }
+            throw $e;
+        }
+    }
+
     public function lastInsertId(): int
     {
         return (int) $this->pdo()->lastInsertId();

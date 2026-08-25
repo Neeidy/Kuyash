@@ -44,6 +44,7 @@ final class QueueController
         private readonly WorkspaceSettings $settings,
         private readonly OccurrenceRepository $occurrences,
         private readonly Database $db,
+        private readonly \Kuyash\Content\TextEditorView $editor,
     ) {
     }
 
@@ -56,7 +57,7 @@ final class QueueController
             'workspaceName' => $this->workspace->currentName(),
             'csrfField' => $this->csrf->field(),
             'flashes' => Messages::resolveFlashes($this->flash),
-            'awaiting' => $this->withPlannedDay($this->jobs->awaitingApproval($this->workspace)),
+            'awaiting' => $this->withText($this->withPlannedDay($this->jobs->awaitingApproval($this->workspace))),
             'jobs' => $this->jobs->listFor($this->workspace),
             'runs' => $this->runs->listFor($this->workspace, 20),
             'workerAlive' => $this->heartbeat->isAlive(gmdate('Y-m-d\TH:i:s\Z')),
@@ -164,6 +165,27 @@ final class QueueController
                     : $this->backToQueue('success', 'approval.approved_scheduled', ['when' => Messages::until((string) ($scheduledAt ?? $plannedKept))]))
                 : $this->backToQueue('success', 'approval.rejected'),
         };
+    }
+
+    /**
+     * Attach the editable post text to each approval card (Phase 25).
+     *
+     * Only for the publish-time gate: a script draft has no captions yet, and
+     * offering an editor there would promise something the run cannot deliver.
+     *
+     * @param list<array<string, mixed>> $jobs
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function withText(array $jobs): array
+    {
+        foreach ($jobs as $i => $job) {
+            $jobs[$i]['text'] = (string) ($job['type'] ?? '') === 'render_review'
+                ? $this->editor->forRun($this->workspace, (int) ($job['run_id'] ?? 0))
+                : null;
+        }
+
+        return $jobs;
     }
 
     /**

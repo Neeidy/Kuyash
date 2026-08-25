@@ -23,10 +23,16 @@ $postTone = static fn (string $s): string => match ($s) {
 
 $jobsByNode = [];
 $contentByType = [];
+// kept OUT of $contentByType on purpose: that map drives the "Generated content"
+// card, and the compliance result is not content — it is the verdict about it.
+$complianceResult = [];
 foreach ($jobs as $job) {
     $jobsByNode[(string) $job['node']][] = $job;
     if (in_array($job['type'], ['idea_generation', 'script_draft', 'caption_generation', 'hashtag_generation'], true)) {
         $contentByType[(string) $job['type']] = $job;
+    }
+    if ((string) $job['type'] === 'compliance_check') {
+        $complianceResult = (array) ($job['result'] ?? []);
     }
 }
 
@@ -87,16 +93,52 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
   </div>
 </div>
 
-<?php if ($contentByType !== []): ?>
+<?php $editorShown = ($text ?? null) !== null; ?>
+<?php if ($editorShown): ?>
+<?php /* Phase 25 — the same editor the approval card shows. Placed above the
+         read-only record below, because while the text can still be changed,
+         changing it is the thing an operator came here to do. */ ?>
+<div class="card">
+  <div class="card__head"><h2><?= View::t('content.card') ?></h2></div>
+  <div class="card__body">
+    <?php
+      $limits = $text['limits'];
+      $disclosureLine = $text['disclosure'];
+      $runId = (int) $run['id'];
+      $backTo = 'run';
+      $withHeading = false;
+      // this screen has no approval card, so the editor carries the chip itself —
+      // for every run, so that "was this checked?" is not answered differently
+      // depending on whether somebody edited the words
+      $showBadge = true;
+      $generatedCompliance = [
+          'status' => (string) ($complianceResult['status'] ?? ''),
+          'slop' => $complianceResult['checks']['slop']['score'] ?? null,
+      ];
+      $text = $text['text'];
+      require __DIR__ . '/../partials/text-editor.php';
+    ?>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php
+$idea = $contentByType['idea_generation']['result'] ?? [];
+$script = $contentByType['script_draft']['result'] ?? [];
+$captions = $contentByType['caption_generation']['result']['captions'] ?? [];
+$hashtags = $contentByType['hashtag_generation']['result']['hashtags'] ?? [];
+// The editor above already shows the caption and the tags — as fields, current,
+// and editable. Repeating them here printed the same words a second time under
+// a different (and more technical) name, so the record card keeps only what the
+// editor does not carry.
+$showsText = !$editorShown;
+$hasRecord = isset($idea['hook']) || isset($idea['idea']) || isset($script['script'])
+    || ($showsText && ($captions !== [] || $hashtags !== []));
+?>
+<?php if ($contentByType !== [] && $hasRecord): ?>
 <div class="card">
   <div class="card__head"><h2><?= View::t('runs.generated_content') ?></h2></div>
   <div class="card__body">
-    <?php
-    $idea = $contentByType['idea_generation']['result'] ?? [];
-    $script = $contentByType['script_draft']['result'] ?? [];
-    $captions = $contentByType['caption_generation']['result']['captions'] ?? [];
-    $hashtags = $contentByType['hashtag_generation']['result']['hashtags'] ?? [];
-    ?>
     <?php if (isset($idea['hook']) || isset($idea['idea'])): ?>
     <div class="content-block">
       <h3 class="content-block__label"><?= View::t('runs.idea') ?></h3>
@@ -114,7 +156,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
     </div>
     <?php endif; ?>
 
-    <?php if ($captions !== []): ?>
+    <?php if ($showsText && $captions !== []): ?>
     <div class="content-block">
       <h3 class="content-block__label"><?= View::t('runs.captions') ?></h3>
       <dl class="caption-grid">
@@ -128,7 +170,7 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
     </div>
     <?php endif; ?>
 
-    <?php if ($hashtags !== []): ?>
+    <?php if ($showsText && $hashtags !== []): ?>
     <div class="content-block">
       <h3 class="content-block__label"><?= View::t('runs.hashtags') ?></h3>
       <div class="tag-row">

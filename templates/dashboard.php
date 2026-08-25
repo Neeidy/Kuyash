@@ -172,12 +172,28 @@ $biz = $cockpit['business'];
               <?php if (($r['ai_label_required'] ?? false)): ?>
               <span class="chip chip--ai"><?= View::t('queue.ai_label_will_set') ?></span>
               <?php endif; ?>
-              <?php if ($job['type'] === 'render_review' && isset($r['compliance']['status'])): ?>
-              <?php $cs = (string) $r['compliance']['status']; ?>
-              <?php if ($cs === 'pass'): ?>
-              <span class="chip chip--ok"><span class="dot dot--ok"></span><?= View::t('queue.compliance_pass') ?></span>
-              <?php elseif ($cs === 'warn'): ?>
-              <span class="chip chip--warn chip--wrap"><span class="dot dot--warn"></span><?= View::t('queue.slop_label') ?> <?= View::e(number_format((float) ($r['compliance']['slop_score'] ?? 0), 2)) ?></span>
+              <?php
+                // same rule as the queue card: once a person edited the words,
+                // the chip describes THAT text, because that is what publishes.
+                // The two surfaces read the same derived value so they cannot
+                // disagree about the same post.
+                $cBadge = $job['badge'] ?? null;
+                $cEdited = is_array($cBadge);
+                $cs = $cEdited ? (string) $cBadge['status'] : (string) ($r['compliance']['status'] ?? '');
+                $cScore = $cEdited ? $cBadge['slop'] : ($r['compliance']['slop_score'] ?? null);
+              ?>
+              <?php if ($job['type'] === 'render_review' && $cs !== ''): ?>
+              <?php $cSimilar = $cScore !== null && ($cEdited ? $cBadge['similar'] : true); ?>
+              <?php if ($cs === 'pass' || $cs === 'pass_with_ai_label'): ?>
+              <span class="chip chip--ok"><span class="dot dot--ok"></span><?= View::t($cEdited ? 'queue.compliance_pass_edited' : 'queue.compliance_pass') ?></span>
+              <?php elseif ($cs === 'warn' && $cSimilar): ?>
+              <span class="chip chip--warn chip--wrap"><span class="dot dot--warn"></span><?= View::t($cEdited ? 'queue.similarity_edited' : 'queue.similarity', ['score' => number_format((float) $cScore, 2)]) ?></span>
+              <?php elseif ($cs === 'block'): ?>
+              <span class="chip chip--err"><span class="dot dot--err"></span><?= View::t('queue.checks_blocked') ?></span>
+              <?php else: ?>
+              <?php /* warned about something else, or a status this screen does
+                       not know — never leave the card with no chip at all */ ?>
+              <span class="chip chip--warn chip--wrap"><span class="dot dot--warn"></span><?= View::t($cEdited ? 'queue.checks_note_edited' : 'queue.checks_note') ?></span>
               <?php endif; ?>
               <?php endif; ?>
             </div>

@@ -7,6 +7,7 @@ namespace Kuyash\Controllers;
 use Kuyash\Auth\Auth;
 use Kuyash\Core\Csrf;
 use Kuyash\Core\Response;
+use Kuyash\Content\TextEditorView;
 use Kuyash\Core\View;
 use Kuyash\Workflow\Cockpit;
 use Kuyash\Workflow\WorkerHeartbeat;
@@ -22,6 +23,11 @@ final class DashboardController
         private readonly Csrf $csrf,
         private readonly WorkerHeartbeat $heartbeat,
         private readonly Cockpit $cockpit,
+        // Phase 25: the approval cards here are the same posts the queue shows,
+        // so their compliance chip has to answer the same question — what does
+        // the text that will publish score? Optional so existing constructions
+        // stay valid; null just leaves the generated verdict rendering.
+        private readonly ?TextEditorView $editor = null,
     ) {
     }
 
@@ -41,6 +47,8 @@ final class DashboardController
         }
 
         $now = gmdate('Y-m-d\TH:i:s\Z');
+        $cockpit = $this->cockpit->snapshot($this->workspace, $now);
+        $cockpit['awaiting'] = $this->withBadges($cockpit['awaiting'] ?? []);
 
         return Response::html($this->view->render('dashboard', [
             'title' => 'Dashboard — Kuyash',
@@ -51,7 +59,30 @@ final class DashboardController
             'role' => $workspace['role'],
             'csrfField' => $this->csrf->field(),
             'workerAlive' => $this->heartbeat->isAlive($now),
-            'cockpit' => $this->cockpit->snapshot($this->workspace, $now),
+            'cockpit' => $cockpit,
         ], 'layout/app'));
+    }
+
+    /**
+     * Attach the "what does the outgoing text score" chip to each approval card.
+     * Null for a run nobody edited — the card then renders the compliance_check
+     * verdict, which is still exactly right.
+     *
+     * @param list<array<string, mixed>> $jobs
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function withBadges(array $jobs): array
+    {
+        if ($this->editor === null) {
+            return $jobs;
+        }
+        foreach ($jobs as $i => $job) {
+            $jobs[$i]['badge'] = (string) ($job['type'] ?? '') === 'render_review'
+                ? $this->editor->badgeFor($this->workspace, (int) ($job['run_id'] ?? 0))
+                : null;
+        }
+
+        return $jobs;
     }
 }

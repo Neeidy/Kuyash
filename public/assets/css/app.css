@@ -453,7 +453,10 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
 
 .approve-list { display: flex; flex-direction: column; gap: var(--s2); }
 .approve-card {
-  display: flex; gap: var(--s3); align-items: center;
+  /* flex-start, not center: the card grew a text editor (Phase 25), and
+     centring a short column against a tall one pushed the card's own title
+     ~130px down the row, away from the post it names */
+  display: flex; gap: var(--s3); align-items: flex-start;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-ctl);
   padding: var(--s3); flex-wrap: wrap;
 }
@@ -475,6 +478,10 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
    must be allowed to shrink — flex:none on a form kept the Reject button at
    its natural width and pushed it past a 375px viewport */
 .approve-card__actions > form { min-width: 0; max-width: 100%; }
+/* the editor takes a row of its own, so "Save the text" ends up directly above
+   "Approve & publish" instead of a column-width away from it */
+.approve-card > .textedit { flex: 1 0 100%; min-width: 0; }
+.approve-card__unsaved { flex: 1 0 100%; margin: 0 0 var(--s1); }
 
 /* ---------- logs terminal (Phase 4; ported from demo motion.css §9) ---------- */
 .term {
@@ -1583,4 +1590,74 @@ html:not(.js) .topbar__live { display: none; }
   .cal__day { padding: var(--s2); }
   .cal__head { flex-direction: column; align-items: flex-start; gap: 2px; }
   .cell__actions, .cell__assign { flex-direction: column; align-items: stretch; }
+}
+
+
+/* ── Phase 25: editing a post's text ───────────────────────────────────────
+   The body is a field; the AI notice under it deliberately is NOT — it is
+   composed at publish time, and showing it as an input would suggest it could
+   be removed. */
+.textedit { border-top: 1px solid var(--border); margin-top: var(--s3); padding-top: var(--s3); }
+/* inside a card that already titles it, the rule separated nothing and only
+   added a stray line under the card heading */
+.textedit--bare { border-top: 0; margin-top: 0; padding-top: 0; }
+.textedit__head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+.textedit__head h3 { margin: 0; font-size: 13px; font-weight: 500; }
+.textedit__warn { margin-bottom: var(--s2); font-size: 12px; }
+.textedit__warn p { margin: 0 0 2px; }
+.textedit__form { display: flex; flex-direction: column; gap: 2px; }
+/* the tag field is its own group, not a continuation of the last caption —
+   at 2px the TAGS label read as another line of the paragraph above it */
+.textedit__form .textedit__field + .field__hint { margin-top: 0; }
+.textedit__tags { margin-top: var(--s3); }
+.textedit__field { margin-bottom: 0; min-width: 0; }
+.textedit__field textarea { min-height: 4.5rem; resize: vertical; line-height: 1.5; }
+/* Tags are a wrapping list, not a paragraph. A single-line input cut them off
+   mid-word; a short fixed box then sliced the last visible row through the
+   glyphs, which reads as broken rather than as "scroll for more". Where the
+   browser can size a field to its content it does, so the whole list is
+   readable — the max-height stops an absurd list from taking over the card. */
+.textedit__field textarea[data-count-tags] {
+  min-height: 3rem; max-height: 12rem; field-sizing: content;
+}
+/* read-only, not disabled: the text stays selectable and copyable (that is the
+   whole point of showing a finished post), but it must not LOOK like a field
+   waiting for input */
+.textedit__field textarea[readonly] {
+  background: var(--surface); color: var(--text-2);
+  border-style: dashed; cursor: default; resize: none;
+  /* a finished post is a record, not a form — four empty rows around one line
+     gave it the weight of something waiting to be filled in. Where the browser
+     can size to content it does; the min/max keep it sane everywhere else. */
+  min-height: 3rem; max-height: 14rem; field-sizing: content;
+}
+.textedit__count { margin: 0 0 var(--s2); font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.textedit__count--over { color: var(--warn); }
+/* approaching the limit is not a problem yet — it gets weight, not alarm */
+.textedit__count--near { color: var(--text-1); font-weight: 500; }
+.textedit__locked {
+  display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap;
+  margin: 0 0 var(--s3); padding: var(--s2) var(--s3);
+  border: 1px dashed var(--border-strong); border-radius: var(--r-ctl);
+  background: var(--surface-2); font-size: 12px;
+}
+.textedit__locked .icon { flex: none; width: 14px; height: 14px; color: var(--text-2); align-self: center; }
+.textedit__locked strong { font-weight: 500; }
+.textedit__locked--off { border-style: dotted; }
+/* text that is in the box but NOT in the database — the one state where what
+   you see and what would publish are different things */
+.textedit__unsaved { margin: 0 0 var(--s2); font-size: 12px; color: var(--warn); }
+.textedit__actions { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }
+.textedit form + form { margin-top: var(--s2); }
+
+@media (max-width: 480px) {
+  /* stacking every child put the padlock on a line of its own, floating above
+     the sentence it belongs to — keep icon and notice together and let only
+     the explanation drop below */
+  .textedit__locked { gap: var(--s1) var(--s2); }
+  .textedit__locked .muted { flex: 1 0 100%; }
+  /* a realistic tag list wraps to five or more lines at this width — the floor
+     is raised so it is readable even without content-sizing, on the width this
+     feature is actually used at */
+  .textedit__field textarea[data-count-tags] { min-height: 8rem; max-height: 16rem; }
 }

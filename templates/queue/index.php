@@ -38,7 +38,7 @@ use Kuyash\Core\View;
     <?php else: ?>
     <div class="approve-list">
       <?php foreach ($awaiting as $job): ?>
-      <article class="approve-card">
+      <article class="approve-card" data-approve-card id="run-<?= (int) $job['run_id'] ?>">
         <div class="approve-card__main">
           <h3><?= View::e(Messages::jobType((string) $job['type'])) ?> · <?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?></h3>
           <div class="approve-card__meta">
@@ -46,14 +46,45 @@ use Kuyash\Core\View;
             <?php if (isset($job['result']['word_count'], $job['result']['estimated_duration_s'])): ?>
             <span class="chip chip--neutral num"><?= (int) $job['result']['word_count'] ?> <?= View::t('queue.words') ?> · ~<?= View::e((string) $job['result']['estimated_duration_s']) ?>s</span>
             <?php endif; ?>
-            <?php if ($job['type'] === 'render_review' && isset($job['result']['compliance']['status'])): ?>
-            <?php $cs = (string) $job['result']['compliance']['status']; ?>
-            <?php if ($cs === 'warn'): ?>
-            <span class="chip chip--warn chip--wrap"><span class="dot"></span><?= View::t('queue.slop_label') ?> <?= View::e(number_format((float) ($job['result']['compliance']['slop_score'] ?? 0), 2)) ?> <?= View::t('queue.slop_too_similar') ?></span>
-            <?php elseif ($cs === 'pass_with_ai_label'): ?>
+            <?php
+              // Phase 25 — this chip sits next to the button that publishes, so
+              // it has to describe the text that WILL publish. Once a person has
+              // edited the words, the compliance_check score belongs to the
+              // generated draft and is a number about the wrong thing; the edit
+              // was judged by ContentGate at save time, with the same scorer and
+              // the same thresholds. No edit → the generated verdict still is
+              // the right answer and nothing changes.
+              $cGen = (string) ($job['result']['compliance']['status'] ?? '');
+              $cBadge = $job['text']['text']['badge'] ?? null;
+              $cEdited = is_array($cBadge);
+              $cs = $cEdited ? (string) $cBadge['status'] : $cGen;
+              $cScore = $cEdited ? $cBadge['slop'] : ($job['result']['compliance']['slop_score'] ?? null);
+            ?>
+            <?php if ($job['type'] === 'render_review' && $cs !== ''): ?>
+            <?php if ($job['result']['ai_label_required'] ?? false): ?>
+            <?php /* The label follows the MEDIA, so an edit to the words leaves
+                     it exactly where it was — and it is keyed on the requirement
+                     itself, not on a status a slop warning can outrank. */ ?>
             <span class="chip chip--ai"><?= View::t('queue.ai_label_will_set') ?></span>
-            <?php elseif ($cs === 'pass'): ?>
-            <span class="chip chip--ok"><span class="dot"></span><?= View::t('queue.compliance_pass') ?></span>
+            <?php endif; ?>
+            <?php
+              // A similarity chip needs a similarity number. Without one — an
+              // edit warned about something else, or a generated verdict with
+              // no score — naming that check and printing 0.00 would be the
+              // wrong check and a meaningless figure, beside the publish button.
+              $cSimilar = $cScore !== null && ($cEdited ? $cBadge['similar'] : true);
+            ?>
+            <?php if ($cs === 'warn' && $cSimilar): ?>
+            <span class="chip chip--warn chip--wrap"><span class="dot"></span><?= View::t($cEdited ? 'queue.similarity_edited' : 'queue.similarity', ['score' => number_format((float) $cScore, 2)]) ?></span>
+            <?php elseif ($cs === 'pass' || $cs === 'pass_with_ai_label'): ?>
+            <span class="chip chip--ok"><span class="dot"></span><?= View::t($cEdited ? 'queue.compliance_pass_edited' : 'queue.compliance_pass') ?></span>
+            <?php elseif ($cs === 'block'): ?>
+            <span class="chip chip--err"><span class="dot"></span><?= View::t('queue.checks_blocked') ?></span>
+            <?php else: ?>
+            <?php /* warned about something else, or a status this screen does
+                     not know — say the honest, unspecific thing rather than
+                     leaving the card with no compliance chip at all */ ?>
+            <span class="chip chip--warn chip--wrap"><span class="dot"></span><?= View::t($cEdited ? 'queue.checks_note_edited' : 'queue.checks_note') ?></span>
             <?php endif; ?>
             <?php endif; ?>
             <a class="btn btn--ghost btn--sm" href="/runs/<?= (int) $job['run_id'] ?>"><?= View::t('common.view_run') ?></a>
@@ -80,19 +111,61 @@ use Kuyash\Core\View;
             </div>
             <?php endif; ?>
             <?php /* Phase 21: show a clean, truthful compliance line — never the raw
-                     internal summary ("Render review (mock): … policy mock-v0"). */ ?>
-            <?php $cs = $job['result']['compliance']['status'] ?? null; ?>
-            <?php if ($cs === 'pass' || $cs === 'pass_with_ai_label'): ?>
+                     internal summary ("Render review (mock): … policy mock-v0").
+                     Phase 25: and only while it is still about the outgoing text.
+                     Once a person has edited the words, this line would be the
+                     DRAFT's verdict — a bare "Compliance: passed" a few pixels
+                     above the publish button, contradicting the chip above that
+                     already speaks for the edited text. The meta chip says it;
+                     this does not say it twice from the wrong source. A separate
+                     variable, too: reusing $cs shadowed the badge-aware one. */ ?>
+            <?php $cNote = ($cEdited ?? false) ? null : ($job['result']['compliance']['status'] ?? null); ?>
+            <?php if ($cNote === 'pass' || $cNote === 'pass_with_ai_label'): ?>
             <p class="approve-card__note"><?= View::t('queue.compliance_passed') ?><?= ($job['result']['ai_label_required'] ?? false) ? ' · ' . View::t('queue.ai_label_required') : '' ?></p>
             <?php elseif (($job['result']['ai_label_required'] ?? false)): ?>
+            <?php /* the label follows the MEDIA, so it survives an edit */ ?>
             <p class="approve-card__note"><?= View::t('queue.ai_label_required') ?></p>
             <?php endif; ?>
           <?php elseif (isset($job['result']['summary'])): ?>
           <p class="approve-card__note"><?= View::e((string) $job['result']['summary']) ?></p>
           <?php endif; ?>
         </div>
+        <?php if (($job['text'] ?? null) !== null): ?>
+        <?php /* Phase 25 — the AI wrote a first draft; this is where a person
+                 makes it theirs. The edit is what publishes, it re-passes the
+                 same compliance checks on the way in, and the AI notice sits
+                 outside it where no edit can reach. */ ?>
+        <?php
+            $text = $job['text']['text'];
+            $limits = $job['text']['limits'];
+            $disclosureLine = $job['text']['disclosure'];
+            $runId = (int) $job['run_id'];
+            $backTo = 'queue';
+            $withHeading = true;
+            // the card's meta row already carries the compliance chip
+            $showBadge = false;
+            require __DIR__ . '/../partials/text-editor.php';
+        ?>
+        <?php endif; ?>
         <div class="approve-card__actions">
-          <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve">
+          <?php /* Phase 25 — "Save the text" and "Approve & publish" are two
+                   sibling forms, and approving without saving would quietly send
+                   the AI's words instead of yours. Said plainly here whether or
+                   not scripting is on; the confirm below is the belt to this
+                   line's braces. */ ?>
+          <?php
+            $editorOpen = ($job['text'] ?? null) !== null && ($job['text']['text']['editable'] ?? false) === true;
+            // Once a save has landed, "what Kuyash wrote is what goes out" is
+            // false — the saved edit is. Same sentence, two different truths.
+            $alreadyEdited = $editorOpen && (($job['text']['text']['edited'] ?? false) === true);
+            $unsavedKey = $alreadyEdited ? 'content.unsaved_edited' : 'content.unsaved';
+            $unsavedConfirm = $alreadyEdited ? 'content.unsaved_confirm_edited' : 'content.unsaved_confirm';
+          ?>
+          <?php if ($editorOpen): ?>
+          <p class="field__hint approve-card__unsaved"><?= View::t($unsavedKey) ?></p>
+          <?php endif; ?>
+          <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve"
+                <?php if ($editorOpen): ?>data-needs-saved-text="<?= View::t($unsavedConfirm) ?>"<?php endif; ?>>
             <?= $csrfField ?>
             <?php if ($job['type'] === 'render_review' && ($job['planned_at'] ?? null) !== null): ?>
             <?php /* PLANNED: the day already answered "when", so this states it

@@ -16,9 +16,16 @@ final class Sanitizer
     /** Strip control chars (keep normal whitespace), collapse runs, clamp length. */
     public static function clean(string $value, int $maxLength = 280): string
     {
-        // drop C0/C1 control chars except tab/newline, which we fold to spaces
-        $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $value) ?? '';
-        $value = preg_replace('/\s+/u', ' ', $value) ?? '';
+        // A /u pattern returns null on malformed UTF-8, and `?? ''` turned one
+        // bad byte in a pasted line into a silently EMPTIED line — which then
+        // hit the empty-caption block and told the operator "write something
+        // for Instagram" about text they had very much written. Fall back to
+        // the byte-wise pass so the words survive and the encoding damage is
+        // limited to the offending characters.
+        $stripped = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $value);
+        $value = $stripped ?? (preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value) ?? $value);
+        $collapsed = preg_replace('/\s+/u', ' ', $value);
+        $value = $collapsed ?? (preg_replace('/\s+/', ' ', $value) ?? $value);
         $value = trim($value);
 
         if (mb_strlen($value) > $maxLength) {

@@ -144,6 +144,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(WorkerHeartbeat::class),
         $c->get(Cockpit::class),
+        $c->get(\Kuyash\Content\TextEditorView::class),
     ));
 
     $container->bind(LiveController::class, static fn (Container $c): LiveController => new LiveController(
@@ -211,6 +212,22 @@ return static function (Container $container, string $basePath): void {
         (int) $c->get(Config::class)->get('storage.r2.presign_ttl', 300),
     ));
 
+    $container->bind(\Kuyash\Controllers\ContentController::class, static fn (Container $c): \Kuyash\Controllers\ContentController => new \Kuyash\Controllers\ContentController(
+        $c->get(\Kuyash\Content\ContentRevision::class),
+        $c->get(\Kuyash\Compliance\ContentGate::class),
+        $c->get(\Kuyash\Publish\AccountRepository::class),
+        $c->get(Database::class),
+        $c->get(WorkspaceContext::class),
+        $c->get(\Kuyash\Auth\Auth::class),
+        $c->get(Flash::class),
+        $c->get(\Kuyash\Workflow\EventLog::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(\Kuyash\Content\DraftStash::class),
+        // one live compliance re-score per save; 30 saves a minute per IP is far
+        // above a person editing text and low enough that a loop cannot churn it
+        new RateLimiter($c->get(Database::class), 30, 60),
+    ));
+
     $container->bind(WorkflowController::class, static fn (Container $c): WorkflowController => new WorkflowController(
         $c->get(View::class),
         $c->get(WorkflowRepository::class),
@@ -224,6 +241,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(Auth::class),
         $c->get(Csrf::class),
         $c->get(Flash::class),
+        $c->get(\Kuyash\Content\TextEditorView::class),
     ));
 
     $container->bind(AccountsController::class, static fn (Container $c): AccountsController => new AccountsController(
@@ -302,6 +320,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceSettings::class),
         $c->get(\Kuyash\Publish\OccurrenceRepository::class),
         $c->get(Database::class),
+        $c->get(\Kuyash\Content\TextEditorView::class),
     ));
 
     $container->bind(SettingsController::class, static fn (Container $c): SettingsController => new SettingsController(

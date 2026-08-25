@@ -41,6 +41,7 @@ final class WorkflowController
         private readonly Auth $auth,
         private readonly Csrf $csrf,
         private readonly Flash $flash,
+        private readonly \Kuyash\Content\TextEditorView $editor,
     ) {
     }
 
@@ -135,6 +136,9 @@ final class WorkflowController
             'timeline' => $this->events->timelineForRun($this->workspace, $run['id']),
             'approvals' => $this->runs->approvalsForRun($this->workspace, $run['id']),
             'posts' => $this->posts->forRun($this->workspace, $run['id']),
+            // Phase 25 — the same editor the approval card shows, so the counts
+            // and the AI notice cannot differ between the two screens
+            'text' => $this->editor->forRun($this->workspace, (int) $run['id']),
         ], 'layout/app'));
     }
 

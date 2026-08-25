@@ -213,6 +213,31 @@ return static function (Container $container, string $basePath): void {
         $c->get(OccurrenceRepository::class),
     ));
 
+    // Phase 25 — editing a post's text. The limits are advisory (see
+    // config/platforms.php); the gate reuses the SAME SlopScorer and the SAME
+    // CompliancePolicy thresholds the generated text was judged by, so an edit
+    // is not held to a second, softer standard.
+    $container->bind(\Kuyash\Content\PlatformLimits::class, static fn (Container $c): \Kuyash\Content\PlatformLimits => new \Kuyash\Content\PlatformLimits(
+        (array) $c->get(Config::class)->get('platforms'),
+    ));
+    $container->bind(\Kuyash\Compliance\ContentGate::class, static fn (Container $c): \Kuyash\Compliance\ContentGate => new \Kuyash\Compliance\ContentGate(
+        $c->get(\Kuyash\Compliance\SlopScorer::class),
+        $c->get(\Kuyash\Content\PlatformLimits::class),
+    ));
+    $container->bind(\Kuyash\Content\ContentRevision::class, static fn (Container $c): \Kuyash\Content\ContentRevision => new \Kuyash\Content\ContentRevision(
+        $c->get(Database::class),
+    ));
+    $container->bind(\Kuyash\Content\DraftStash::class, static fn (): \Kuyash\Content\DraftStash => new \Kuyash\Content\DraftStash());
+
+    $container->bind(\Kuyash\Content\TextEditorView::class, static fn (Container $c): \Kuyash\Content\TextEditorView => new \Kuyash\Content\TextEditorView(
+        $c->get(\Kuyash\Content\ContentRevision::class),
+        $c->get(\Kuyash\Content\PlatformLimits::class),
+        $c->get(\Kuyash\Publish\AccountRepository::class),
+        $c->get(Database::class),
+        $c->get(WorkspaceSettings::class),
+        $c->get(\Kuyash\Content\DraftStash::class),
+    ));
+
     $container->bind(PublishCounter::class, static fn (Container $c): PublishCounter => new PublishCounter(
         $c->get(Database::class),
     ));

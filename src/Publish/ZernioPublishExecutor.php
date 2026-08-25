@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Kuyash\Publish;
 
 use Closure;
+use Kuyash\Content\ContentRevision;
 use Kuyash\Core\Database;
-use Kuyash\Core\I18n;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\JobExecutor;
 use Kuyash\Workflow\JobResult;
@@ -62,6 +62,33 @@ final class ZernioPublishExecutor implements JobExecutor
             is_string(...),
         ));
 
+        // Phase 25 — the drift guard. When a human edited this text, the edit
+        // carries the hash of what the compliance gate judged. If the text about
+        // to be sent is not that text, it reached here without passing the gate,
+        // and publishing is irreversible — so this stops, permanently, rather
+        // than retrying its way onto a live account.
+        //
+        // An UNEDITED run has no `edit` block and takes none of this: its
+        // behaviour is byte-for-byte what it was before Phase 25.
+        $edit = $prior['caption_generation']['edit'] ?? null;
+        if (is_array($edit)) {
+            $expected = (string) ($edit['hash'] ?? '');
+            $actual = ContentRevision::hash(
+                array_filter($captions, is_string(...)),
+                $hashtags,
+            );
+            if ($expected === '' || !hash_equals($expected, $actual)) {
+                $this->events->record($wsId, 'error', 'compliance', 'content.edit_unverified', [
+                    'run' => $runId,
+                ], $runId, $jobId);
+
+                return JobResult::failedPermanent(
+                    'content changed without passing the compliance check',
+                    $this->provider->name(),
+                );
+            }
+        }
+
         $targets = $this->accounts->connectedFor($wsId);
         if ($targets === []) {
             $this->events->record($wsId, 'warn', 'transition', 'publish.no_accounts', [
@@ -111,6 +138,27 @@ final class ZernioPublishExecutor implements JobExecutor
                 : $this->posts->insertPublishing($wsId, $runId, $jobId, $accountId, $platform, $effectiveAi, $scheduledFor, $key, $now);
             if ($existing !== null) {
                 $this->posts->markPublishing($postId, $jobId, $now);
+            }
+
+            // Phase 25 — an EDITED post never goes out wordless. The save-time
+            // gate can only refuse an empty caption for the channels connected AT
+            // THAT MOMENT, and an account inside a reauth window is not
+            // "connected", so that block quietly switches itself off and back on
+            // again; here the target is real and in front of us.
+            //
+            // Scoped to edited content ON PURPOSE. An unedited run must behave
+            // exactly as it did before this phase (the regression lock), and a
+            // generated caption that came out empty is a different problem with
+            // a different owner. Per TARGET, too: one empty channel must not fail
+            // the others, and it is recorded on the post row like every other
+            // terminal outcome.
+            if (is_array($edit) && trim($caption) === '') {
+                $this->posts->markFailed($postId, 'no text for this channel', $now);
+                $this->events->record($wsId, 'warn', 'compliance', 'publish.empty_caption', [
+                    'platform' => $platform, 'run' => $runId,
+                ], $runId, $jobId);
+                $failed++;
+                continue;
             }
 
             $request = new PublishRequest(
@@ -212,36 +260,10 @@ final class ZernioPublishExecutor implements JobExecutor
      */
     private function withDisclosure(string $caption, int $wsId): string
     {
-        $line = $this->disclosureText($wsId);
-        $caption = rtrim($caption);
-
-        return $caption === '' ? $line : $caption . "\n" . $line;
-    }
-
-    /** Localized AI-disclosure text ("Made with AI" / "AI ile üretildi"), owner's locale. */
-    private function disclosureText(int $wsId): string
-    {
-        $locale = $this->ownerLocale($wsId);
-        $prev = I18n::locale();
-        I18n::setLocale($locale);
-        $line = I18n::t('compliance.ai_disclosure');
-        I18n::setLocale($prev);
-
-        return $line;
-    }
-
-    /** The workspace owner's UI locale (best proxy for the content language); defaults to en. */
-    private function ownerLocale(int $wsId): string
-    {
-        $row = $this->db->one(
-            "SELECT u.locale FROM users u
-             JOIN workspace_users wu ON wu.user_id = u.id
-             WHERE wu.workspace_id = ?
-             ORDER BY (wu.role = 'owner') DESC, wu.id ASC LIMIT 1",
-            [$wsId],
-        );
-
-        return (string) ($row['locale'] ?? 'en');
+        // Delegated to Disclosure (Phase 25) so the text editor's character
+        // counter measures the SAME composition that is actually published.
+        // Two implementations would drift, and the count would start lying.
+        return Disclosure::compose($caption, Disclosure::line($this->db, $wsId));
     }
 
     /** The run's scheduled publish time, set at approval; null = immediate. */

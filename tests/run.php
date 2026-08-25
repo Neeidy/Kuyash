@@ -1232,6 +1232,21 @@ function makeRig(Database $db, JobExecutor $executor, string &$now, ?TextProvide
     return [$engine, $worker, $events, $watchdog];
 }
 
+/** The Phase 25 text-editor read model over a test DB. */
+function makeTextEditorView(Database $db, ?\Kuyash\Content\DraftStash $drafts = null): \Kuyash\Content\TextEditorView
+{
+    global $basePath;
+
+    return new \Kuyash\Content\TextEditorView(
+        new \Kuyash\Content\ContentRevision($db),
+        new \Kuyash\Content\PlatformLimits(require $basePath . '/config/platforms.php'),
+        new AccountRepository($db),
+        $db,
+        new WorkspaceSettings($db),
+        $drafts,
+    );
+}
+
 /**
  * A fully wired PlanController over a test DB (Phase 24). Mirrors the web
  * binding so controller tests exercise the real collaborators, not stubs.
@@ -2094,11 +2109,10 @@ while ($p4worker->tick()) {
 }
 $p4auth = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
 $deadHeartbeat = new WorkerHeartbeat(tempDir('hb') . '/none.heartbeat'); // never beaten → "not running"
-$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db);
+$queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db, makeTextEditorView($p4db));
 $wfCtl = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
-    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(),
-);
+    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(), makeTextEditorView($p4db));
 $logsCtl = new LogsController($view, $p4events, $p4ctx, new Csrf(), new Flash());
 
 check('workflows ctl: index lists both defaults', (static function () use ($wfCtl): bool {
@@ -2170,11 +2184,10 @@ $_SESSION = [];
 $_SESSION['auth_user_id'] = $p4UserB;
 $p4ctx->set($p4WsB);
 $authB = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
-$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db);
+$queueCtlB = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $authB, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db, makeTextEditorView($p4db));
 $wfCtlB = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
-    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(),
-);
+    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $authB, new Csrf(), new Flash(), makeTextEditorView($p4db));
 
 check('isolation ctl: B approving A\'s job → 404', $queueCtlB->approve(['id' => (string) $scriptJob['id']])->status() === 404);
 check('isolation ctl: B retrying A\'s job → 404', $queueCtlB->retry(['id' => (string) $scriptJob['id']])->status() === 404);
@@ -6320,6 +6333,9 @@ check('i18n: every template View::t key exists in en.php', (static function () u
                 if ($k === 'plan.reason_') {
                     continue; // dynamic: every skip reason, all verified below
                 }
+                if ($k === 'content.locked_') {
+                    continue; // dynamic: every lock reason, all verified below
+                }
                 if (!array_key_exists($k, $enMap)) {
                     return false;
                 }
@@ -6343,6 +6359,13 @@ check('i18n: every template View::t key exists in en.php', (static function () u
               'kill_switch', 'plan_paused', 'compliance_block', 'no_owner', 'no_workflow',
               'no_account', 'cancelled'] as $reason) {
         if (!array_key_exists('plan.reason_' . $reason, $enMap)) {
+            return false;
+        }
+    }
+    // Phase 25: every reason the text editor can be locked for needs a label —
+    // an unlabeled one would reach the screen as a raw enum.
+    foreach (['publishing', 'run_over', 'not_found', 'not_ready'] as $reason) {
+        if (!array_key_exists('content.locked_' . $reason, $enMap)) {
             return false;
         }
     }
@@ -7639,8 +7662,7 @@ check('p23/approve: a hand-picked time is read in the workspace zone, not silent
             new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
             new WorkerHeartbeat(tempDir('hb') . '/p23.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings,
-            new OccurrenceRepository($db), $db,
-        );
+            new OccurrenceRepository($db), $db, makeTextEditorView($db));
 
         $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
         $reflect->setAccessible(true);
@@ -7672,7 +7694,7 @@ check('p23/approve: an unknown or paused slot REFUSES the approval — never a s
             $view, new JobRepository($db), new RunRepository($db),
             new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
-            new WorkerHeartbeat(tempDir('hb') . '/p23b.heartbeat'), $slots, new SlotResolver(), $settings, new OccurrenceRepository($db), $db);
+            new WorkerHeartbeat(tempDir('hb') . '/p23b.heartbeat'), $slots, new SlotResolver(), $settings, new OccurrenceRepository($db), $db, makeTextEditorView($db));
         $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
         $reflect->setAccessible(true);
 
@@ -7701,7 +7723,7 @@ check('p23/safety: a past time REFUSES the approval instead of publishing immedi
             $view, new JobRepository($db), new RunRepository($db),
             new Engine($db, new \Kuyash\Workflow\EventLog($db), new WorkflowValidator()),
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
-            new WorkerHeartbeat(tempDir('hb') . '/p23c.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings, new OccurrenceRepository($db), $db);
+            new WorkerHeartbeat(tempDir('hb') . '/p23c.heartbeat'), new SlotRepository($db), new SlotResolver(), $settings, new OccurrenceRepository($db), $db, makeTextEditorView($db));
         $reflect = new ReflectionMethod($ctl, 'requestedSchedule');
         $reflect->setAccessible(true);
 
@@ -9016,8 +9038,7 @@ check('p24/queue: an approval card carries the day it was planned for', (static 
         new Engine($db, new EventLog($db), new WorkflowValidator()),
         $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
         new WorkerHeartbeat(tempDir('hb') . '/p24.heartbeat'), new SlotRepository($db), new SlotResolver(),
-        new WorkspaceSettings($db), new OccurrenceRepository($db), $db,
-    );
+        new WorkspaceSettings($db), new OccurrenceRepository($db), $db, makeTextEditorView($db));
     $body = $queue->index()->body();
 
     $en = require $basePath . '/lang/en.php';
@@ -9047,8 +9068,7 @@ check('p24/queue: approving a planned card keeps its day; asking to publish now 
             $view, new JobRepository($db), new RunRepository($db), $engine,
             $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
             new WorkerHeartbeat(tempDir('hb') . '/p24b.heartbeat'), new SlotRepository($db), new SlotResolver(),
-            new WorkspaceSettings($db), new OccurrenceRepository($db), $db,
-        );
+            new WorkspaceSettings($db), new OccurrenceRepository($db), $db, makeTextEditorView($db));
         $_POST = $publishNow ? ['publish_now' => '1'] : [];
         $queue->approve(['id' => (string) $review['id']]);
         $_POST = [];
@@ -9318,8 +9338,7 @@ check('p24/gatefix: a replayed "publish now" cannot touch a decision the engine 
         $view, new JobRepository($db), new RunRepository($db), $engine,
         $ctx, new Auth($db, new LoginThrottle($db), $ctx), new Csrf(), new Flash(),
         new WorkerHeartbeat(tempDir('hb') . '/p24c.heartbeat'), new SlotRepository($db), new SlotResolver(),
-        new WorkspaceSettings($db), new OccurrenceRepository($db), $db,
-    );
+        new WorkspaceSettings($db), new OccurrenceRepository($db), $db, makeTextEditorView($db));
     $_POST = ['publish_now' => '1'];
     $queue->approve(['id' => (string) $other['id']]);   // engine will refuse this
     $_POST = [];
@@ -9464,6 +9483,1097 @@ check('p24/ui-fix: the guidance reads in plain words in both languages, with no 
 
     return str_contains($tr['plan.mode_manual_help'], 'Kütüphane')
         && str_contains($en['plan.mode_manual_help'], 'Library');
+})());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 25 — TASK 0: RISK SPIKE (no product code yet).
+//
+// The whole feature rests on ONE claim: a human-edited caption reaches the
+// publish adapter as the EDITED text, and the mandatory AI disclosure is still
+// on it — because the disclosure is composed at publish time and was never part
+// of the caption body an operator can touch.
+//
+// Proven with the code that already exists: the edit is simulated by writing
+// straight into jobs.result_json (which is exactly where a real edit will land),
+// so if this fails the plan's storage decision is wrong and Task 1 must not start.
+echo "== p25/task0: RISK SPIKE — an edited caption reaches the adapter, disclosure intact ==\n";
+
+/**
+ * Drive a distribution run to its approval gate with a connected Instagram
+ * account and a spy provider, and hand back everything the spike needs.
+ *
+ * @return array{0: Database, 1: int, 2: int, 3: int, 4: SpyPublishProvider, 5: Engine, 6: Worker, 7: WorkspaceContext}
+ */
+$p25rig = static function (string $basePath, string $argonHash, string $email, View $view): array {
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, $email, $argonHash, 'P25 ' . $email);
+    $now = '2026-08-24T09:00:00Z';
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Spike clip');
+    $db->run(
+        "INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+         VALUES (?, 'instagram', '@spike', 'zacct_spike25', 'connected', 'ok', ?, ?)",
+        [$ws, $now, $now],
+    );
+
+    $clock = $now;
+    $spy = new SpyPublishProvider();
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock, null, false, $spy);
+    $runId = $engine->startRun($ctx, (int) $wf['id'], $asset, $user);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    return [$db, $user, $ws, $runId, $spy, $engine, $worker, $ctx];
+};
+
+check('p25/task0: an edited caption is what reaches the adapter, with the AI disclosure still on it', (static function () use ($basePath, $argonHash, $view, $p25rig): bool {
+    [$db, $user, $ws, $runId, $spy, $engine, $worker, $ctx] = $p25rig($basePath, $argonHash, 'p25-spike@example.com', $view);
+
+    // The media is AI-labelled (a full pipeline's TTS would set this; a spike
+    // states it directly, because WHY the label is required is not what is
+    // under test — that the edit cannot strip it, is).
+    $cc = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$runId]);
+    if ($cc === null) {
+        return false;
+    }
+    $ccResult = json_decode((string) $cc['result_json'], true);
+    $ccResult['ai_label_required'] = true;
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($ccResult), (int) $cc['id']]);
+
+    // THE EDIT — written exactly where a real one will land, and deliberately
+    // containing no disclosure of any kind.
+    $edited = 'A caption a human actually wrote. No disclosure anywhere in this body.';
+    $capJob = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'caption_generation'", [$runId]);
+    $capResult = json_decode((string) $capJob['result_json'], true);
+    $aiOriginal = (string) ($capResult['captions']['instagram'] ?? '');
+    $capResult['captions']['instagram'] = $edited;
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($capResult), (int) $capJob['id']]);
+
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    if ($review === null || $engine->approve($ctx, (int) $review['id'], $user, 'p25-spike@example.com', null) !== Decision::Ok) {
+        return false;
+    }
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    $req = $spy->requests[0] ?? null;
+    if (!$req instanceof PublishRequest) {
+        return false;
+    }
+    $disclosure = 'Made with AI';
+
+    return str_contains($req->caption, $edited)                       // the EDIT reached the adapter…
+        && $aiOriginal !== '' && !str_contains($req->caption, $aiOriginal)  // …and the AI original did NOT
+        && str_ends_with(rtrim($req->caption), $disclosure)           // the disclosure is still the LAST line
+        && $req->aiLabelApplied === true                              // and the label is still asserted
+        && (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id = ? AND ai_label_applied = 1", [$runId])['n'] === 1;
+})());
+
+check('p25/task0: an UNEDITED run is untouched — the AI caption publishes exactly as it does today', (static function () use ($basePath, $argonHash, $view, $p25rig): bool {
+    // The regression baseline the whole phase must preserve.
+    [$db, $user, $ws, $runId, $spy, $engine, $worker, $ctx] = $p25rig($basePath, $argonHash, 'p25-baseline@example.com', $view);
+
+    $capJob = $db->one("SELECT result_json FROM jobs WHERE run_id = ? AND type = 'caption_generation'", [$runId]);
+    $aiCaption = (string) (json_decode((string) $capJob['result_json'], true)['captions']['instagram'] ?? '');
+
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'p25-baseline@example.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    $req = $spy->requests[0] ?? null;
+
+    return $req instanceof PublishRequest
+        && $aiCaption !== ''
+        && $req->caption === $aiCaption          // no disclosure appended: this run is not AI-labelled
+        && $req->aiLabelApplied === false;
+})());
+
+echo "== p25/gate: what an edit has to pass before it can be saved ==\n";
+
+$p25limits = new \Kuyash\Content\PlatformLimits(require $basePath . '/config/platforms.php');
+
+check('p25/gate: the character count measures what is actually SENT — body, disclosure and tags', (static function () use ($p25limits): bool {
+    // mirrors ZernioPublishExecutor::withDisclosure then ZernioPublishProvider::postPayload
+    $assembled = $p25limits->assemble('Hello', ['#a', '#b'], 'Made with AI');
+
+    return $assembled === "Hello\nMade with AI\n\n#a #b"
+        && $p25limits->measure('instagram', 'Hello', ['#a', '#b'], 'Made with AI')['chars'] === mb_strlen($assembled)
+        // …and the body alone would have understated it
+        && $p25limits->measure('instagram', 'Hello', [], '')['chars'] === 5;
+})());
+
+check('p25/gate: an unknown platform reports no opinion rather than a false "fine"', (static function () use ($p25limits): bool {
+    $m = $p25limits->measure('mastodon', str_repeat('x', 9000), [], '');
+
+    return $m['known'] === false && $m['over_chars'] === false && $m['over_tags'] === false;
+})());
+
+/** ContentGate over a real workspace, with a real SlopScorer. */
+$p25gate = static function (Database $db) use ($basePath): \Kuyash\Compliance\ContentGate {
+    return new \Kuyash\Compliance\ContentGate(
+        new SlopScorer($db),
+        new \Kuyash\Content\PlatformLimits(require $basePath . '/config/platforms.php'),
+    );
+};
+
+check('p25/gate: a length over the configured limit only WARNS — the number is unverified', (static function () use ($basePath, $argonHash, $p25gate): bool {
+    // LOCKED DECISION: config/platforms.php values are not verified against any
+    // platform's documentation, so refusing a save on them would be the system
+    // asserting something it does not know.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'p25-limit@x.com', $argonHash, 'P25LIMIT');
+    $long = str_repeat('a', 3000);
+
+    $v = $p25gate($db)->judge($ws, 1, ['instagram' => $long], [], ['instagram']);
+    $keys = array_column($v['warnings'], 'key');
+
+    return $v['status'] === CompliancePolicy::WARN     // warn, NOT block
+        && $v['reasons'] === []
+        && in_array('content.too_long', $keys, true)
+        && $v['limits']['instagram']['over_chars'] === true;
+})());
+
+check('p25/gate: an empty caption on a CONNECTED channel blocks — that is missing content, not a limit', (static function () use ($basePath, $argonHash, $p25gate): bool {
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'p25-empty@x.com', $argonHash, 'P25EMPTY');
+
+    $blocked = $p25gate($db)->judge($ws, 1, ['instagram' => '   ', 'tiktok' => 'fine'], [], ['instagram', 'tiktok']);
+    // …but an empty caption for a channel that is NOT connected is nobody's problem
+    $ok = $p25gate($db)->judge($ws, 1, ['instagram' => 'fine', 'youtube' => ''], [], ['instagram']);
+
+    return $blocked['status'] === CompliancePolicy::BLOCK
+        && array_column($blocked['reasons'], 'key') === ['content.empty_caption']
+        && $ok['status'] !== CompliancePolicy::BLOCK;
+})());
+
+check('p25/gate: an edit that is a near-duplicate of recent content is BLOCKED by the same rule the generator faced', (static function () use ($basePath, $argonHash, $p25gate): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, 'p25-slop@x.com', $argonHash, 'P25SLOP');
+    $now = gmdate(NOW_ISO);
+    $db->run("INSERT INTO workflows (workspace_id,name,template,nodes_json,created_at,updated_at) VALUES (?,'W','distribution','[]',?,?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $text = 'A one pan dinner you can make in thirty seconds flat with three cheap ingredients';
+    // a previous run in this workspace already published essentially this text
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at) VALUES (?,?,'library','[]','completed',?,?,?)", [$ws, $wf, $user, $now, $now]);
+    $old = $db->lastInsertId();
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at,result_json) VALUES (?,?,'CAPTION',2,'caption_generation','ready',?,?,?)",
+        [$ws, $old, $now, $now, json_encode(['captions' => ['instagram' => $text]])]);
+
+    $v = $p25gate($db)->judge($ws, $old + 1, ['instagram' => $text], [], ['instagram']);
+
+    return $v['status'] === CompliancePolicy::BLOCK
+        && array_column($v['reasons'], 'key') === ['content.too_similar']
+        && $v['slop']['score'] >= CompliancePolicy::SLOP_BLOCK
+        && $v['policy'] === CompliancePolicy::VERSION;   // the SAME policy, not a second one
+})());
+
+check('p25/gate: typing the disclosure into the body is allowed, noted, and never doubled', (static function () use ($basePath, $argonHash, $p25gate): bool {
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'p25-disc@x.com', $argonHash, 'P25DISC');
+
+    $v = $p25gate($db)->judge($ws, 1, ['instagram' => "My video\nMade with AI"], [], ['instagram'], '', 'Made with AI');
+    $composed = \Kuyash\Publish\Disclosure::compose("My video\nMade with AI", 'Made with AI');
+
+    return in_array('content.disclosure_typed', array_column($v['warnings'], 'key'), true)
+        && $v['status'] !== CompliancePolicy::BLOCK
+        && substr_count($composed, 'Made with AI') === 1;   // deduped
+})());
+
+echo "== p25/store: where an edit is written, and when it is allowed at all ==\n";
+
+/** A distribution run parked at its approval gate, with a connected account. */
+$p25run = static function (Database $db, string $email) use ($argonHash): array {
+    $now = gmdate(NOW_ISO);
+    [$user, $ws] = seedUser($db, $email, $argonHash, 'P25 ' . $email);
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $_SESSION['auth_user_id'] = $user;
+    (new WorkflowRepository($db, new WorkflowValidator()))->ensureDefaults($ctx);
+    $wf = (new WorkflowRepository($db, new WorkflowValidator()))->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Editable clip');
+    $db->run("INSERT INTO accounts (workspace_id,platform,handle,external_ref,status,health,created_at,updated_at)
+              VALUES (?, 'instagram', '@ed', 'zacct_ed', 'connected', 'ok', ?, ?)", [$ws, $now, $now]);
+    $clock = $now;
+    $spy = new SpyPublishProvider();
+    [$engine, $worker] = makeRig($db, new MockExecutor(), $clock, null, false, $spy);
+    $runId = $engine->startRun($ctx, (int) $wf['id'], $asset, $user);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    return [$user, $ws, $ctx, $runId, $engine, $worker, $spy];
+};
+
+check('p25/store: an edit replaces what publish reads, and keeps what Kuyash wrote', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'store-basic@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+
+    $before = $rev->forRun($ctx, $runId);
+    $aiCaption = $before['captions']['instagram'] ?? '';
+    $edited = ['instagram' => 'Human words.', 'tiktok' => 'Human words two.', 'youtube' => 'Human words three.'];
+
+    $saved = $rev->save($ctx, $runId, $edited, ['#one'], $before['hash'], $user, 'store-basic@x.com', ['status' => 'pass'], gmdate(NOW_ISO));
+    $after = $rev->forRun($ctx, $runId);
+
+    return $saved
+        && $aiCaption !== '' && $aiCaption !== 'Human words.'
+        && $after['captions']['instagram'] === 'Human words.'      // publish reads THIS
+        && $after['captions_ai']['instagram'] === $aiCaption        // …and the AI original survives
+        && $after['hashtags'] === ['#one']
+        && $after['edited'] === true
+        && (int) $after['edit']['by'] === $user;
+})());
+
+check('p25/store: a second edit does not overwrite the AI original with the first edit', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, , $ctx, $runId] = $p25run($db, 'store-twice@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $first = $rev->forRun($ctx, $runId);
+    $ai = $first['captions']['instagram'];
+
+    $rev->save($ctx, $runId, ['instagram' => 'edit one'], [], $first['hash'], $user, 'e@x.com', [], gmdate(NOW_ISO));
+    $mid = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, ['instagram' => 'edit two'], [], $mid['hash'], $user, 'e@x.com', [], gmdate(NOW_ISO));
+    $end = $rev->forRun($ctx, $runId);
+
+    return $end['captions']['instagram'] === 'edit two' && $end['captions_ai']['instagram'] === $ai;
+})());
+
+check('p25/store: a stale form is refused rather than silently overwriting the other tab', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, , $ctx, $runId] = $p25run($db, 'store-race@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);       // both tabs load this
+
+    $first = $rev->save($ctx, $runId, ['instagram' => 'tab one'], [], $loaded['hash'], $user, 'e@x.com', [], gmdate(NOW_ISO));
+    $second = $rev->save($ctx, $runId, ['instagram' => 'tab two'], [], $loaded['hash'], $user, 'e@x.com', [], gmdate(NOW_ISO));
+
+    return $first && !$second
+        && $rev->forRun($ctx, $runId)['captions']['instagram'] === 'tab one';
+})());
+
+check('p25/store: once it is publishing, the text is read-only', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'store-locked@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $editableBefore = $loaded['editable'] === true;
+
+    $db->run("INSERT INTO jobs (workspace_id,run_id,node,step,type,status,run_after,created_at) VALUES (?,?,'PUBLISH',9,'publish','processing',?,?)",
+        [$ws, $runId, gmdate(NOW_ISO), gmdate(NOW_ISO)]);
+
+    $after = $rev->forRun($ctx, $runId);
+    $refused = $rev->save($ctx, $runId, ['instagram' => 'too late'], [], $loaded['hash'], $user, 'e@x.com', [], gmdate(NOW_ISO));
+
+    return $editableBefore
+        && $after['editable'] === false && $after['locked_reason'] === 'publishing'
+        && !$refused;
+})());
+
+check('p25/store: another workspace cannot read or change this run\'s text', (static function () use ($basePath, $p25run, $argonHash): bool {
+    $db = migratedDb($basePath);
+    [$user, , , $runId] = $p25run($db, 'store-iso-a@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $ctxA = new WorkspaceContext($db);
+
+    [, $wsB] = seedUser($db, 'store-iso-b@x.com', $argonHash, 'ISO B');
+    $ctxB = new WorkspaceContext($db);
+    $ctxB->set($wsB);
+
+    $invisible = $rev->forRun($ctxB, $runId) === null;
+    $refused = !$rev->save($ctxB, $runId, ['instagram' => 'not yours'], [], 'whatever', $user, 'b@x.com', [], gmdate(NOW_ISO));
+
+    return $invisible && $refused;
+})());
+
+check('p25/store: operator input is cleaned — control characters out, tags normalized, newlines kept', (static function (): bool {
+    $caps = \Kuyash\Content\ContentRevision::cleanCaptions([
+        'instagram' => "line one\u{0007}\nline two   with   spaces",
+        'bogus' => 123,
+    ]);
+    $tags = \Kuyash\Content\ContentRevision::cleanHashtags('  #One two, ###three  #one  !!! ');
+
+    return $caps['instagram'] === "line one\nline two with spaces"   // newlines survive, control char gone
+        && !array_key_exists('bogus', $caps)
+        && $tags === ['#One', '#two', '#three', '#one'];             // '#one' ≠ '#One': dedupe is exact
+})());
+
+echo "== p25/publish: the drift guard, and the promise that unedited runs did not change ==\n";
+
+check('p25/publish: text changed without passing the gate never reaches the platform', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId, $engine, $worker, $spy] = $p25run($db, 'pub-drift@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, ['instagram' => 'gated text'], [], $loaded['hash'], $user, 'e@x.com', ['status' => 'pass'], gmdate(NOW_ISO));
+
+    // …and then something writes around the gate (a bug, a stray script)
+    $capJob = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'caption_generation'", [$runId]);
+    $cap = json_decode((string) $capJob['result_json'], true);
+    $cap['captions']['instagram'] = 'text nobody checked';
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($cap), (int) $capJob['id']]);
+
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'e@x.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    $publish = $db->one("SELECT status, error_message, retry_count FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId]);
+    $unverified = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'content.edit_unverified'", [$ws]);
+
+    return $spy->requests === []                                   // nothing was sent
+        && (int) $db->one("SELECT COUNT(*) AS n FROM posts WHERE run_id = ?", [$runId])['n'] === 0
+        && (string) $publish['status'] === 'failed'
+        && str_contains((string) $publish['error_message'], 'without passing the compliance check')
+        // dead-lettered on the FIRST attempt: Engine labels a non-retryable
+        // failure and stops, instead of walking the retry ladder toward a live
+        // account (retry_count is the attempt that failed, so 1, not max_retries)
+        && str_starts_with((string) $publish['error_message'], 'non-retryable:')
+        && (int) $publish['retry_count'] === 1
+        && $unverified !== null;
+})());
+
+check('p25/publish: a gate-approved edit publishes, still carrying the AI disclosure', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId, $engine, $worker, $spy] = $p25run($db, 'pub-ok@x.com');
+    // the media is AI-labelled
+    $cc = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$runId]);
+    $ccr = json_decode((string) $cc['result_json'], true);
+    $ccr['ai_label_required'] = true;
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($ccr), (int) $cc['id']]);
+
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, ['instagram' => 'Edited, no disclosure typed here'], ['#tag'], $loaded['hash'], $user, 'e@x.com', ['status' => 'pass'], gmdate(NOW_ISO));
+
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'e@x.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+
+    $req = $spy->requests[0] ?? null;
+
+    return $req instanceof PublishRequest
+        && str_contains($req->caption, 'Edited, no disclosure typed here')
+        && str_ends_with(rtrim($req->caption), 'Made with AI')     // the edit could not strip it
+        && $req->aiLabelApplied === true
+        && $req->hashtags === ['#tag'];
+})());
+
+check('p25/publish: an UNEDITED run behaves exactly as it did before Phase 25', (static function () use ($basePath, $p25run): bool {
+    // REGRESSION LOCK. No `edit` block → none of the new guard runs.
+    $db = migratedDb($basePath);
+    [$user, , $ctx, $runId, $engine, $worker, $spy] = $p25run($db, 'pub-baseline@x.com');
+    $capJob = $db->one("SELECT result_json FROM jobs WHERE run_id = ? AND type = 'caption_generation'", [$runId]);
+    $cap = json_decode((string) $capJob['result_json'], true);
+    $aiCaption = (string) $cap['captions']['instagram'];
+    $noEditBlock = !array_key_exists('edit', $cap) && !array_key_exists('captions_ai', $cap);
+
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'e@x.com', null);
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $req = $spy->requests[0] ?? null;
+
+    return $noEditBlock
+        && $req instanceof PublishRequest
+        && $req->caption === $aiCaption
+        && (string) $db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId])['status'] === 'published';
+})());
+
+check('p25/publish: the native TikTok/YouTube AI flags come from the media, not from the text', (static function () use ($basePath, $argonHash): bool {
+    // An edit changes the caption; it must not be able to move a platform flag.
+    $req = new PublishRequest('tiktok', '@t', 'ref', 'k', true, null, 1, 'anything a human typed', [], 1);
+    $reqYt = new PublishRequest('youtube', '@y', 'ref', 'k2', true, null, 1, 'anything a human typed', [], 1);
+    $off = new PublishRequest('tiktok', '@t', 'ref', 'k3', false, null, 1, 'Made with AI typed by hand', [], 1);
+
+    $psd = static function (PublishRequest $r): array {
+        $m = new ReflectionMethod(ZernioPublishProvider::class, 'platformSpecificData');
+        $m->setAccessible(true);
+
+        return $m->invoke(
+            (new ReflectionClass(ZernioPublishProvider::class))->newInstanceWithoutConstructor(),
+            $r,
+        );
+    };
+
+    return $psd($req) === ['videoMadeWithAi' => true]
+        && $psd($reqYt) === ['containsSyntheticMedia' => true]
+        // typing the words does NOT set the flag — the flag is about the media
+        && $psd($off) === [];
+})());
+
+echo "== p25/ui: the editor on the approval card and the run screen ==\n";
+
+/** A ContentController wired the way the web binding wires it. */
+function makeContentController(Database $db, WorkspaceContext $ctx, ?\Kuyash\Content\DraftStash $drafts = null): \Kuyash\Controllers\ContentController
+{
+    global $basePath;
+    $limits = new \Kuyash\Content\PlatformLimits(require $basePath . '/config/platforms.php');
+
+    return new \Kuyash\Controllers\ContentController(
+        new \Kuyash\Content\ContentRevision($db),
+        new \Kuyash\Compliance\ContentGate(new SlopScorer($db), $limits),
+        new AccountRepository($db),
+        $db,
+        $ctx,
+        new Auth($db, new LoginThrottle($db), $ctx),
+        new Flash(),
+        new EventLog($db),
+        new WorkspaceSettings($db),
+        $drafts ?? new \Kuyash\Content\DraftStash(),
+    );
+}
+
+check('p25/ui: saving through the controller stores the edit and records who did it', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'ctl-save@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+
+    $_POST = [
+        'content_hash' => $loaded['hash'],
+        'back' => 'queue',
+        'caption' => ['instagram' => 'Mine.', 'tiktok' => 'Mine too.', 'youtube' => 'And mine.'],
+        'hashtags' => 'alpha beta',
+    ];
+    $res = makeContentController($db, $ctx)->save(['id' => (string) $runId]);
+    $_POST = [];
+
+    $after = $rev->forRun($ctx, $runId);
+    $event = $db->one("SELECT kind, level FROM events WHERE workspace_id = ? AND key = 'content.edited'", [$ws]);
+
+    return $res->status() === 303
+        && $after['captions']['instagram'] === 'Mine.'
+        && $after['hashtags'] === ['#alpha', '#beta']
+        && (string) $after['edit']['by_email'] === 'ctl-save@x.com'
+        && $event !== null
+        // no new events.kind was invented — it maps onto one that already exists
+        && in_array((string) $event['kind'], ['transition', 'compliance', 'guardrail'], true);
+})());
+
+check('p25/ui: a blocked edit changes nothing and says which rule stopped it', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'ctl-block@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $before = $loaded['captions']['instagram'];
+
+    $_POST = [
+        'content_hash' => $loaded['hash'],
+        'caption' => ['instagram' => '   ', 'tiktok' => 'x', 'youtube' => 'y'],  // instagram IS connected
+        'hashtags' => '',
+    ];
+    makeContentController($db, $ctx)->save(['id' => (string) $runId]);
+    $_POST = [];
+
+    $after = $rev->forRun($ctx, $runId);
+    $audited = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'content.edit_blocked'", [$ws]);
+
+    return $after['captions']['instagram'] === $before   // untouched
+        && $after['edited'] === false
+        && $audited !== null;
+})());
+
+check('p25/ui: an edit made AFTER approval keeps the approval and is recorded as its own fact', (static function () use ($basePath, $p25run): bool {
+    // The approval was a real decision at a real time — it is not rewritten. That
+    // the text moved afterwards is a separate, louder record.
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId, $engine] = $p25run($db, 'ctl-after@x.com');
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'ctl-after@x.com', '2099-01-01T09:00:00Z');
+    $approvalBefore = $db->one('SELECT id, mode, decided_by, decided_at FROM approvals WHERE run_id = ?', [$runId]);
+
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $_POST = [
+        'content_hash' => $loaded['hash'],
+        'caption' => ['instagram' => 'Changed my mind.', 'tiktok' => 'a', 'youtube' => 'b'],
+        'hashtags' => '',
+    ];
+    makeContentController($db, $ctx)->save(['id' => (string) $runId]);
+    $_POST = [];
+
+    $approvalAfter = $db->one('SELECT id, mode, decided_by, decided_at FROM approvals WHERE run_id = ?', [$runId]);
+    $ev = $db->one("SELECT level FROM events WHERE workspace_id = ? AND key = 'content.edited_after_approval'", [$ws]);
+
+    return $approvalAfter == $approvalBefore                       // the approval record is untouched
+        && (string) $approvalAfter['mode'] === 'manual'
+        && (int) $approvalAfter['decided_by'] === $user
+        && $ev !== null && (string) $ev['level'] === 'warn'        // …and the edit is flagged, not hidden
+        && $rev->forRun($ctx, $runId)['captions']['instagram'] === 'Changed my mind.';
+})());
+
+check('p25/ui: an auto-approved run that a person edited shows BOTH facts, and never "approved by you"', (static function () use ($basePath, $view): bool {
+    // The compliance agent approved the render; a human later changed the words.
+    // Two true things — neither may be rendered as the other.
+    $en = require $basePath . '/lang/en.php';
+    $tr = require $basePath . '/lang/tr.php';
+    $tpl = (string) file_get_contents($basePath . '/templates/runs/show.php');
+    $editor = (string) file_get_contents($basePath . '/templates/partials/text-editor.php');
+
+    return str_contains($en['content.edited_badge'], 'you edited it')
+        && !str_contains(strtolower($en['content.edited_badge']), 'approved')
+        && array_key_exists('content.edited_after_approval', $tr)
+        // the approval badge still branches on the STORED mode, untouched by this
+        // phase — an auto record renders the agent, a manual one renders the person
+        && str_contains($tpl, "\$isAuto = (\$approval['mode'] ?? 'manual') === 'auto'")
+        && str_contains($tpl, 'digest.approved_by_agent')
+        && str_contains($tpl, 'runs.approved_by_you')
+        // …and the editor never claims an approval of any kind
+        && !str_contains($editor, 'approved_by');
+})());
+
+check('p25/ui: the editor is offered on the publish gate, never on a script draft', (static function () use ($basePath, $p25run, $view): bool {
+    $db = migratedDb($basePath);
+    [, , $ctx, $runId] = $p25run($db, 'ctl-where@x.com');
+    $editor = makeTextEditorView($db);
+
+    // a run at render_review HAS text to edit
+    $has = $editor->forRun($ctx, $runId) !== null;
+
+    // a run that has not reached CAPTION yet has nothing to edit, and must not
+    // pretend otherwise — jobs are enqueued one at a time, so a fresh run has
+    // only its first step
+    $fresh = $db->one("SELECT id FROM runs WHERE workspace_id = ? ORDER BY id DESC LIMIT 1", [$ctx->id()]);
+    $db->run("INSERT INTO runs (workspace_id,workflow_id,entity_type,nodes_json,status,created_by,created_at,updated_at)
+              SELECT workspace_id, workflow_id, entity_type, nodes_json, 'running', created_by, ?, ? FROM runs WHERE id = ?",
+        [gmdate(NOW_ISO), gmdate(NOW_ISO), (int) $fresh['id']]);
+    $none = $editor->forRun($ctx, $db->lastInsertId()) === null;
+
+    return $has && $none;
+})());
+
+check('p25/ui: the character count on screen is the count of what is actually sent', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'ctl-count@x.com');
+    // make it AI-labelled so Instagram carries the notice
+    $cc = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$runId]);
+    $ccr = json_decode((string) $cc['result_json'], true);
+    $ccr['ai_label_required'] = true;
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($ccr), (int) $cc['id']]);
+
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, ['instagram' => 'Body.', 'tiktok' => 'Body.', 'youtube' => 'Body.'], ['#a'], $loaded['hash'], $user, 'e@x.com', [], gmdate(NOW_ISO));
+
+    $view = makeTextEditorView($db)->forRun($ctx, $runId);
+    // "Body." + "\n" + "Made with AI" + "\n\n" + "#a"
+    $expected = mb_strlen("Body.\nMade with AI\n\n#a");
+
+    return $view['disclosure'] === 'Made with AI'
+        && $view['limits']['instagram']['chars'] === $expected
+        // TikTok gets the flag, not the words — so its count is shorter
+        && $view['limits']['tiktok']['chars'] === mb_strlen("Body.\n\n#a");
+})());
+
+
+echo "== p25/gap: the window between approval and publish ==\n";
+
+check('p25/store: the text stays editable while the final video is still rendering', (static function () use ($basePath, $p25run): bool {
+    // Approving does not end the chance to fix a typo. final_render renders the
+    // VIDEO and never reads the text, the publish job is not born until it
+    // finishes, and nothing has reached a platform — so closing the editor here
+    // would tell the operator "you approved it, now you may not change it" for a
+    // stretch that nothing on the screen explains.
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId, $engine] = $p25run($db, 'gap-open@x.com');
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'gap-open@x.com', null);
+
+    $render = $db->one("SELECT status FROM jobs WHERE run_id = ? AND type = 'final_render'", [$runId]);
+    $publish = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'publish'", [$runId]);
+    $rev = new \Kuyash\Content\ContentRevision($db);
+
+    return $render !== null && (string) $render['status'] === 'queued'
+        && $publish === null                          // the gap this test is about
+        && $rev->lockReason($ws, $runId) === null;    // and it is still editable
+})());
+
+check('p25/store: a run that was stopped is read-only and is never called published', (static function () use ($basePath, $p25run): bool {
+    // "Already published" on a cancelled run is a false publication claim, on the
+    // one screen whose whole job is to be exact about what went out.
+    $db = migratedDb($basePath);
+    [$user, $ws, , $runId, $engine] = $p25run($db, 'gap-stop@x.com');
+    $engine->cancelRun($ws, $runId, 'gap-stop@x.com', 'plan.changed_mind');
+
+    $en = require $basePath . '/lang/en.php';
+    $reason = (new \Kuyash\Content\ContentRevision($db))->lockReason($ws, $runId);
+
+    return $reason === 'run_stopped'
+        && array_key_exists('content.locked_run_stopped', $en)
+        && !str_contains(strtolower($en['content.locked_run_stopped']), 'publish')
+        // …and the second, contradicting sentence is gone entirely
+        && !array_key_exists('content.read_only', $en);
+})());
+
+check('p25/gate: a count near the limit is flagged, with the same threshold the screen uses', (static function (): bool {
+    $lim = new \Kuyash\Content\PlatformLimits([
+        'limits' => ['instagram' => ['caption_chars' => 100, 'hashtags' => 10]],
+        'warn_at' => 0.9,
+    ]);
+    $near = $lim->measure('instagram', str_repeat('a', 95), []);
+    $fine = $lim->measure('instagram', str_repeat('a', 10), []);
+
+    return $near['near_chars'] === true && $near['over_chars'] === false
+        && $near['near_chars_at'] === 90 && $near['near_tags_at'] === 9
+        && $fine['near_chars'] === false;
+})());
+
+check('p25/ui: two waiting posts each drive their OWN counters', (static function () use ($basePath): bool {
+    // /queue renders one editor per waiting post. A document-wide lookup made the
+    // second card write the FIRST card's numbers, and count the first card's tags.
+    $js = (string) file_get_contents($basePath . '/public/assets/js/app.js');
+
+    return !str_contains($js, "document.querySelector('[data-count-of")
+        && !str_contains($js, "document.querySelector('[data-count-tags")
+        && str_contains($js, "editor.querySelectorAll('[data-count-of]')")
+        && str_contains($js, "editor.querySelector('[data-count-tags]')")
+        // …and no server value is spliced into a selector string, where one
+        // quote would make it a SyntaxError and kill both counters silently
+        && !str_contains($js, "'[data-count-of=\"' +");
+})());
+
+check('p25/ui: approving with unsaved text asks first, and says so without scripting', (static function () use ($basePath): bool {
+    // The trap this phase would otherwise create: two sibling forms, and clicking
+    // the wrong one first publishes the AI draft and throws your words away.
+    $queue = (string) file_get_contents($basePath . '/templates/queue/index.php');
+    $js = (string) file_get_contents($basePath . '/public/assets/js/app.js');
+    $en = require $basePath . '/lang/en.php';
+
+    return str_contains($queue, 'data-approve-card')
+        && str_contains($queue, 'data-needs-saved-text')
+        && str_contains($queue, 'View::t($unsavedKey)')           // visible with JS off
+        && str_contains($js, "form[data-needs-saved-text]")
+        && str_contains($js, "'data-dirty'")
+        // …and once an edit IS saved, the warning stops claiming the AI's text
+        // would publish — the last saved version would
+        && str_contains($queue, "\$alreadyEdited ? 'content.unsaved_edited' : 'content.unsaved'")
+        && str_contains($en['content.unsaved_edited'], 'last saved')
+        && array_key_exists('content.unsaved_confirm_edited', $en);
+})());
+
+check('p25/ui: finished text can still be selected and copied, and the counts reach a screen reader', (static function () use ($basePath): bool {
+    $tpl = (string) file_get_contents($basePath . '/templates/partials/text-editor.php');
+
+    $js = (string) file_get_contents($basePath . '/public/assets/js/app.js');
+
+    return str_contains($tpl, "'readonly'")
+        && !str_contains($tpl, "'disabled'")   // disabled text cannot be focused or copied
+        && substr_count($tpl, 'aria-describedby') >= 2
+        // the count is reachable from the field at any time; it INTERRUPTS only
+        // when it crosses a limit, instead of reading out on every keystroke
+        && !str_contains($tpl, 'aria-live')
+        && str_contains($js, "el.setAttribute('aria-live', 'polite')")
+        && str_contains($js, "el.removeAttribute('aria-live')");
+})());
+
+check('p25/ui: the tag field states its own count, and the notice names its platform', (static function () use ($basePath): bool {
+    $tpl = (string) file_get_contents($basePath . '/templates/partials/text-editor.php');
+    $en = require $basePath . '/lang/en.php';
+
+    return str_contains($tpl, 'data-count-tags-of')
+        && str_contains($tpl, "View::t('content.tags_count'")
+        && str_contains($tpl, "'content.count_note_plain' : 'content.count_note'")  // says WHAT is counted
+        && str_contains($en['content.disclosure_locked'], '{platform}')  // and WHERE the notice lands
+        && str_contains($tpl, "View::t('content.disclosure_off')");      // required but switched off
+})());
+
+check('p25/ui: the native-flag line names only platforms whose switch is actually on', (static function () use ($basePath, $p25run): bool {
+    // "TikTok and YouTube get the same notice" is an assurance. Printing it for a
+    // platform whose disclosure toggle is OFF is the same false promise the
+    // Instagram line was already fixed for.
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $runId] = $p25run($db, 'native-flag@x.com');
+    $cc = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$runId]);
+    $ccr = json_decode((string) $cc['result_json'], true);
+    $ccr['ai_label_required'] = true;
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($ccr), (int) $cc['id']]);
+
+    $all = makeTextEditorView($db)->forRun($ctx, $runId)['text']['native_disclosure'];
+
+    // switch TikTok off — it must drop out of the sentence
+    $db->run('UPDATE workspaces SET ai_disclose_tiktok = 0 WHERE id = ?', [$ws]);
+    $afterOff = makeTextEditorView($db)->forRun($ctx, $runId)['text']['native_disclosure'];
+
+    return in_array('tiktok', $all, true) && in_array('youtube', $all, true)
+        && !in_array('instagram', $all, true)          // Instagram spends characters instead
+        && !in_array('tiktok', $afterOff, true)
+        && in_array('youtube', $afterOff, true);
+})());
+
+check('p25/ui: the run screen does not print the same caption twice', (static function () use ($basePath): bool {
+    // The editor above already shows the caption and the tags, current and
+    // editable. The record card below repeated them under more technical names.
+    $tpl = (string) file_get_contents($basePath . '/templates/runs/show.php');
+
+    return str_contains($tpl, '$showsText = !$editorShown;')
+        && str_contains($tpl, '<?php if ($showsText && $captions !== []): ?>')
+        && str_contains($tpl, '<?php if ($showsText && $hashtags !== []): ?>');
+})());
+
+
+echo "== p25/keep: a refused save must not also destroy the writing ==\n";
+
+check('p25/keep: text the gate refused is handed back, not thrown away', (static function () use ($basePath, $p25run): bool {
+    // A block ends in a redirect (POST → redirect → GET), and the GET re-renders
+    // from what is STORED — so without the stash the operator loses all three
+    // bodies AND their tags because ONE of them was empty. On the screen whose
+    // whole purpose is letting a person write the post, that is the worst
+    // possible answer to "you are close, change one thing".
+    $db = migratedDb($basePath);
+    // every fixture DB restarts its ids at 1, so a stash left by an earlier
+    // controller test would look like this run's — the session is per PROCESS
+    unset($_SESSION['_content_draft']);
+    [, , $ctx, $runId] = $p25run($db, 'keep-block@x.com');
+    $drafts = new \Kuyash\Content\DraftStash();
+    $view = makeTextEditorView($db, $drafts);
+    $loaded = $view->forRun($ctx, $runId)['text'];
+
+    $_POST = [
+        'content_hash' => $loaded['hash'],
+        // instagram is connected in this fixture, so an empty body BLOCKS…
+        'caption' => ['instagram' => '', 'tiktok' => 'Kept tiktok words', 'youtube' => 'Kept youtube words'],
+        'hashtags' => '#kept #words',
+    ];
+    makeContentController($db, $ctx, $drafts)->save(['id' => (string) $runId]);
+    $_POST = [];
+
+    // …nothing is stored…
+    $stored = (new \Kuyash\Content\ContentRevision($db))->forRun($ctx, $runId);
+    $storedUnchanged = $stored['captions'] === $loaded['captions'] && $stored['edited'] === false;
+
+    // …and the next page load shows what was typed, so it can be fixed
+    $back = $view->forRun($ctx, $runId)['text'];
+    $handedBack = $back['captions']['tiktok'] === 'Kept tiktok words'
+        && $back['captions']['youtube'] === 'Kept youtube words'
+        && $back['hashtags'] === ['#kept', '#words']
+        && ($back['unsaved'] ?? false) === true
+        // the hash still describes what is STORED, so the next submit races the
+        // right version and unsaved text is never presented as saved
+        && $back['hash'] === $loaded['hash']
+        && $back['edited'] === false;
+
+    // one-shot: a second load is back to the stored text
+    $again = $view->forRun($ctx, $runId)['text'];
+
+    return $storedUnchanged && $handedBack && $again['captions'] === $loaded['captions'];
+})());
+
+check('p25/keep: a page showing held text arms both unsaved guards from the server', (static function () use ($basePath): bool {
+    // The operator has just been refused and is looking at their own words in
+    // the boxes. `data-dirty` is otherwise set by a keystroke that has already
+    // happened — so without this, Approve fires with no confirm and navigating
+    // away discards the draft in silence: the trap this phase closed, reopened
+    // through its own recovery path.
+    $tpl = (string) file_get_contents($basePath . '/templates/partials/text-editor.php');
+    $js = (string) file_get_contents($basePath . '/public/assets/js/app.js');
+
+    return str_contains($tpl, "(\$text['unsaved'] ?? false) === true ? ' data-dirty=\"1\"' : ''")
+        // …and clearing the flag on submit touches ONLY the editor submitted:
+        // saving one queue card must not silence the other card's guard
+        && str_contains($js, 'function clean(el) {')
+        && str_contains($js, "clean(e.target.closest('.textedit'))");
+})());
+
+check('p25/keep: a held draft never surfaces on a different post', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [, , $ctx, $runId] = $p25run($db, 'keep-scope@x.com');
+    $drafts = new \Kuyash\Content\DraftStash();
+    $wsId = $ctx->id();
+
+    // a different run, same workspace
+    $drafts->keep($wsId, $runId + 12345, ['instagram' => 'someone else\'s words'], ['#nope']);
+    $otherRun = makeTextEditorView($db, $drafts)->forRun($ctx, $runId)['text'];
+
+    // …and the SAME run number in a different workspace, which is a real case:
+    // run ids restart per workspace, so the run alone is not an identity
+    $drafts->keep($wsId + 1, $runId, ['instagram' => 'another workspace\'s words'], ['#nope']);
+    $otherWs = makeTextEditorView($db, $drafts)->forRun($ctx, $runId)['text'];
+
+    return $otherRun['captions']['instagram'] !== 'someone else\'s words'
+        && ($otherRun['unsaved'] ?? false) === false
+        && $otherWs['captions']['instagram'] !== 'another workspace\'s words'
+        && ($otherWs['unsaved'] ?? false) === false;
+})());
+
+echo "== p25/record: what the log says happened ==\n";
+
+check('p25/record: a finished run describes the AI notice from what it DID, not from today\'s settings', (static function () use ($basePath, $p25run): bool {
+    // Flipping the Settings toggle must not rewrite what an already-published
+    // post's record claims about the notice it carried.
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $runId] = $p25run($db, 'record-hist@x.com');
+    $cc = $db->one("SELECT id, result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$runId]);
+    $ccr = json_decode((string) $cc['result_json'], true);
+    $ccr['ai_label_required'] = true;
+    $db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [json_encode($ccr), (int) $cc['id']]);
+
+    // while it can still go out, the screen answers "what would happen now"
+    $open = makeTextEditorView($db)->forRun($ctx, $runId);
+    $openAsserts = $open['disclosure'] !== '' && $open['text']['native_disclosure'] !== [];
+
+    // once it is over, it asserts nothing — the post rows carry the history
+    $db->run("UPDATE runs SET status = 'completed' WHERE id = ?", [$runId]);
+    $done = makeTextEditorView($db)->forRun($ctx, $runId);
+
+    return $openAsserts
+        && $done['text']['editable'] === false
+        && $done['disclosure'] === ''
+        && $done['text']['native_disclosure'] === []
+        && ($done['text']['disclosure_suppressed'] ?? false) === false;
+})());
+
+check('p25/record: putting the AI\'s words back is logged as a restore, not as an edit', (static function () use ($basePath, $p25run): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'record-restore@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, array_map(static fn (string $c): string => $c . ' mine', $loaded['captions']), ['#mine'], $loaded['hash'], $user, 'r@x.com', ['status' => 'pass', 'policy' => 'kuyash-v1'], gmdate(NOW_ISO));
+
+    $_POST = [];
+    makeContentController($db, $ctx)->restore(['id' => (string) $runId]);
+    $_POST = [];
+
+    $restored = $db->one("SELECT id FROM events WHERE workspace_id = ? AND key = 'content.restored'", [$ws]);
+    $after = $rev->forRun($ctx, $runId);
+
+    return $restored !== null
+        && $after['edited'] === false                 // the record says nobody's words are in there
+        && $after['captions'] === $loaded['captions'];
+})());
+
+check('p25/record: a PASSING edit is audited too, with its score and policy', (static function () use ($basePath, $p25run): bool {
+    // "Every compliance decision writes an audit entry" is the rule — it does
+    // not say "every failure". A clean edit used to leave no trace of the score
+    // it was judged on, and the verdict kept on the job row is overwritten by
+    // the next edit.
+    $db = migratedDb($basePath);
+    [, $ws, $ctx, $runId] = $p25run($db, 'record-pass@x.com');
+    $loaded = (new \Kuyash\Content\ContentRevision($db))->forRun($ctx, $runId);
+    $_POST = [
+        'content_hash' => $loaded['hash'],
+        'caption' => ['instagram' => 'A clean, different sentence about pans.', 'tiktok' => 'x', 'youtube' => 'y'],
+        'hashtags' => '#clean',
+    ];
+    makeContentController($db, $ctx)->save(['id' => (string) $runId]);
+    $_POST = [];
+
+    $row = $db->one("SELECT kind, level, params_json FROM events WHERE workspace_id = ? AND key = 'content.edit_checked'", [$ws]);
+    $params = $row === null ? [] : (array) json_decode((string) $row['params_json'], true);
+
+    return $row !== null
+        && (string) $row['kind'] === 'compliance'
+        && (string) $params['policy'] === 'kuyash-v1'
+        && array_key_exists('slop', $params);
+})());
+
+check('p25/record: the compliance chip describes the text that will PUBLISH, not the draft', (static function () use ($basePath, $p25run): bool {
+    // The chip sits beside the button that publishes. After an edit, the
+    // compliance_check score belongs to the GENERATED draft — a number about the
+    // wrong text, in the most consequential place on the screen. ContentGate
+    // judged the edit at save time with the same scorer and thresholds, so that
+    // verdict is the one to show.
+    $db = migratedDb($basePath);
+    [$user, , $ctx, $runId] = $p25run($db, 'badge@x.com');
+    $view = makeTextEditorView($db);
+
+    // no edit yet → no override, so the card keeps rendering compliance_check
+    $before = $view->forRun($ctx, $runId)['text']['badge'];
+    $beforeDirect = $view->badgeFor($ctx, $runId);
+
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, ['instagram' => 'Rewritten by hand.'], ['#x'], $loaded['hash'], $user, 'b@x.com', [
+        'status' => 'warn',
+        'policy' => 'kuyash-v1',
+        'slop' => ['score' => 0.61, 'history_runs' => 3],
+        'warnings' => [], 'reasons' => [],
+    ], gmdate(NOW_ISO));
+
+    $after = $view->forRun($ctx, $runId)['text']['badge'];
+    $afterDirect = $view->badgeFor($ctx, $runId);   // the dashboard's way in
+
+    // the compliance_check job itself is NOT rewritten — it stays a truthful
+    // record of what WAS scored at that point in the chain
+    $cc = $db->one("SELECT result_json FROM jobs WHERE run_id = ? AND type = 'compliance_check'", [$runId]);
+    $ccr = (array) json_decode((string) $cc['result_json'], true);
+
+    return $before === null && $beforeDirect === null
+        && is_array($after) && $after['status'] === 'warn' && abs($after['slop'] - 0.61) < 0.0001
+        && $afterDirect == $after                        // both surfaces read the same value
+        && ($ccr['status'] ?? null) !== 'warn';          // the step's own record is untouched
+})());
+
+check('p25/record: "warned" and "too similar" are kept apart on the chip', (static function () use ($basePath, $p25run): bool {
+    // A warning about a TAG COUNT rendered as a similarity chip read
+    // "similarity to your recent posts 0.00" — it named the wrong check and
+    // printed a number that meant nothing, on the chip beside the publish
+    // button. The similarity chip may only appear when similarity is what
+    // actually crossed the line.
+    $db = migratedDb($basePath);
+    [$user, , $ctx, $runId] = $p25run($db, 'badge-split@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $view = makeTextEditorView($db);
+
+    $save = static function (array $verdict) use ($rev, $ctx, $runId, $user, $view): array {
+        $loaded = $rev->forRun($ctx, $runId);
+        $rev->save($ctx, $runId, ['instagram' => 'Body ' . $verdict['slop']['score']], ['#t'], $loaded['hash'], $user, 's@x.com', $verdict, gmdate(NOW_ISO));
+
+        return $view->forRun($ctx, $runId)['text']['badge'];
+    };
+
+    // warned, but the score is nowhere near the similarity threshold
+    $tagWarn = $save([
+        'status' => 'warn', 'policy' => 'kuyash-v1', 'reasons' => [],
+        'warnings' => [['key' => 'content.too_many_tags', 'params' => []]],
+        'slop' => ['score' => 0.18, 'history_runs' => 3],
+    ]);
+    // warned BECAUSE it is close to recent posts
+    $slopWarn = $save([
+        'status' => 'warn', 'policy' => 'kuyash-v1', 'reasons' => [],
+        'warnings' => [['key' => 'content.similar', 'params' => []]],
+        'slop' => ['score' => 0.61, 'history_runs' => 3],
+    ]);
+
+    return $tagWarn['status'] === 'warn' && $tagWarn['similar'] === false
+        && $slopWarn['status'] === 'warn' && $slopWarn['similar'] === true
+        // …and the threshold is the SAME one the generator faced, not a new number
+        && 0.61 >= \Kuyash\Compliance\CompliancePolicy::SLOP_WARN
+        && 0.18 < \Kuyash\Compliance\CompliancePolicy::SLOP_WARN;
+})());
+
+check('p25/record: "was this checked?" is answered the same whether or not it was edited', (static function () use ($basePath): bool {
+    // The chip must not appear only after an edit — that would make being
+    // checked look like a consequence of editing. An edit changes WHICH verdict
+    // applies, never WHETHER the post was checked.
+    $tpl = (string) file_get_contents($basePath . '/templates/runs/show.php');
+    $editor = (string) file_get_contents($basePath . '/templates/partials/text-editor.php');
+
+    return str_contains($tpl, "\$job['type'] === 'compliance_check'")
+        && str_contains($tpl, "'slop' => \$complianceResult['checks']['slop']['score'] ?? null")
+        // …and the partial falls back to that verdict when there is no edit
+        && str_contains($editor, "is_array(\$generatedCompliance ?? null)")
+        && str_contains($editor, "\$badge['edited'] ? 'queue.similarity_edited' : 'queue.similarity'")
+        // the compliance verdict stays OUT of the generated-content map, which
+        // drives a card about content, not about verdicts
+        && str_contains($tpl, 'that map drives the "Generated content"');
+})());
+
+check('p25/record: the card never states a bare "passed" from the draft once the text was edited', (static function () use ($basePath): bool {
+    // The chip was fixed and this SENTENCE was not: "Compliance: passed", four
+    // lines lower, unqualified, a few pixels above the publish button — the
+    // draft's verdict, contradicting the chip that speaks for the edited text.
+    $queue = (string) file_get_contents($basePath . '/templates/queue/index.php');
+
+    return str_contains($queue, "\$cNote = (\$cEdited ?? false) ? null :")
+        && str_contains($queue, "if (\$cNote === 'pass' || \$cNote === 'pass_with_ai_label')")
+        // …and the AI label survives an edit, because it follows the MEDIA — it
+        // is keyed on the requirement, not on a status a slop warning outranks
+        && str_contains($queue, "if (\$job['result']['ai_label_required'] ?? false)")
+        // one vocabulary for one check, whichever card you are looking at
+        && (require $basePath . '/lang/en.php')['queue.compliance_pass'] === 'checks passed';
+})());
+
+check('p25/record: the chip never invents an edit, and never softens a block', (static function () use ($basePath): bool {
+    // "one thing to check — ON THE TEXT YOU EDITED" is reachable on the run
+    // screen for a run nobody edited (the chip renders for every run now), so
+    // the catch-all needs an unedited wording. And a compliance BLOCK stopped
+    // the run — rendering it as a note would understate it on the record.
+    $en = require $basePath . '/lang/en.php';
+    $queue = (string) file_get_contents($basePath . '/templates/queue/index.php');
+    $dash = (string) file_get_contents($basePath . '/templates/dashboard.php');
+    $editor = (string) file_get_contents($basePath . '/templates/partials/text-editor.php');
+
+    $branches = static fn (string $t): bool => str_contains($t, "'queue.checks_note_edited' : 'queue.checks_note'")
+        && str_contains($t, "View::t('queue.checks_blocked')");
+
+    return !str_contains($en['queue.checks_note'], 'edited')
+        && str_contains($en['queue.checks_note_edited'], 'edited')
+        && $branches($queue) && $branches($dash) && $branches($editor);
+})());
+
+check('p25/seed: the seeded audit lines name a person, not a placeholder', (static function () use ($basePath): bool {
+    // A `static` closure that does not import $email binds null, and
+    // I18n::interpolate leaves a non-scalar as the literal token — so the audit
+    // line added to stand behind the compliance chip rendered as
+    // "Post text edited by {user}" on /logs and in every run timeline.
+    $seed = (string) file_get_contents($basePath . '/bin/visual-seed.php');
+    $uses = (bool) preg_match('/\$db->transaction\(static function \(Database \$db\) use \(([^)]*)\)/', $seed, $m);
+
+    return $uses && str_contains($m[1], '$email')
+        && str_contains($seed, "'user' => \$email");
+})());
+
+check('p25/record: the chip says which text it measured, without jargon', (static function () use ($basePath): bool {
+    $en = require $basePath . '/lang/en.php';
+    $tr = require $basePath . '/lang/tr.php';
+    $queue = (string) file_get_contents($basePath . '/templates/queue/index.php');
+    $dash = (string) file_get_contents($basePath . '/templates/dashboard.php');
+
+    return str_contains($en['queue.similarity_edited'], 'text you edited')
+        && str_contains($tr['queue.similarity_edited'], 'düzenlediğin metne göre')
+        // the internal word for it never reaches a person
+        && !array_key_exists('queue.slop_label', $en)
+        && !str_contains($queue, 'slop_label') && !str_contains($dash, 'slop_label')
+        && !str_contains(strtolower($en['queue.similarity']), 'slop')
+        // …and both cards branch on the same derived value
+        && str_contains($queue, "\$job['text']['text']['badge']")
+        && str_contains($dash, "\$job['badge']");
+})());
+
+echo "== p25/write: the write itself cannot half-happen ==\n";
+
+check('p25/write: the edit hash covers only what was actually stored', (static function () use ($basePath, $p25run): bool {
+    // The hash is what publish re-checks. Stamping it over hashtags that were
+    // never written makes publish refuse the run permanently AND record the
+    // operator as having tampered with text they never touched.
+    $db = migratedDb($basePath);
+    [$user, $ws, $ctx, $runId] = $p25run($db, 'write-hash@x.com');
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $rev->save($ctx, $runId, ['instagram' => 'Stored body.'], ['#a', '#b'], $loaded['hash'], $user, 'w@x.com', ['status' => 'pass'], gmdate(NOW_ISO));
+
+    $after = $rev->forRun($ctx, $runId);
+    $expected = \Kuyash\Content\ContentRevision::hash($after['captions'], $after['hashtags']);
+
+    return $after['edit'] !== null
+        && hash_equals($expected, (string) $after['edit']['hash'])
+        // the writer takes the lock up front, so a read-then-write collision
+        // with the worker cannot surface as "database is locked"
+        && str_contains(
+            (string) file_get_contents($basePath . '/src/Content/ContentRevision.php'),
+            'immediateTransaction',
+        );
+})());
+
+check('p25/write: an edit made while the final video renders still reaches the platform', (static function () use ($basePath, $p25run): bool {
+    // The reason the window was widened. Approve, let final_render be queued,
+    // edit THEN, and the publish job born afterwards must carry the new words
+    // and clear the hash guard rather than dead-lettering the run.
+    $db = migratedDb($basePath);
+    [$user, , $ctx, $runId, $engine, $worker, $spy] = $p25run($db, 'write-gap@x.com');
+    $review = $db->one("SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' AND status = 'awaiting_approval'", [$runId]);
+    $engine->approve($ctx, (int) $review['id'], $user, 'w@x.com', null);
+
+    $rev = new \Kuyash\Content\ContentRevision($db);
+    $loaded = $rev->forRun($ctx, $runId);
+    $saved = $rev->save($ctx, $runId, ['instagram' => 'Changed while it rendered.'], ['#late'], $loaded['hash'], $user, 'w@x.com', ['status' => 'pass'], gmdate(NOW_ISO));
+
+    for ($i = 0; $i < 40 && $worker->tick(); $i++) {
+    }
+    $req = $spy->requests[0] ?? null;
+    $run = $db->one('SELECT status FROM runs WHERE id = ?', [$runId]);
+
+    return $saved
+        && $req instanceof PublishRequest
+        && $req->caption === 'Changed while it rendered.'
+        && $req->hashtags === ['#late']
+        && (string) $run['status'] === 'completed';   // NOT dead-lettered as tampering
 })());
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Kuyash\Auth\Auth;
 use Kuyash\Controllers\AccountsController;
 use Kuyash\Controllers\AuthController;
+use Kuyash\Controllers\ContentController;
 use Kuyash\Controllers\DashboardController;
 use Kuyash\Controllers\DigestController;
 use Kuyash\Controllers\HealthController;
@@ -83,6 +84,11 @@ return static function (Router $router, Config $config, Container $container): v
     $router->get('/workflows/{id}', $protected([WorkflowController::class, 'show']));
     $router->post('/workflows/{id}/run', $protected([WorkflowController::class, 'run']));
     $router->get('/runs/{id}', $protected([WorkflowController::class, 'showRun']));
+    // Phase 25 — a person editing the post's text before it goes out. The edit
+    // is what publishes, and it re-passes compliance on the way in; the AI
+    // disclosure is composed at publish time and is not editable at all.
+    $router->post('/runs/{id}/text', $protected([ContentController::class, 'save']));
+    $router->post('/runs/{id}/text/restore', $protected([ContentController::class, 'restore']));
 
     $router->get('/queue', $protected([QueueController::class, 'index']));
     $router->post('/queue/job/{id}/approve', $protected([QueueController::class, 'approve']));

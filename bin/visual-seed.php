@@ -121,7 +121,10 @@ if ($hasPlayable) {
 
 // --- 2. Content (one short transaction; mock, deterministic) ----------------
 
-$db->transaction(static function (Database $db) use ($workspaceId, $userId, $now, $ago, $hasPlayable, $playableMp4, $playablePoster): void {
+// $email is needed inside: the seeded edits and their audit lines name a person,
+// and a `static` closure that does not import it silently binds null — which
+// renders as the literal "{user}" on /logs and in every run timeline.
+$db->transaction(static function (Database $db) use ($workspaceId, $userId, $email, $now, $ago, $hasPlayable, $playableMp4, $playablePoster): void {
     // Trend Radar: niche config + a batch of cached signals.
     $db->run(
         'INSERT INTO trend_config (workspace_id, niche, region, updated_at) VALUES (?, ?, ?, ?)',
@@ -183,7 +186,9 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
     // Run B — awaiting approval (active + awaiting; drives the showcase strip).
     $runAwaiting = $makeRun($db, $workspaceId, $fullId, $fullNodes, 'trend', 'awaiting_approval', 'SCRIPT', $userId, $ago(30), $ago(8));
     // Run C — completed.
-    $runDone = $makeRun($db, $workspaceId, $distId, $distNodes, 'library', 'completed', 'PUBLISH', $userId, $ago(180), $ago(120));
+    // created_at matches its own "run started" event and its first job row —
+    // the header and the timeline must not name two different moments.
+    $runDone = $makeRun($db, $workspaceId, $distId, $distNodes, 'library', 'completed', 'PUBLISH', $userId, $ago(155), $ago(120));
 
     // Jobs for the awaiting run: a script approval + a preview/render approval.
     // result_json is valid JSON with NO draft_render_id / library_asset_id, so
@@ -211,7 +216,9 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
     );
     // PREVIEW approval — compliance passed; with a PLAYABLE draft render when the
     // fixture exists (so the inline player actually plays a real mock clip).
-    $reviewResult = ['ai_label_required' => true, 'compliance' => ['status' => 'pass']];
+    // ComplianceCheckExecutor: a REQUIRED label makes the status
+    // pass_with_ai_label — plain 'pass' with a required label cannot happen.
+    $reviewResult = ['ai_label_required' => true, 'compliance' => ['status' => 'pass_with_ai_label']];
     if ($hasPlayable) {
         $db->run(
             'INSERT INTO renders (workspace_id, run_id, kind, stored_name, poster_name, mime, width, height, duration_s, created_at)
@@ -220,11 +227,50 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
         );
         $reviewResult['draft_render_id'] = $db->lastInsertId();
     }
+    // Phase 25: a run waiting at the publish gate HAS captions and tags — they
+    // are written at steps 7/8, long before the review at step 12. Without them
+    // the post-text editor has nothing to edit and never appears in a
+    // screenshot. Real shape (the same keys ContentExecutor emits), deterministic,
+    // media-free, and NOT marked as edited — a demo must not claim a person
+    // touched something nobody touched.
+    $insertJob($db, $workspaceId, $runAwaiting, 'CAPTION', 7, 'caption_generation', 'ready', json_encode([
+        'captions' => [
+            'instagram' => "One pan, five pantry staples, zero cleanup. Save this for your next grocery run.",
+            'tiktok' => "Stop buying takeout on weeknights — one pan and five things you already own.",
+            'youtube' => "One-pan weeknight dinner: five pantry staples, no cleanup, under 20 minutes.",
+        ],
+        'prompt_version' => 'caption.v1',
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(8));
+    $insertJob($db, $workspaceId, $runAwaiting, 'HASHTAGS', 8, 'hashtag_generation', 'ready', json_encode([
+        'hashtags' => ['#onepan', '#weeknightdinner', '#easyrecipes', '#pantrystaples', '#nocleanup'],
+        'prompt_version' => 'hashtag.v1',
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(8));
+
+    // A run sitting at the publish gate has already PASSED compliance (step 9),
+    // and that job — not the review card — is where ai_label_required actually
+    // lives for the publisher and for the text editor. Seeding it keeps the demo
+    // the same shape as production instead of a near-miss.
+    $insertJob($db, $workspaceId, $runAwaiting, 'COMPLIANCE', 9, 'compliance_check', 'ready', json_encode([
+        'status' => 'pass_with_ai_label',
+        'policy' => 'kuyash-v1',
+        'checks' => [
+            'ai_label' => ['required' => true, 'reasons' => ['synthetic_voice']],
+            'format' => ['status' => 'pass', 'duration_s' => 3.0, 'aspect' => '9:16', 'reasons' => []],
+            'slop' => ['status' => 'pass', 'score' => 0.12, 'warn_at' => 0.55, 'block_at' => 0.8, 'history_runs' => 2],
+        ],
+        'reasons' => [],
+        'ai_label_required' => true,
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(7));
+
     $insertJob(
         $db,
         $workspaceId,
         $runAwaiting,
-        'PREVIEW',
+        // The engine files render_review under PUBLISH (Nodes::NODE_JOBS), and
+        // that is the node approvedBefore()/approvedAlready() filter on — seeding
+        // 'PREVIEW' meant an approval taken here could never raise the
+        // "edited after approval" record the phase exists to make honest.
+        'PUBLISH',
         10,
         'render_review',
         'awaiting_approval',
@@ -259,33 +305,285 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $now
     // (the third state alongside done→real-output and wait→not-started).
     $insertJob($db, $workspaceId, $runRunning, 'VOICE', 4, 'tts', 'processing', '{}', $ago(4));
 
-    // A couple of finished jobs on the completed run (flat list texture).
-    $insertJob($db, $workspaceId, $runDone, 'CAPTION', 2, 'caption_generation', 'ready', '{}', $ago(150));
-    $insertJob($db, $workspaceId, $runDone, 'PUBLISH', 7, 'publish', 'published', '{}', $ago(120));
+    // A couple of finished jobs on the completed run (flat list texture). Its
+    // caption/tag rows carry REAL text so the finished run's post-text editor
+    // renders in its READ-ONLY state — the state a screenshot could not reach
+    // while every seeded run was still editable.
+    // …and it was edited before it went out, with a SIMILARITY warning — the one
+    // branch the compliance chip exists for, showing a real score. The awaiting
+    // run below carries a non-similarity warning, so the two chip wordings are
+    // photographed side by side and neither is guessed at.
+    $doneCaptions = [
+        'instagram' => "Three things I wish I knew before my first sourdough loaf.",
+        'tiktok' => "Sourdough beginners: these three mistakes cost me a month.",
+        'youtube' => "Three sourdough mistakes every beginner makes (and how to skip them).",
+    ];
+    $doneCaptionsAi = [
+        'instagram' => "Three things to know before your first sourdough loaf.",
+        'tiktok' => "Sourdough beginners: three mistakes that cost me a month.",
+        'youtube' => "Three sourdough mistakes beginners make (and how to skip them).",
+    ];
+    $doneTags = [
+        '#sourdough', '#baking', '#beginnerbaker', '#breadmaking', '#starter',
+        '#homebaking', '#slowfood', '#crumb', '#openrumb', '#firstloaf',
+        '#bakingtips', '#wildyeast', '#fermentation', '#breadhead',
+    ];
+    $doneEdit = [
+        'by' => $userId,
+        'by_email' => $email,
+        'at' => $ago(130),
+        'hash' => \Kuyash\Content\ContentRevision::hash($doneCaptions, $doneTags),
+        'verdict' => [
+            'status' => 'warn',
+            'policy' => 'kuyash-v1',
+            'reasons' => [],
+            // 0.61 sits between SLOP_WARN (0.55) and SLOP_BLOCK (0.80): warned,
+            // saved, published — exactly what the thresholds allow.
+            'slop' => ['score' => 0.61, 'history_runs' => 4],
+            'warnings' => [['key' => 'content.similar', 'params' => ['score' => '0.61']]],
+        ],
+    ];
+    // Every node of the DISTRIBUTION track, in canonical step order. Without the
+    // steps that carry no interesting payload, a COMPLETED, PUBLISHED run showed
+    // its first node as "pending" — a run cannot publish without starting.
+    // The shape AssetFetchExecutor actually emits — and the one the rows below
+    // depend on: without duration_s the compliance row could not have measured
+    // "28.0s, 9:16", and without a visual_ref final_render would have refused.
+    $insertJob($db, $workspaceId, $runDone, 'LIBRARY', 1, 'asset_fetch', 'ready', $j([
+        'source' => 'library', 'visual_kind' => 'video',
+        'visual_ref' => 'asset:1:' . str_repeat('3', 32) . '.mp4',
+        'asset_id' => 1, 'title' => 'Sourdough loaf — cutting board',
+        'ai_label_required' => false, 'duration_s' => 28.0,
+    ]), $ago(155));
+    $insertJob($db, $workspaceId, $runDone, 'CAPTION', 2, 'caption_generation', 'ready', json_encode([
+        'captions' => $doneCaptions,
+        'captions_ai' => $doneCaptionsAi,
+        'edit' => $doneEdit,
+        'prompt_version' => 'caption.v1',
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(150));
+    // 14 tags against the tightest limit of 15: the "getting close" counter
+    // state, on a read-only run where no warning callout could contradict it.
+    // (The awaiting run below carries 16 — genuinely over — so both states are
+    // photographed and both are states the gate can actually reach.)
+    $insertJob($db, $workspaceId, $runDone, 'HASHTAGS', 3, 'hashtag_generation', 'ready', json_encode([
+        'hashtags' => $doneTags,
+        'hashtags_ai' => $doneTags,
+        'edit' => $doneEdit,
+        'prompt_version' => 'hashtag.v1',
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(150));
+    // A published run passed compliance on the way — showing it as a completed
+    // publish with a PENDING compliance node depicts an outcome that cannot
+    // happen, on the one screen a compliance reviewer reads.
+    $insertJob($db, $workspaceId, $runDone, 'MUSIC NOTE / STYLE', 4, 'music_note', 'ready', $j([
+        'mood' => 'calm',
+        'note' => 'suggestion only — platform-native sounds cannot be published via API',
+    ]), $ago(145));
+    $insertJob($db, $workspaceId, $runDone, 'PREVIEW', 5, 'preview', 'ready', $j([
+        'note' => 'preview is the in-pipeline checkpoint; the reviewable render is the draft',
+    ]), $ago(143));
+    $insertJob($db, $workspaceId, $runDone, 'COMPLIANCE', 6, 'compliance_check', 'ready', json_encode([
+        'status' => 'pass',
+        'policy' => 'kuyash-v1',
+        'checks' => [
+            'ai_label' => ['required' => false, 'reasons' => []],
+            'format' => ['status' => 'pass', 'duration_s' => 28.0, 'aspect' => '9:16', 'reasons' => []],
+            'slop' => ['status' => 'pass', 'score' => 0.14, 'warn_at' => 0.55, 'block_at' => 0.8, 'history_runs' => 1],
+        ],
+        'reasons' => [],
+        'ai_label_required' => false,
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(140));
+    // The window the edit happened in: approved at the publish gate, then
+    // final_render, then publish. Without this row nothing ever OPENED the
+    // window ContentRevision::lockReason() requires, so the seeded edit would
+    // depict a state production cannot reach.
+    $insertJob($db, $workspaceId, $runDone, 'PUBLISH', 7, 'render_review', 'ready', json_encode([
+        'ai_label_required' => false,
+        'compliance' => ['status' => 'pass'],
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(135));
+    // render_id is filled in below, once the renders row it points at exists.
+    $insertJob($db, $workspaceId, $runDone, 'PUBLISH', 8, 'final_render', 'ready', $j(['final' => true, 'ai_label_required' => false]), $ago(125));
+    $insertJob($db, $workspaceId, $runDone, 'PUBLISH', 9, 'publish', 'published', '{}', $ago(120));
+
+    // …and the human approval that row records. `manual` means a real user and
+    // no policy stamp — the 0007 CHECK enforces exactly that, and it is the one
+    // record a compliance reader looks for on a published run.
+    $reviewJob = $db->one(
+        "SELECT id FROM jobs WHERE run_id = ? AND type = 'render_review' ORDER BY id DESC LIMIT 1",
+        [$runDone],
+    );
+    if ($reviewJob !== null) {
+        $db->run(
+            "INSERT INTO approvals (workspace_id, run_id, job_id, node, decision, mode, decided_by, decided_at)
+             VALUES (?, ?, ?, 'PUBLISH', 'approved', 'manual', ?, ?)",
+            [$workspaceId, $runDone, (int) $reviewJob['id'], $userId, $ago(128)],
+        );
+    }
+
+    // Run D — a SECOND post waiting for approval. The queue renders one text
+    // editor per waiting post, and a single-card seed could never show that two
+    // editors on one screen keep their own counts and their own tag field.
+    $runAwaiting2 = $makeRun($db, $workspaceId, $distId, $distNodes, 'library', 'awaiting_approval', 'PUBLISH', $userId, $ago(26), $ago(9));
+    // …and this one has been EDITED, by the fixture's own user. Everything in
+    // this workspace is fabricated (it is a test fixture, named as one), so the
+    // rule that matters is "depict nothing that could not happen" — and an
+    // edited post is the phase's central state. Without it, the chip, the
+    // "put back what Kuyash wrote" button, the saved-warning callout and the
+    // near-the-limit tag counter are four things that ship unphotographed.
+    $editedCaptions = [
+        'instagram' => "The five-minute morning stretch I actually do — before coffee, before my phone.",
+        'tiktok' => "Five minutes, no equipment, and my back stopped complaining by week two.",
+        'youtube' => "A five-minute morning stretch routine — no equipment, no floor mat, no excuses.",
+    ];
+    $aiCaptions = [
+        'instagram' => "The five-minute morning stretch I do before anything else.",
+        'tiktok' => "Five minutes, no equipment, and my back stopped complaining.",
+        'youtube' => "A five-minute morning stretch routine — no equipment needed.",
+    ];
+    // 16 tags against the tightest configured limit (15). ContentGate raises
+    // content.too_many_tags only when the count is OVER, so seeding 14 produced
+    // a warning the product cannot produce — a callout saying "too many" above a
+    // counter that read "14 of about 15" in the not-yet style, contradicting it.
+    // At 16 the callout, the counter and its over-the-limit styling are all true
+    // and all visible at once.
+    $editedTags = [
+        '#morningroutine', '#stretching', '#mobility', '#fiveminutes', '#backpain',
+        '#desklife', '#posture', '#nogym', '#beforework', '#dailyhabit',
+        '#lowimpact', '#flexibility', '#warmup', '#stretcheveryday',
+        '#morningmobility', '#deskbreak',
+    ];
+    $aiTags = ['#morningroutine', '#stretching', '#mobility', '#fiveminutes'];
+    $editBlock = [
+        'by' => $userId,
+        'by_email' => $email,
+        'at' => $ago(9),
+        'hash' => \Kuyash\Content\ContentRevision::hash($editedCaptions, $editedTags),
+        'verdict' => [
+            'status' => 'warn',
+            'policy' => 'kuyash-v1',
+            // production shape: ContentGate always reports a score, warned or
+            // not. 0.18 is well under SLOP_WARN, so this edit is warned about
+            // its tag count and NOT about similarity — the two chips differ.
+            'slop' => ['score' => 0.18, 'history_runs' => 3],
+            'reasons' => [],
+            'warnings' => [
+                ['key' => 'content.too_many_tags', 'params' => ['platform' => 'youtube', 'n' => 16, 'limit' => 15]],
+            ],
+        ],
+    ];
+    $insertJob($db, $workspaceId, $runAwaiting2, 'LIBRARY', 1, 'asset_fetch', 'ready', $j([
+        'source' => 'library', 'visual_kind' => 'video',
+        'visual_ref' => 'asset:1:' . str_repeat('4', 32) . '.mp4',
+        'asset_id' => 2, 'title' => 'Morning stretch — window light',
+        'ai_label_required' => false, 'duration_s' => 22.0,
+    ]), $ago(25));
+    $insertJob($db, $workspaceId, $runAwaiting2, 'CAPTION', 2, 'caption_generation', 'ready', json_encode([
+        'captions' => $editedCaptions,
+        'captions_ai' => $aiCaptions,
+        'edit' => $editBlock,
+        'prompt_version' => 'caption.v1',
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(23));
+    $insertJob($db, $workspaceId, $runAwaiting2, 'HASHTAGS', 3, 'hashtag_generation', 'ready', json_encode([
+        'hashtags' => $editedTags,
+        'hashtags_ai' => $aiTags,
+        'edit' => $editBlock,
+        'prompt_version' => 'hashtag.v1',
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(22));
+    // No AI voice on a library clip, so no AI notice is due here — the second
+    // card honestly shows the editor WITHOUT the locked disclosure line.
+    $insertJob($db, $workspaceId, $runAwaiting2, 'MUSIC NOTE / STYLE', 4, 'music_note', 'ready', $j([
+        'mood' => 'upbeat',
+        'note' => 'suggestion only — platform-native sounds cannot be published via API',
+    ]), $ago(20));
+    $insertJob($db, $workspaceId, $runAwaiting2, 'PREVIEW', 5, 'preview', 'ready', $j([
+        'note' => 'preview is the in-pipeline checkpoint; the reviewable render is the draft',
+    ]), $ago(18));
+    $insertJob($db, $workspaceId, $runAwaiting2, 'COMPLIANCE', 6, 'compliance_check', 'ready', json_encode([
+        'status' => 'pass',
+        'policy' => 'kuyash-v1',
+        'checks' => [
+            'ai_label' => ['required' => false, 'reasons' => []],
+            'format' => ['status' => 'pass', 'duration_s' => 22.0, 'aspect' => '9:16', 'reasons' => []],
+            'slop' => ['status' => 'pass', 'score' => 0.09, 'warn_at' => 0.55, 'block_at' => 0.8, 'history_runs' => 3],
+        ],
+        'reasons' => [],
+        'ai_label_required' => false,
+    ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago(16));
+    $insertJob(
+        $db,
+        $workspaceId,
+        $runAwaiting2,
+        'PUBLISH',
+        7,
+        'render_review',
+        'awaiting_approval',
+        json_encode(['ai_label_required' => false, 'compliance' => ['status' => 'pass']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+        $ago(14),
+    );
 
     // Renders: count-only rows for the dashboard KPI (never served on these
     // pages — no job links a draft_render_id, so nothing requests the file).
+    $finalRenderId = null;
     foreach (['draft', 'final'] as $i => $kind) {
         $db->run(
             'INSERT INTO renders (workspace_id, run_id, kind, stored_name, mime, width, height, duration_s, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [$workspaceId, $runDone, $kind, str_repeat((string) ($i + 1), 32) . '.mp4', 'video/mp4', 1080, 1920, 28.0, $ago(125)],
         );
+        if ($kind === 'final') {
+            $finalRenderId = $db->lastInsertId();
+        }
+    }
+    // …and the final_render job points at the row it produced. A `ready`
+    // final_render always carries a real render id (FinalRenderExecutor returns
+    // JobResult::failed otherwise), so a null there depicted a successful
+    // full-res render that rendered nothing.
+    if ($finalRenderId !== null) {
+        $db->run(
+            "UPDATE jobs SET result_json = ? WHERE run_id = ? AND type = 'final_render'",
+            [$j(['render_id' => $finalRenderId, 'final' => true, 'ai_label_required' => false]), $runDone],
+        );
     }
 
     // Event log (drives /logs): REAL dictionary keys + full params so the feed
     // renders fully interpolated and humanized — no raw event key, no literal
     // {run}/{workflow}, no internal job-type enum (Phase 21 zero-jargon /logs).
+    // Each row carries its OWN run: a screen that asserts a compliance verdict
+    // beside an empty audit trail contradicts the rule the verdict comes from,
+    // and both edited runs now assert one.
     $events = [
-        ['info', 'transition', 'run.started', ['run' => $runDone, 'workflow' => 'Distribution'], 75],
-        ['info', 'transition', 'job.finished', ['type' => 'caption_generation', 'run' => $runDone], 60],
-        ['info', 'compliance', 'compliance.passed', ['run' => $runDone], 40],
-        ['warn', 'guardrail', 'guardrail.daily_cap_reached', ['used' => 2, 'cap' => 3, 'run' => $runDone], 20],
+        // OLDEST FIRST. EventLog reads `ORDER BY id DESC` on purpose (created_at
+        // has only second resolution), so the insertion order here IS what the
+        // feed's "newest first" promise resolves to.
+        //
+        // NOT daily_cap_reached: AutoApprovalGate returns PATH_MANUAL_MODE before
+        // any cap event can be written, so a Manual workspace — which this one is
+        // — cannot emit it at all. The kill switch is the guardrail a person can
+        // trip in any mode, and it belongs to the workspace, not to a run.
+        [null, 'warn', 'guardrail', 'guardrail.kill_switch_on', ['user' => $email], 200],
+        [null, 'info', 'guardrail', 'guardrail.kill_switch_off', ['user' => $email], 190],
+        // one clock with the job rows above: started → caption → compliance →
+        // edited (inside the approval window) → approved → published
+        [$runDone, 'info', 'transition', 'run.started', ['run' => $runDone, 'workflow' => 'Distribution'], 155],
+        [$runDone, 'info', 'transition', 'job.finished', ['type' => 'caption_generation', 'run' => $runDone], 150],
+        [$runDone, 'info', 'compliance', 'compliance.passed', ['run' => $runDone], 140],
+        [$runDone, 'info', 'transition', 'content.edited', ['run' => $runDone, 'user' => $email], 130],
+        [$runDone, 'warn', 'compliance', 'content.edit_warned', [
+            'run' => $runDone, 'reason' => 'This is fairly close to something you posted recently (similarity 0.61).', 'slop' => 0.61,
+        ], 130],
+        // the approval and the publish the other cards on this screen assert —
+        // an append-only timeline that omits them reads as an incomplete record
+        [$runDone, 'info', 'transition', 'approval.approved', ['node' => 'PUBLISH', 'user' => $email, 'run' => $runDone], 128],
+        [$runDone, 'info', 'transition', 'job.published', ['type' => 'publish', 'run' => $runDone], 120],
+
+        [$runAwaiting2, 'info', 'transition', 'content.edited', ['run' => $runAwaiting2, 'user' => $email], 9],
+        [$runAwaiting2, 'info', 'compliance', 'content.edit_checked', [
+            'run' => $runAwaiting2, 'result' => 'warn', 'slop' => 0.18, 'policy' => 'kuyash-v1',
+        ], 9],
     ];
-    foreach ($events as [$level, $kind, $key, $params, $minsAgo]) {
+    foreach ($events as [$runFor, $level, $kind, $key, $params, $minsAgo]) {
         $db->run(
             'INSERT INTO events (workspace_id, run_id, level, kind, key, params_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [$workspaceId, $runDone, $level, $kind, $key, json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago($minsAgo)],
+            [$workspaceId, $runFor, $level, $kind, $key, json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $ago($minsAgo)],
         );
     }
 
