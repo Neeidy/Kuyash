@@ -529,3 +529,139 @@ run #4 → `publish_after` = the cell's instant → approve naming no time → i
 SURVIVED, record `manual`/real user/no policy). Dev DB migrated to 0017 after a
 WAL-safe backup: 0 FK violations, existing times defaulted to `manual`. Deferred:
 `.claude/docs/phase-24-followups.md`.
+
+## ADR-023: A person can edit the post's text — without a way around compliance or the AI label (Phase 25, 2026-08-24)
+
+Until now the AI wrote the caption and hashtags and the operator could only approve
+or reject them. For the distribution-only user — upload your own video, let Kuyash
+schedule and publish — that was the single biggest gap. Phase 25 makes the text
+editable at the approval step, and spends its whole design budget on the two things
+that must not give way when it becomes editable.
+
+**Risk-first.** Before any product code, a spike proved the central claim with the
+code that already existed: write an edit straight into `jobs.result_json`, drive
+`Worker::tick()`, and the spy provider's `PublishRequest` carries the EDITED text,
+still ends with the AI disclosure line, and still has `aiLabelApplied === true`
+(`p25/task0`, plus an unedited baseline).
+
+**Storage: no migration, and deliberately no second store.** The edit is written
+back over the same `captions` / `hashtags` keys of the generating job — which is
+the one thing the publish path reads (`Worker::priorResults()` rebuilds `$prior`
+from the jobs table every tick). Writing there means publish reads the edit with
+**no change to the publish path at all**, so "publishing the un-edited text" stops
+being a mistake four separate readers must each remember not to make, and becomes
+structurally impossible. A separate `content_revisions` table was considered and
+rejected for exactly that reason: it would have needed an override lookup in
+publish, `SlopScorer::historyTexts`, the run screen and the dashboard drawer, and
+one forgotten reader publishes the wrong words. What the AI wrote is not lost — the
+first edit copies it to `captions_ai` / `hashtags_ai` — and the `compliance_check`
+job's own result is never touched, so the record of *what was scored* stays honest.
+
+**The disclosure was already safe; this phase kept it that way and made it
+visible.** Instagram has no native AI field, so the line is composed at PUBLISH
+time, per account, around whatever the body says — it was never stored in the
+caption, which is precisely why an edit cannot carry it off. The composition moved
+into one place (`Publish\Disclosure`) so the editor's character counter measures
+the same string the publisher builds; two implementations would drift and the count
+would quietly start lying. `compose()` also now dedupes, so an operator who types
+"Made with AI" themselves does not get it twice. TikTok and YouTube take a native
+flag derived from `aiLabelApplied` — from the MEDIA, never from the text — so no
+wording can move it. And the requirement itself comes from the media (AI visuals or
+TTS): a human writing the words neither creates nor removes it.
+
+**Compliance re-gate, in two places doing two different jobs.** `ContentGate` re-runs
+the SAME `SlopScorer` with the SAME `CompliancePolicy` thresholds when an edit is
+SAVED — not a second, softer policy. It has to exist because the canonical chain
+scores the text at COMPLIANCE, which sits *before* the approval gate the operator
+edits at; without it, editing would be the way around the check. At PUBLISH,
+`ZernioPublishExecutor` compares a content hash against what the gate judged and
+returns `failedPermanent` on a mismatch — text that reached the row without passing
+the gate never goes out, and is not retried onto a live account. Slop is
+deliberately **not** re-scored at publish: the corpus moves, so a post approved on
+Monday could be blocked on Friday by *other* runs, silently stranding approved
+content. The hash closes that hole without making publishing unpredictable.
+
+**Limits warn, they do not block (locked decision).** `config/platforms.php` carries
+per-platform caption and hashtag limits, and says in the file that they are
+UNVERIFIED — platform product limits, not a documented API contract, and the
+integrations rule forbids asserting what has not been checked. So the editor says
+"this may be too long"; it never refuses. They live in config rather than
+`CompliancePolicy` so adding them does not bump the policy version that every past
+auto-approval record is stamped with. The one thing that does block is an EMPTY
+caption on a *connected* platform — that is missing content, not a length opinion,
+and the YouTube title is derived from the caption's first line.
+
+**When editing is open, and why the window is exactly that wide.** Editing is
+allowed from the moment the text is FINISHED until the moment publishing is
+actually under way: the run waiting at its publish approval, the `final_render`
+that follows an approval, or an approved publish still sitting behind its gate.
+Earlier than that is a trap rather than a feature — mid-pipeline, later steps have
+not written their results, so an edit would hash over half-built content, be
+overwritten by the generator, and then be refused at publish as tampering; the
+operator would lose their words *and* be accused of changing them. `final_render`
+is inside the window on purpose: it renders the VIDEO and never reads the text,
+the publish job does not exist yet, and nothing has reached a platform — leaving
+it out meant telling someone "you approved it, so for the next few minutes you may
+not fix a typo", which nothing on the screen could explain. Past that point the
+platform may already hold the post, and an edit here would be a promise the system
+cannot keep. A run that was cancelled or failed says so in its own words rather
+than borrowing the finished run's "already published" — a false publication claim
+on the one screen built to be exact about what went out.
+
+**A refused save must not also destroy the writing.** Every refusal — compliance
+block, another tab, the throttle — ends in a redirect, and a redirect re-renders
+from what is stored. Without care, being told "that text cannot be saved" also
+deleted it: all three bodies and the tags, because ONE of them was empty. So a
+refusal holds the submitted text for exactly one page load (`Content\DraftStash`,
+keyed by workspace AND run, because run ids restart per workspace) and the editor
+shows it back with a line saying it is not stored. Only what is DISPLAYED is
+swapped — `hash`, `edited` and the edit block still describe the database, so the
+next submit races the right version and unsaved text is never presented as saved.
+The write itself takes its lock up front (`Database::immediateTransaction`): a
+deferred `BEGIN` that reads before it writes cannot upgrade once another
+connection has committed, which in WAL is an instant "database is locked" that
+`busy_timeout` does not cover — and the worker commits constantly, including
+during the `final_render` window this phase deliberately opened. Left as it was,
+the most likely collision in the whole feature produced a 500 with the operator's
+words gone.
+
+**The chip beside the publish button describes the text that will publish.** It
+used to render the `compliance_check` score, which belongs to the AI-generated
+draft — after an edit, a number about the wrong text, in the most consequential
+place on the screen. When a run carries an edit, the chip is derived instead from
+that edit's stored ContentGate verdict: the same scorer, the same thresholds,
+judged on the words that will actually go out. With no edit it falls back and
+nothing changes. One derived value feeds the queue card, the dashboard card and
+the run screen, so the three cannot disagree about the same post. Two things are
+kept apart that a first attempt ran together: being WARNED and being TOO SIMILAR.
+A warning about a tag count rendered as "similarity to your recent posts 0.00" —
+it named the wrong check and printed a meaningless number — so the similarity
+chip now appears only when similarity is what crossed the threshold. The
+`compliance_check` job's own result is still never rewritten: it remains the
+record of what was scored at that point in the chain. Fixing the chip was not
+enough on its own — the card carried a second, unqualified "Compliance: passed"
+a few lines lower, sourced from the draft, which is the same false reassurance
+one element down; it is suppressed once the text has been edited, while the
+AI-label line survives because the label follows the MEDIA. And the chip is
+shown for EVERY run, not only edited ones: an edit changes which verdict
+applies, never whether the post was checked, so a chip that appeared only after
+someone edited would make being checked look like a consequence of editing.
+
+**Records stay truthful.** `approvals` is untouched: no schema change, no new
+writer, no new `events.kind` (the edit maps onto `transition`/`compliance`). An
+edit made after an approval does **not** rewrite that approval — it was a real
+decision at a real time — but it is recorded as `content.edited_after_approval` at
+`warn` level and shown as its own badge. An auto-approved render whose words a
+person later changed shows two separate facts and never merges them into
+"approved by you".
+
+Verification: 1048 PASS / 0 FAIL; visual gate 93 PNG / 0 console errors / 0
+horizontal overflow (`/runs/2`, `/runs/3` and `/runs/4` added to the
+inventory, because a screen nobody photographs is a screen nobody checks — one
+still editable, one finished and therefore read-only, one edited by a person, and
+the seed holds TWO waiting posts so the two-editors-on-one-screen case is
+photographed rather than assumed); live
+end-to-end over real HTTP — edit
+saved, `captions_ai` preserved, `compliance_check` untouched, empty caption
+blocked, stale hash refused, restore returned the AI original. Deferred:
+`.claude/docs/phase-25-followups.md`.
