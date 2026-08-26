@@ -7,7 +7,7 @@
 ## Son güncelleme
 
 - Tarih: 2026-08-26
-- Güncelleyen: Claude (**FAZ 25 KAPALI + KAPANIŞ TURU BİTTİ — 1065 PASS / 0 FAIL, hepsi push'lu.**
+- Güncelleyen: Claude (**FAZ 25 KAPALI + KAPANIŞ TURU BİTTİ — 1068 PASS / 0 FAIL, hepsi push'lu.**
   Faz 25 (onay adımında caption+hashtag düzenleme) `447451c`'ye kadar commit+push edildi.
   Sonrasında kapanış turu: **dev DB 0017'ye taşındı** (Faz 24 takvimi o DB'de ÖLÜYDÜ),
   panelin iki yan kartına **üçüncü durum** eklendi (okuma patlarsa "hiç yok" ifadesini
@@ -20,7 +20,7 @@
 ## Mevcut durum (kaldığımız yer)
 
 - Aşama: **Faz 25 KAPALI. Kapanış turu da bitti. Working tree temiz, origin/main senkron.**
-  **1065 PASS / 0 FAIL** · görsel gate 93 PNG / 0 console error / 0 taşma ·
+  **1068 PASS / 0 FAIL** · görsel gate 93 PNG / 0 console error / 0 taşma ·
   14 route **gövde-temiz** 200 · lang paritesi 828=828 · secret taraması temiz.
 - **Dev DB artık 0017.** Faz 24 oturum logu "0017" diyordu ama gerçek DB 0016'daydı —
   `slot_occurrences` yoktu, yani haftalık takvim o veritabanında çalışmıyordu ve
@@ -42,6 +42,17 @@
   görsel olarak ayrıldı. (6) **Compliance'ın iptal ettiği bir run'ın günü ASLA
   temizlenemiyordu** (`cancelRun` "already decided" → "çok geç") — o tarih kalıcı
   kayıptı; artık bitmiş run'ın günü boşaltılabiliyor, uçuştaki yayın hâlâ reddediliyor.
+- **ÜÇ GATE DE GO** (security, ux, compliance) — hepsi ikinci turda. Compliance ilk turda
+  NO-GO'ydu ve haklıydı: "bitmiş run'ın günü boşaltılabilir" kuralım `completed`'ı da
+  kapsıyordu, ki o **YAYINLANMIŞ** bir run olabilir — occurrence yayınlanınca `assigned`
+  kalır (takvim "yayınlandı"yı run'dan TÜRETİR, kopyalamaz), yani o günü boşaltmak
+  operatörün o tarihte bir paylaşım çıktığını gördüğü TEK yeri siliyordu. Post satırı,
+  run ve denetim kaydı duruyordu; yalan söyleyen tek şey takvimdi. Artık controller
+  gerçekten çıkmış bir şey varsa reddediyor (`PostRepository::runHasPublished`).
+  **İkinci yarısı daha sinsiydi:** düzeltme EKRANA ULAŞMIYORDU — şablon, tam da yazıldığı
+  `STOPPED` durumu için butonu gizliyordu, yani commit mesajımdaki iddia controller için
+  doğru, ÜRÜN için yanlıştı. Bu turun kapatmaya çalıştığı abartı türünün ta kendisi, ve
+  benimdi. Şablon artık karar vermiyor; butonu sunuyor, controller hükmediyor.
 - **Smoke artıklarım temizlendi:** 31 Ağustos'a sabitlenmiş GERÇEK yayın iptal edildi;
   mock (`zp_`) 3 post silindi (gerçek günlük cap'i tüketiyorlardı → bugün 0).
 - **Canlı smoke (yayın MOCK):** compliance 3sn klibi 15-45sn bandına karşı bloklardı
