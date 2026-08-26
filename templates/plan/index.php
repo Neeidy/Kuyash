@@ -226,7 +226,13 @@ $cellLabel = static fn (string $state): string => View::t(match ($state) {
             <a class="btn btn--ghost btn--sm" href="/queue"><?= View::t('plan.review') ?></a>
             <?php endif; ?>
 
-            <?php if ($cell['run_id'] !== null && $cell['state'] !== PlanBoard::PUBLISHED && $cell['state'] !== PlanBoard::MISSED && $cell['state'] !== PlanBoard::STOPPED): ?>
+            <?php /* A STOPPED day — a run compliance cancelled, or one that failed
+                     — is exactly the day an operator most needs to free, and it
+                     was the one day the button was hidden for. The controller,
+                     not this line, decides what may be cleared: it refuses a day
+                     that actually published. PUBLISHED and MISSED stay out
+                     because there is nothing to take back. */ ?>
+            <?php if ($cell['run_id'] !== null && $cell['state'] !== PlanBoard::PUBLISHED && $cell['state'] !== PlanBoard::MISSED): ?>
             <form method="post" action="/plan/day/<?= (int) $cell['id'] ?>/clear"
                   data-confirm="<?= View::t('plan.clear_confirm') ?>">
               <?= $csrfField ?>

@@ -240,12 +240,27 @@ final class PlanController
      *
      * @param array<string, string> $params
      */
-    /** Is this run finished for good — nothing running, nothing left to stop? */
-    private function runIsOver(int $workspaceId, int $runId): bool
+    /**
+     * Is this run over WITHOUT having published?
+     *
+     * The distinction is the whole point. A run cancelled by compliance, or one
+     * that failed, put nothing out — freeing its day loses nothing, and refusing
+     * left that date unusable forever. A run that COMPLETED may well have
+     * published, and `Nodes::RUN_TERMINAL` counts `completed`; an occurrence
+     * never leaves `assigned` when its run publishes (the calendar derives
+     * "published" from the run, deliberately, rather than copying it), so
+     * clearing such a day would blank the only place the operator sees that a
+     * post went out on that date. The post row and the audit trail would still
+     * be there; the calendar would be the thing that lied.
+     */
+    private function runIsOverUnpublished(int $workspaceId, int $runId): bool
     {
         $run = $this->occurrences->runStatus($workspaceId, $runId);
+        if ($run === null || !in_array($run, Nodes::RUN_TERMINAL, true)) {
+            return false;
+        }
 
-        return $run !== null && in_array($run, Nodes::RUN_TERMINAL, true);
+        return !$this->posts->runHasPublished($workspaceId, $runId);
     }
 
     public function unassign(array $params = []): Response
@@ -276,7 +291,7 @@ final class PlanController
             // compliance, say, or failed — has nothing left to cancel, and
             // refusing there left the day occupied by a dead run FOREVER: the
             // operator could not clear it and could not reassign that date.
-            if ($decision !== Decision::Ok && !$this->runIsOver($wsId, (int) $cell['run_id'])) {
+            if ($decision !== Decision::Ok && !$this->runIsOverUnpublished($wsId, (int) $cell['run_id'])) {
                 return $this->back('error', 'plan.too_late');
             }
         }

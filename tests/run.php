@@ -10827,6 +10827,70 @@ check('fix/plan: a day whose run compliance cancelled can be cleared and reused'
     return (string) $after['status'] === 'open' && $after['run_id'] === null;
 })());
 
+check('fix/plan: a day that actually PUBLISHED can never be cleared', (static function () use ($basePath, $argonHash, $view): bool {
+    // `Nodes::RUN_TERMINAL` counts `completed`, and a completed run may well have
+    // published — while the occurrence stays `assigned`, because the calendar
+    // derives "published" from the run rather than copying it. Clearing such a
+    // day would blank the only place the operator sees that a post went out on
+    // that date. The post row and the audit trail would survive; the calendar
+    // would be the thing that lied.
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, 'plan-published@x.com', $argonHash, 'Plan published');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $_SESSION['auth_user_id'] = $user;
+    $now = gmdate(NOW_ISO);
+    $future = gmdate('Y-m-d\TH:i:s\Z', time() + 4 * 86400);
+
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 1, '09:00', 1, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $slot = (int) $db->lastInsertId();
+    $wfRepo = new WorkflowRepository($db, new WorkflowValidator());
+    $wfRepo->ensureDefaults($ctx);
+    $wf = $wfRepo->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Published clip');
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $runId = $engine->startRun($ctx, (int) $wf['id'], $asset, $user);
+    $db->run("UPDATE runs SET status = 'completed' WHERE id = ?", [$runId]);
+    $db->run(
+        "INSERT INTO accounts (workspace_id, platform, handle, status, health, connected_at, created_at, updated_at)
+         VALUES (?, 'instagram', '@p', 'connected', 'ok', ?, ?, ?)",
+        [$ws, $now, $now, $now],
+    );
+    $acct = (int) $db->lastInsertId();
+    $db->run(
+        "INSERT INTO posts (workspace_id, run_id, account_id, platform, status, ai_label_applied, idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, 'instagram', 'published', 0, ?, ?, ?)",
+        [$ws, $runId, $acct, "run:{$runId}:acct:{$acct}:publish", $now, $now],
+    );
+    $db->run(
+        "INSERT INTO slot_occurrences (workspace_id, slot_id, local_date, publish_at, mode, status, asset_id, run_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'manual', 'assigned', ?, ?, ?, ?)",
+        [$ws, $slot, substr($future, 0, 10), $future, $asset, $runId, $now, $now],
+    );
+    $cell = (int) $db->lastInsertId();
+
+    makePlanController($db, $ctx, $view)->unassign(['id' => (string) $cell]);
+    $after = $db->one('SELECT status, run_id FROM slot_occurrences WHERE id = ?', [$cell]);
+
+    // the day still says a post went out on it
+    return (string) $after['status'] === 'assigned' && (int) $after['run_id'] === $runId;
+})());
+
+check('fix/plan: the Clear button is actually OFFERED on a stopped day', (static function () use ($basePath): bool {
+    // The controller change was worthless while the template hid the button for
+    // exactly the state it was written for — the fix has to reach the screen,
+    // not just the code path.
+    $tpl = (string) file_get_contents($basePath . '/templates/plan/index.php');
+
+    return str_contains($tpl, "\$cell['state'] !== PlanBoard::PUBLISHED && \$cell['state'] !== PlanBoard::MISSED): ?>")
+        && !str_contains($tpl, "\$cell['state'] !== PlanBoard::STOPPED");
+})());
+
 check('fix/plan: a day whose publish is IN FLIGHT is still refused', (static function () use ($basePath, $argonHash, $view): bool {
     // The other half of "already decided": that one really is past the point of
     // no return, and the day must stay exactly as it is.

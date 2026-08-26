@@ -23,6 +23,25 @@ final class PostRepository
     {
     }
 
+
+    /**
+     * Did anything for this run actually go out?
+     *
+     * Asked before a planned day is cleared: a day that published must keep
+     * saying so, because the calendar is where an operator sees that it did.
+     * Tenant-scoped like every other read here.
+     */
+    public function runHasPublished(int $workspaceId, int $runId): bool
+    {
+        $row = $this->db->one(
+            "SELECT COUNT(*) AS n FROM posts
+             WHERE run_id = ? AND workspace_id = ? AND status IN ('published', 'publishing')",
+            [$runId, $workspaceId],
+        );
+
+        return (int) ($row['n'] ?? 0) > 0;
+    }
+
     /** Existing post for an idempotency key, scoped to the workspace. */
     public function findByKey(int $workspaceId, string $idempotencyKey): ?array
     {
