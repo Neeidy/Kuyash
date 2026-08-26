@@ -213,6 +213,7 @@ return [
     'dash.needs_review' => 'needs your review',
     'dash.accounts_title' => 'Connected accounts',
     'dash.accounts_none' => 'No accounts connected yet',
+    'dash.accounts_unreadable' => 'Your accounts could not be read just now — this is not the same as having none.',
     'dash.accounts_connect' => 'Connect an account',
     'dash.ref_label' => 'reference',
     'player.play' => 'Play preview',

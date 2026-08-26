@@ -209,6 +209,7 @@ return [
     'dash.needs_review' => 'incelemeni bekliyor',
     'dash.accounts_title' => 'Bağlı hesaplar',
     'dash.accounts_none' => 'Henüz bağlı hesap yok',
+    'dash.accounts_unreadable' => 'Hesapların şu an okunamadı — bu, hiç hesabın olmadığı anlamına gelmez.',
     'dash.accounts_connect' => 'Hesap bağla',
     'dash.ref_label' => 'referans',
     'player.play' => 'Önizlemeyi oynat',

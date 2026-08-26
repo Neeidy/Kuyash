@@ -10678,6 +10678,79 @@ check('fix/dashboard: a plan that could not be read never reads as "nothing plan
         && str_contains($tr['cockpit.plan_unreadable'], 'sıfır değil');
 })());
 
+check('fix/dashboard: a broken accounts read does not become "no accounts connected"', (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+    // account_metrics is the second-newest table on this page, so it is the next
+    // one to go missing on a database behind on its migrations — the same way
+    // slot_occurrences was. An empty list is what "No accounts connected yet" is
+    // rendered from, so a failed read must NOT return one: it would tell an
+    // operator with three live channels that they have none.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'dash-acct@x.com', $argonHash, 'Dash acct');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $now = gmdate(NOW_ISO);
+    $db->run(
+        "INSERT INTO accounts (workspace_id, platform, handle, status, health, connected_at, created_at, updated_at)
+         VALUES (?, 'instagram', '@real', 'connected', 'ok', ?, ?, ?)",
+        [$ws, $now, $now, $now],
+    );
+    $db->run('DROP TABLE account_metrics');
+
+    $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+    $cockpit = new \Kuyash\Workflow\Cockpit(
+        $db,
+        new AssetCache($db, $paths),
+        new CreditLedger($db),
+        new UsageRepository($db),
+        new AccountRepository($db),
+        new \Kuyash\Workflow\JobRepository($db),
+    );
+
+    $snap = $cockpit->snapshot($ctx, $now);   // must NOT throw
+
+    return is_array($snap)
+        && $snap['accounts'] === null          // its own state, never []
+        && is_array($snap['kpis'])             // …and the rest of the page stands
+        && array_key_exists('awaiting', $snap);
+})());
+
+check('fix/dashboard: a healthy accounts read still returns the cards', (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+    // The guard must not be indistinguishable from deleting the card.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'dash-acct-ok@x.com', $argonHash, 'Dash acct ok');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $now = gmdate(NOW_ISO);
+    $db->run(
+        "INSERT INTO accounts (workspace_id, platform, handle, status, health, connected_at, created_at, updated_at)
+         VALUES (?, 'instagram', '@real', 'connected', 'ok', ?, ?, ?)",
+        [$ws, $now, $now, $now],
+    );
+
+    $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+    $cockpit = new \Kuyash\Workflow\Cockpit(
+        $db, new AssetCache($db, $paths), new CreditLedger($db), new UsageRepository($db),
+        new AccountRepository($db), new \Kuyash\Workflow\JobRepository($db),
+    );
+    $snap = $cockpit->snapshot($ctx, $now);
+
+    return is_array($snap['accounts']) && count($snap['accounts']) === 1
+        && (string) $snap['accounts'][0]['handle'] === '@real';
+})());
+
+check('fix/dashboard: the three account states are three DIFFERENT sentences', (static function () use ($basePath): bool {
+    $tpl = (string) file_get_contents($basePath . '/templates/dashboard.php');
+    $en = require $basePath . '/lang/en.php';
+    $tr = require $basePath . '/lang/tr.php';
+
+    return str_contains($tpl, "\$cockpit['accounts'] === null")
+        && str_contains($tpl, "\$cockpit['accounts'] === []")
+        && str_contains($tpl, "View::t('dash.accounts_unreadable')")
+        // "could not be read" must not be worded as "you have none"
+        && str_contains($en['dash.accounts_unreadable'], 'not the same as having none')
+        && str_contains($tr['dash.accounts_unreadable'], 'hiç hesabın olmadığı anlamına gelmez');
+})());
+
 check('fix/dashboard: the plan read is scoped to one workspace at every join', (static function () use ($basePath): bool {
     // Tenant isolation on the read this bug ran through — asserted rather than
     // assumed, because it is the query a dashboard runs for whoever is logged in.

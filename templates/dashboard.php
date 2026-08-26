@@ -18,7 +18,7 @@ use Kuyash\Core\View;
  *   business: array{balance_cents:int, spent_mtd_cents:int, charges_mtd:int, granted_week_cents:int, budget_cap_cents:int|null, remaining_budget_cents:int|null, cost_per_content_cents:int|null, awaiting:int},
  *   activeRuns: list<array<string,mixed>>,
  *   awaiting: list<array<string,mixed>>,
- *   accounts: list<array<string,mixed>>
+ *   accounts: list<array<string,mixed>>|null
  * } $cockpit
  */
 
@@ -239,7 +239,16 @@ $biz = $cockpit['business'];
       <span class="card__action"><a class="btn btn--ghost btn--sm" href="/accounts"><?= View::t('nav.accounts') ?></a></span>
     </div>
     <div class="card__body">
-      <?php if ($cockpit['accounts'] === []): ?>
+      <?php /* Three states, not two. "No accounts connected yet" is a claim; a
+               read that FAILED has not established it, and this card is where an
+               operator checks whether their channels are wired up. */ ?>
+      <?php if ($cockpit['accounts'] === null): ?>
+      <div class="ui-state">
+        <span class="ui-state__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.5v3M8 5h.01"/></svg></span>
+        <h3><?= View::t('dash.accounts_unreadable') ?></h3>
+        <p><a href="/accounts"><?= View::t('nav.accounts') ?></a></p>
+      </div>
+      <?php elseif ($cockpit['accounts'] === []): ?>
       <div class="ui-state">
         <span class="ui-state__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="5.2" r="2.6"/><path d="M3 13.5c0-2.6 2.2-4.3 5-4.3s5 1.7 5 4.3"/></svg></span>
         <h3><?= View::t('dash.accounts_none') ?></h3>

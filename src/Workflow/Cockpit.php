@@ -52,7 +52,7 @@ final class Cockpit
      *   activeRuns: list<array<string, mixed>>,
      *   awaiting: list<array<string, mixed>>,
      *   planWeek: array{unavailable: true}|array<string, int>|null,
-     *   accounts: list<array<string, mixed>>,
+     *   accounts: list<array<string, mixed>>|null,
      *   nextPublish: array{run_id: int, run_after: string}|null
      * }
      */
@@ -67,7 +67,7 @@ final class Cockpit
             'pipeline' => $this->pipeline($ws),
             'activeRuns' => $this->activeRuns($ws),
             'awaiting' => array_slice($this->jobs->awaitingApproval($ctx), 0, 4),
-            'accounts' => array_slice($this->accountRepo->listFor($ctx, 6), 0, 4),
+            'accounts' => $this->accounts($ctx),
             // Phase 23: the soonest publish actually waiting in the queue. Read
             // from the real job gate, not from the slot plan — a slot is only a
             // template, this is a scheduled fact.
@@ -76,6 +76,33 @@ final class Cockpit
             // zero stays a zero — nothing here is invented to fill the line.
             'planWeek' => $this->planWeek($ctx, $ws, $now),
         ];
+    }
+
+    /**
+     * The account cards, or null when they could not be read.
+     *
+     * Same guard, same reason, as planWeek() below: the accounts card is a side
+     * card — the dashboard is fully useful without it — and `account_metrics`
+     * is the second-newest table on this page, so it is the next one to go
+     * missing on a database behind on its migrations, exactly as
+     * `slot_occurrences` did.
+     *
+     * Null, NOT an empty list. An empty list is what "No accounts connected
+     * yet" is rendered from, so a failed read returning one would tell an
+     * operator with live channels that they have none — the same borrowed lie
+     * the plan line was fixed for.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    private function accounts(WorkspaceContext $ctx): ?array
+    {
+        try {
+            return array_slice($this->accountRepo->listFor($ctx, 6), 0, 4);
+        } catch (Throwable $e) {
+            error_log('Kuyash: dashboard accounts read failed for workspace ' . $ctx->id() . ' — ' . $e->getMessage());
+
+            return null;
+        }
     }
 
     /**
