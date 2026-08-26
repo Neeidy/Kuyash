@@ -113,6 +113,7 @@ final class OccurrenceRepository
             "SELECT o.*,
                     s.weekday, s.time_hhmm, s.enabled AS slot_enabled, s.mode AS slot_mode,
                     a.title AS asset_title, a.duration_s AS asset_duration,
+                    a.id AS asset_ref, a.sha256 AS asset_sha256, a.kind AS asset_kind,
                     r.status AS run_status,
                     (SELECT j.status FROM jobs j
                       WHERE j.run_id = o.run_id AND j.workspace_id = o.workspace_id

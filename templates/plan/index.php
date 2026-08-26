@@ -175,6 +175,12 @@ $cellLabel = static fn (string $state): string => View::t(match ($state) {
           <p class="cell__note muted"><?= View::t('plan.time_shifted', ['time' => $cell['time']]) ?></p>
           <?php endif; ?>
 
+          <?php /* WHAT is on this day, not just its name. A calendar cell that
+                   names a video without showing it makes the operator open the
+                   run to find out which clip they picked. */ ?>
+          <?php if (($cell['asset_poster'] ?? false) && ($cell['asset_ref'] ?? null) !== null): ?>
+          <img class="cell__poster" src="/media/<?= (int) $cell['asset_ref'] ?>/poster" alt="" loading="lazy">
+          <?php endif; ?>
           <?php if ($cell['asset_title'] !== null): ?>
           <?php /* the tag renders as its own chip so it survives a 68px cell at
                    768px, and the title gets the rest of the width back */ ?>

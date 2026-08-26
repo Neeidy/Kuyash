@@ -42,8 +42,10 @@ final class PlanBoard
         'kill_switch', 'plan_paused',
     ];
 
-    public function __construct(private readonly OccurrenceRepository $occurrences)
-    {
+    public function __construct(
+        private readonly OccurrenceRepository $occurrences,
+        private readonly ?\Kuyash\Media\AssetPoster $posters = null,
+    ) {
     }
 
     /**
@@ -153,6 +155,14 @@ final class PlanBoard
             'mode' => (string) $row['mode'],
             'run_id' => $row['run_id'] === null ? null : (int) $row['run_id'],
             'asset_title' => $row['asset_title'] === null ? null : (string) $row['asset_title'],
+            // enough for the cell to show WHAT is on that day, not just its name
+            'asset_ref' => $row['asset_ref'] === null ? null : (int) $row['asset_ref'],
+            'asset_poster' => $this->posters !== null && $row['asset_sha256'] !== null
+                && (string) ($row['asset_kind'] ?? '') === 'video'
+                && $this->posters->exists([
+                    'workspace_id' => (int) $row['workspace_id'],
+                    'sha256' => (string) $row['asset_sha256'],
+                ]),
             'awaiting_job_id' => $row['awaiting_job_id'] === null ? null : (int) $row['awaiting_job_id'],
             'reason' => ($row['skip_reason'] ?? null) === null ? null : (string) $row['skip_reason'],
             'published_count' => (int) ($row['published_count'] ?? 0),

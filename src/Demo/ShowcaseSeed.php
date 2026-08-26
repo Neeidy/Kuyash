@@ -55,6 +55,32 @@ use RuntimeException;
 final class ShowcaseSeed
 {
     /**
+     * The demo library, and the stock search term behind each item.
+     *
+     * The term is not decoration: it is what makes the poster a picture of the
+     * thing the title names. Titles stay one or two words because a calendar
+     * cell at 768px is ~68px wide (see Format::splitTag).
+     */
+    private const LIBRARY = [
+        ['seconds' => 16, 'type' => 'own', 'title' => 'Kitchen', 'tags' => ['kitchen', 'morning'], 'query' => 'kitchen cooking'],
+        ['seconds' => 19, 'type' => 'own', 'title' => 'Desk reset', 'tags' => ['desk', 'workspace'], 'query' => 'desk workspace'],
+        ['seconds' => 23, 'type' => 'own', 'title' => 'Coffee pour', 'tags' => ['coffee', 'closeup'], 'query' => 'coffee pour'],
+        ['seconds' => 27, 'type' => 'face', 'title' => 'Intro take', 'tags' => ['face', 'intro'], 'query' => 'person talking portrait'],
+        ['seconds' => 31, 'type' => 'own', 'title' => 'Street walk', 'tags' => ['street', 'golden'], 'query' => 'city street walking'],
+        ['seconds' => 35, 'type' => 'own', 'title' => 'Notebook', 'tags' => ['notebook', 'detail'], 'query' => 'notebook writing'],
+        ['seconds' => 39, 'type' => 'own', 'title' => 'Window light', 'tags' => ['light', 'slow'], 'query' => 'window light plant'],
+        ['seconds' => 43, 'type' => 'own', 'title' => 'Desk lamp', 'tags' => ['evening', 'desk'], 'query' => 'evening lamp room'],
+        ['still' => true, 'type' => 'own', 'title' => 'Still — front', 'tags' => ['reference'], 'query' => 'portrait studio'],
+        ['still' => true, 'type' => 'face', 'title' => 'Still — profile', 'tags' => ['reference', 'face'], 'query' => 'portrait profile'],
+    ];
+
+    /** @return list<string> the search term per library item, in order */
+    public static function stockQueries(): array
+    {
+        return array_map(static fn (array $i): string => (string) $i['query'], self::LIBRARY);
+    }
+
+    /**
      * The honesty marker. At the FRONT of every seeded string on purpose: an
      * ellipsis eats the end of a title, so a trailing chip is exactly the thing
      * that disappears at 375px — which is where an unmarked fabricated value
@@ -210,18 +236,7 @@ final class ShowcaseSeed
         // b-roll" truncated to "[SAMPLE]…" and every occupied day looked
         // identical. One or two words after the marker is what fits in the
         // narrowest cell the product has, so the marker AND the title survive.
-        $plan = [
-            ['seconds' => 16, 'type' => 'own', 'title' => 'Kitchen', 'tags' => ['kitchen', 'morning']],
-            ['seconds' => 19, 'type' => 'own', 'title' => 'Desk reset', 'tags' => ['desk', 'workspace']],
-            ['seconds' => 23, 'type' => 'own', 'title' => 'Coffee pour', 'tags' => ['coffee', 'closeup']],
-            ['seconds' => 27, 'type' => 'face', 'title' => 'Intro take', 'tags' => ['face', 'intro']],
-            ['seconds' => 31, 'type' => 'own', 'title' => 'Street walk', 'tags' => ['street', 'golden']],
-            ['seconds' => 35, 'type' => 'own', 'title' => 'Notebook', 'tags' => ['notebook', 'detail']],
-            ['seconds' => 39, 'type' => 'own', 'title' => 'Window light', 'tags' => ['light', 'slow']],
-            ['seconds' => 43, 'type' => 'own', 'title' => 'Desk lamp', 'tags' => ['evening', 'desk']],
-            ['still' => true, 'type' => 'own', 'title' => 'Still — front', 'tags' => ['reference']],
-            ['still' => true, 'type' => 'face', 'title' => 'Still — profile', 'tags' => ['reference', 'face']],
-        ];
+        $plan = self::LIBRARY;
 
         foreach ($plan as $i => $item) {
             $isStill = ($item['still'] ?? false) === true;
@@ -247,7 +262,13 @@ final class ShowcaseSeed
                 : $this->media->clip($dest, (int) $item['seconds'], $i);
             if ($made === null) {
                 @unlink($dest);
-                $notes[] = 'could not build ' . ($isStill ? 'a still' : 'a clip') . ' (is ffmpeg installed?) — skipped';
+                // Named per item. A library that silently comes up short is what
+                // let the screens look finished while every preview was a wash.
+                $notes[] = sprintf(
+                    'NO MEDIA for "%s" (%s) — that item is missing from the library',
+                    (string) $item['title'],
+                    (string) ($item['query'] ?? '?'),
+                );
                 continue;
             }
             $library[] = $made + [

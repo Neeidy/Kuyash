@@ -211,6 +211,7 @@ return static function (Container $container, string $basePath): void {
     // run and its real jobs, never stored a second time
     $container->bind(PlanBoard::class, static fn (Container $c): PlanBoard => new PlanBoard(
         $c->get(OccurrenceRepository::class),
+        $c->get(Kuyash\Media\AssetPoster::class),
     ));
 
     // Phase 25 — editing a post's text. The limits are advisory (see

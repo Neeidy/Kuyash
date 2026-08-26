@@ -33,7 +33,8 @@ declare(strict_types=1);
 
 use Kuyash\Core\Config;
 use Kuyash\Core\Database;
-use Kuyash\Demo\FfmpegMediaFactory;
+use Kuyash\Demo\FixtureMediaFactory;
+use Kuyash\Demo\StockMediaFactory;
 use Kuyash\Demo\SeedManifest;
 use Kuyash\Demo\ShowcaseSeed;
 use Kuyash\Demo\ShowcaseTeardown;
@@ -153,16 +154,40 @@ if (!$manifest->isEmpty()) {
         . array_sum($undone['rows']) . " row(s), {$undone['files']} file(s))\n");
 }
 
+// ── where the demo footage comes from ───────────────────────────────────────
+// REAL stock, not synthetic. A poster can only show something if the clip shows
+// something: the previous fixture was a gradient, so every "preview" in the
+// product rendered as a flat wash and the poster work was invisible. The clips
+// are labelled, tracked and removed by teardown like everything else.
+//
+// DEMO_MEDIA=fixture forces the committed fixtures instead — that is what the
+// visual gate uses, so the gate stays deterministic and offline while still
+// exercising real footage.
+$mediaProbe = new MediaProbe();
+$ffmpegBin = $container->get(Kuyash\Media\Ffmpeg::class);
+$useFixtures = getenv('DEMO_MEDIA') === 'fixture';
+
+if ($useFixtures) {
+    $mediaFactory = new FixtureMediaFactory(dirname(__DIR__) . '/tools/visual/fixtures/stock', $mediaProbe, $ffmpegBin);
+    fwrite(STDOUT, "  media: committed stock fixtures (DEMO_MEDIA=fixture)\n");
+} else {
+    $scratch = dirname(__DIR__) . '/storage/work';
+    @mkdir($scratch, 0750, true);
+    $mediaFactory = new StockMediaFactory(
+        $container->get(Kuyash\Media\StockProvider::class),
+        $ffmpegBin,
+        $mediaProbe,
+        $scratch,
+        ShowcaseSeed::stockQueries(),
+    );
+    fwrite(STDOUT, '  media: live stock provider (' . $container->get(Kuyash\Media\StockProvider::class)->name() . ")\n");
+}
+
 // ── seed ────────────────────────────────────────────────────────────────────
 $seed = new ShowcaseSeed(
     $db,
     $container->get(MediaPaths::class),
-    new FfmpegMediaFactory(
-        dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4',
-        new MediaProbe(),
-        // the configured binary with a wall-clock timeout, not bare 'ffmpeg' off $PATH
-        $container->get(Kuyash\Media\Ffmpeg::class),
-    ),
+    $mediaFactory,
     // the same poster service the product uses at ingest, so a demo clip
     // previews exactly the way an uploaded one does
     $container->get(AssetPoster::class),

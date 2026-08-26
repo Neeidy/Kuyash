@@ -196,6 +196,15 @@ try {
     await p;
     await sleep(450); // settle: late images / async errors
   }
+  /** Runtime.evaluate that WAITS for a returned promise (awaitPromise). */
+  const evaluateAsync = async (expression) => {
+    const r = await cdp.send(
+      'Runtime.evaluate',
+      { expression, returnByValue: true, awaitPromise: true },
+      sessionId,
+    );
+    return r.result?.value;
+  };
   const evaluate = async (expression) => {
     const r = await cdp.send('Runtime.evaluate', { expression, returnByValue: true }, sessionId);
     return r.result?.value;
@@ -235,18 +244,48 @@ try {
     );
   }
 
+  /**
+   * Every image the page asked for must have actually arrived.
+   *
+   * WHY THIS EXISTS: the gate was blind to the defect it most needed to catch.
+   * While the media fixture was a flat gradient, a poster that rendered and a
+   * poster that was missing looked identical in a screenshot — a grey wash
+   * either way — so "0 console errors, 0 overflow" stayed green through five
+   * rounds of previews that showed nothing. A broken <img> also produces no
+   * console error, so the existing checks could never have found it.
+   *
+   * Counts <img> that failed to decode (naturalWidth === 0) and <video poster>
+   * whose poster URL does not load. Reported per page like overflow is.
+   */
+  const brokenMediaExpr = `(async () => {
+    const imgs = Array.from(document.images).filter(i => i.getAttribute('src'));
+    const broken = imgs.filter(i => i.complete && i.naturalWidth === 0).map(i => i.getAttribute('src'));
+    const posters = Array.from(document.querySelectorAll('video[poster]')).map(v => v.getAttribute('poster'));
+    const results = await Promise.all(posters.map(src => new Promise(res => {
+      const probe = new Image();
+      probe.onload = () => res(null);
+      probe.onerror = () => res(src);
+      probe.src = src;
+    })));
+    return broken.concat(results.filter(Boolean));
+  })()`;
+
   async function shoot(name, width, locale) {
     errors = [];
     await go(screenPath(name));
     const overflow = Number(await evaluate('Math.max(0, document.documentElement.scrollWidth - window.innerWidth)')) || 0;
+    const brokenMedia = (await evaluateAsync(brokenMediaExpr)) || [];
     const png = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, sessionId);
     const file = join(OUT_DIR, `${name}__${width}__${locale}.png`);
     writeFileSync(file, Buffer.from(png.data, 'base64'));
     const pageErrors = [...errors];
-    const ok = pageErrors.length === 0 && overflow === 0;
+    const ok = pageErrors.length === 0 && overflow === 0 && brokenMedia.length === 0;
     if (!ok) exitCode = 1; // a real visual-gate failure (vs setup failure = 2)
-    results.push({ name, width, locale, overflow, errors: pageErrors, ok, file });
+    results.push({ name, width, locale, overflow, errors: pageErrors, brokenMedia, ok, file });
     process.stdout.write(ok ? '.' : 'x');
+    if (brokenMedia.length > 0) {
+      console.log(`\n[harness] ${name}@${width}/${locale}: ${brokenMedia.length} image(s) did not load — ${brokenMedia.slice(0, 3).join(', ')}`);
+    }
   }
 
   // map screen name -> path (for the --only/self-test and the loops below)
@@ -322,11 +361,15 @@ try {
   if (failed.length) {
     console.log(`[harness] ${failed.length} FAILED:`);
     for (const r of failed) {
-      const why = [r.overflow ? `overflow ${r.overflow}px` : null, ...r.errors].filter(Boolean).join('; ');
+      const why = [
+        r.overflow ? `overflow ${r.overflow}px` : null,
+        r.brokenMedia?.length ? `${r.brokenMedia.length} image(s) did not load: ${r.brokenMedia.slice(0, 3).join(', ')}` : null,
+        ...r.errors,
+      ].filter(Boolean).join('; ');
       console.log(`  ✗ ${r.name} @ ${r.width}px/${r.locale} — ${why}`);
     }
   } else {
-    console.log('[harness] all pages: 0 console errors, 0 horizontal overflow.');
+    console.log('[harness] all pages: 0 console errors, 0 horizontal overflow, 0 broken images.');
   }
 
   await cdp.send('Target.closeTarget', { targetId });
