@@ -71,9 +71,22 @@ rewrite yok"tu.
 - **TR `Buraya koy` butonun sağ kenarına dayanıyor**, son harf köşe yarıçapına
   giriyor (`plan__768__tr.png`). EN `Put it here` aynı 75px butonda rahat.
   Buton padding'i ya da daha kısa dize.
-- **Video seçici `<select>` `Talking-he` diye kesiliyor ve caret son harfin
-  ÜSTÜNE biniyor** — 768 ve 1280'de (`plan__768__en.png`, `plan__1280__en.png`).
-  Her boş takvim hücresinde bozuk kontrol gibi duruyor.
+- ~~**Video seçici `<select>` caret'i son harfin ÜSTÜNE biniyor**~~ —
+  **KAPANDI (2026-08-26).** `.cell__assign select` `padding-inline: 4px` idi;
+  native caret kontrolün sağ iç kenarına boyanıyor, o yüzden kesilen etiket
+  caret'in ALTINDAN geçiyordu (1280: `Talking-head intr` + "o"nun üstünde ok).
+  `padding-inline: 4px 15px` ile caret'e kendi yeri ayrıldı. Kanıt: aynı
+  koordinatlardan önce/sonra pixel crop (768 ve 1280).
+  **Etiket kesilmesi KAPANMADI** — o zaten bilinçli (hücre satırın 1/7'si);
+  `text-overflow: ellipsis` denendi ve GERİ ALINDI: 1280'de görünen karakter
+  sayısını ~9'dan ~5'e düşürüyordu ("Talki…"), yani hangi video olduğunu
+  söyleme işini daha da kötüleştiriyordu.
+  **HARNESS KÖRLÜĞÜ (açık):** görsel gate bu kusur dururken 99 ekran görüntüsü
+  boyunca YEŞİLDİ — console error yok, taşma yok, kırık görsel yok; glyph
+  üst üste binmesini ölçen hiçbir kontrol yok. Kanıt gate değil, pixel crop.
+  Guard eklemeden ÖNCE doğrulanmalı: Chrome'da `select` kırpılmayı
+  `scrollWidth > clientWidth` ile bildirmeyebilir — bildirmiyorsa yazılan
+  assert hep-yeşil (kör) olur, yani mevcut durumdan kötü.
 - **`Format::splitTag()` yalnız /plan'da.** `[SAMPLE]` hâlâ ham metin olarak:
   13 kütüphane başlığının 9'unda, Quick Create foto etiketlerinde (kesik),
   6 /usage masraf satırında, run-detail caption alanlarında. Aynı çip muamelesi

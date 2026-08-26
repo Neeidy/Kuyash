@@ -1685,7 +1685,12 @@ html:not(.js) .topbar__live { display: none; }
      in full, so the control works — this just buys back a few characters of the
      closed label. A picker that reads properly at this width needs the cell to
      stop being 1/7th of the row, which is a calendar redesign. */
-  .cell__assign select { font-size: 11px; padding-inline: 4px; }
+  /* the right padding is NOT symmetric on purpose: the native caret is painted
+     inside the control's right edge, and a 4px right pad let the truncated
+     label run underneath it ("Talking-he" with the arrow sitting on the last
+     letter), which reads as a broken control in every empty cell. Reserve the
+     caret its own room instead. */
+  .cell__assign select { font-size: 11px; padding-inline: 4px 15px; }
 }
 
 
