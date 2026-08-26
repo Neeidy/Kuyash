@@ -3,212 +3,186 @@
 declare(strict_types=1);
 
 /**
- * Showcase top-up for the DEV database (DEV-ONLY, not product code).
+ * Showcase seed for the DEV database (DEV-ONLY, not product code).
  *
  * Fills the screens a case study is captured from so they read as a working
- * product rather than as empty states — WITHOUT inventing anything.
+ * product rather than as a wall of empty states — and stays undoable, inert and
+ * honest while doing it. The rules, and why each one is a rule, are documented
+ * on Kuyash\Demo\ShowcaseSeed; the short version:
  *
- * The honesty rules this obeys, because a screenshot is a claim:
- *   • every fabricated value is labelled. Demo library clips carry "[SAMPLE]" in
- *     the title; the demo social account is a mock one, and the account card
- *     already marks any figure it stands behind with a "sample" chip because the
- *     provider never reported it (`followers_count IS NULL`).
- *   • the REAL account (@ai.neeidy) is never given a made-up number. Its figures
- *     are whatever the provider actually reported, or an honest dash.
- *   • no outcome is fabricated. Runs are STARTED and left to the worker, so the
- *     queue card, the compliance verdict and the approval record are all real
- *     output of the real pipeline. Nothing is written to make a capability look
- *     like it works when it does not.
- *   • idempotent: clips are keyed by name, the demo channel is only revived
- *     if it is disconnected, and a run is started only when none is in flight.
+ *   • UNDOABLE — every row and file is recorded in `demo_seed_manifest` as it is
+ *     written, and `bin/demo-teardown.php` removes exactly that set. The seed
+ *     only INSERTs: an UPDATE to a real row could not be undone from a manifest,
+ *     so the workspace's own settings are read and never touched.
+ *   • INERT — no `queued` or `processing` job is written anywhere, demo posts are
+ *     already-terminal MOCK rows, and every calendar cell is placed in a state
+ *     the plan runner provably skips. Running the worker after this changes
+ *     nothing: no run starts, nothing is spent, nothing is published.
+ *   • HONEST — demo channels are non-connected mock rows (so the account card
+ *     marks every figure it derives as a sample), every seeded title, caption and
+ *     hashtag starts with "[SAMPLE]", the real connected account is never given a
+ *     number, and no capability that does not work is depicted as working.
+ *
+ * It is IDEMPOTENT by tearing itself down first: a second run removes the
+ * previous demo set and writes a fresh one, so it can never accumulate.
  *
  * Usage (refuses without the confirmation, so it cannot run by accident):
  *   php bin/demo-seed.php --yes
+ *   DEMO_WORKSPACE=2 php bin/demo-seed.php --yes
  */
+
+use Kuyash\Core\Config;
+use Kuyash\Core\Database;
+use Kuyash\Demo\FfmpegMediaFactory;
+use Kuyash\Demo\SeedManifest;
+use Kuyash\Demo\ShowcaseSeed;
+use Kuyash\Demo\ShowcaseTeardown;
+use Kuyash\Library\MediaProbe;
+use Kuyash\Media\MediaPaths;
 
 if (PHP_SAPI !== 'cli') {
     http_response_code(404);
     exit(1);
 }
-if (!in_array('--yes', array_slice($argv, 1), true)) {
-    fwrite(STDERR, "demo-seed: this writes to the database in config/database.\n"
+$args = array_slice($argv, 1);
+if (!in_array('--yes', $args, true)) {
+    fwrite(STDERR, "demo-seed: this writes demo content into the database in config/database.\n"
+        . "  Everything it writes is tracked and removable with: php bin/demo-teardown.php --yes\n"
         . "  Re-run with --yes if that is what you want.\n");
     exit(1);
 }
 
 $container = require dirname(__DIR__) . '/src/bootstrap.php';
-$db = $container->get(Kuyash\Core\Database::class);
-$paths = $container->get(Kuyash\Media\MediaPaths::class);
-
+$db = $container->get(Database::class);
 $now = gmdate('Y-m-d\TH:i:s\Z');
-$ws = (int) ($db->one('SELECT id FROM workspaces ORDER BY id LIMIT 1')['id'] ?? 0);
+
+if ($db->one("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'demo_seed_manifest'") === null) {
+    fwrite(STDERR, "demo-seed: the demo manifest table is missing. Run: php bin/migrate.php\n");
+    exit(1);
+}
+
+// ── which workspace ─────────────────────────────────────────────────────────
+// The showcase belongs where the operator actually works, which is the workspace
+// that has a channel attached — not necessarily workspace #1. Stated out loud
+// either way, because writing demo content into the wrong tenant is exactly the
+// mistake a confirmation flag is supposed to prevent.
 $wsArg = getenv('DEMO_WORKSPACE');
 if ($wsArg !== false && ctype_digit($wsArg)) {
     $ws = (int) $wsArg;
+} else {
+    $pick = $db->one(
+        "SELECT w.id FROM workspaces w
+         WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.workspace_id = w.id AND a.status = 'connected')
+         ORDER BY w.id ASC LIMIT 1",
+    ) ?? $db->one('SELECT id FROM workspaces ORDER BY id ASC LIMIT 1');
+    $ws = (int) ($pick['id'] ?? 0);
 }
-if ($ws === 0 || $db->one('SELECT id FROM workspaces WHERE id = ?', [$ws]) === null) {
-    // Checked BEFORE anything is written: an id that does not exist used to
-    // create a media directory and two files, then die on the foreign key.
+if ($ws === 0 || $db->one('SELECT id, name FROM workspaces WHERE id = ?', [$ws]) === null) {
     fwrite(STDERR, "demo-seed: no such workspace (#{$ws}).\n");
     exit(1);
 }
-$owner = $db->one(
-    "SELECT user_id FROM workspace_users WHERE workspace_id = ? ORDER BY (role = 'owner') DESC, id ASC LIMIT 1",
-    [$ws],
-);
-$userId = (int) ($owner['user_id'] ?? 0);
-fwrite(STDOUT, "demo-seed: workspace #{$ws}\n");
+$wsRow = $db->one('SELECT name, approval_mode FROM workspaces WHERE id = ?', [$ws]);
+$wsName = (string) $wsRow['name'];
+fwrite(STDOUT, "demo-seed: workspace #{$ws} ({$wsName})\n");
 
-// ── 1. Library: labelled demo clips ─────────────────────────────────────────
-// One clip inside the 15-45s format band and one below it, so the screens can
-// show a usable video AND the honest block a too-short one produces.
+// ── the one guardrail this seed CANNOT hold harmless ────────────────────────
+// Everything it writes is inert to the WORKER: no job it writes is claimable,
+// no calendar cell it writes can be produced or swept, nothing it writes lands
+// in the month the budget cap is enforced against, and no demo post touches a
+// connected channel's per-account daily cap.
 //
-// EVERY NUMBER HERE IS MEASURED, NEVER ASSERTED. duration_s is not a caption:
-// AssetFetchExecutor copies it into the job result and ComplianceCheckExecutor
-// checks the format band against it — for a distribution run there is no render
-// row yet, so the asset's own figure IS the one the verdict is computed from.
-// An earlier version of this script declared "22.0" for a copy of a 3-second
-// file, which would have produced an audit record reading "format passed,
-// duration 22.0s" for a 3-second video. That is the one thing a tool whose
-// whole job is screenshots must never do.
-$fixture = dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4';
-$probe = new Kuyash\Library\MediaProbe();
-
-/** Build a clip of about $seconds by looping the fixture; null when ffmpeg cannot. */
-$build = static function (string $source, string $target, int $seconds): ?string {
-    $cmd = sprintf(
-        'ffmpeg -y -stream_loop -1 -i %s -t %d -c:v libx264 -pix_fmt yuv420p -an %s 2>/dev/null',
-        escapeshellarg($source),
-        $seconds,
-        escapeshellarg($target),
-    );
-    exec($cmd, $out, $code);
-
-    return ($code === 0 && is_file($target)) ? $target : null;
-};
-
-$clips = [
-    ['name' => str_repeat('a', 32) . '.mp4', 'label' => 'short (below the format band)', 'seconds' => null],
-    ['name' => str_repeat('b', 32) . '.mp4', 'label' => 'inside the format band', 'seconds' => 22],
-];
-foreach ($clips as $clip) {
-    if ($db->one('SELECT id FROM assets WHERE workspace_id = ? AND stored_name = ?', [$ws, $clip['name']]) !== null) {
-        fwrite(STDOUT, "  library: {$clip['label']} clip already present\n");
-        continue;
-    }
-    if (!is_file($fixture)) {
-        fwrite(STDOUT, "  library: no fixture clip on disk — skipped\n");
-        break;
-    }
-
-    // Produce the file FIRST, in a temp location, so nothing is written into
-    // media storage for a row that turns out not to be insertable.
-    $tmp = sys_get_temp_dir() . '/kuyash-demo-' . bin2hex(random_bytes(6)) . '.mp4';
-    $made = $clip['seconds'] === null ? (copy($fixture, $tmp) ? $tmp : null) : $build($fixture, $tmp, $clip['seconds']);
-    if ($made === null) {
-        @unlink($tmp);
-        fwrite(STDOUT, "  library: could not build the {$clip['label']} clip (is ffmpeg installed?) — skipped\n");
-        continue;
-    }
-
-    // …then MEASURE it. Whatever the file actually is, is what gets stored.
-    $m = $probe->probe($made, 'video');
-    $dest = $paths->pathFor('asset', $ws, $clip['name']);
-    @mkdir(dirname($dest), 0775, true);
-    if (is_link($dest) || file_exists($dest)) {
-        @unlink($tmp);
-        fwrite(STDOUT, "  library: {$clip['name']} already occupies its path — skipped\n");
-        continue;
-    }
-    // Bytes FIRST, row second. The other order can leave a row marked `ready`
-    // pointing at nothing — a library screen listing a clip that is not there —
-    // and /tmp is a different device here, so rename() is a copy that can fail.
-    $size = (int) filesize($made);
-    $sha = hash_file('sha256', $made);
-    if (!@rename($made, $dest) && !(@copy($made, $dest) && @unlink($made))) {
-        @unlink($made);
-        fwrite(STDOUT, "  library: could not place the {$clip['label']} clip on disk — skipped\n");
-        continue;
-    }
-    $db->run(
-        'INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes,
-                             sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at, storage_disk)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [$ws, 'video', 'own',
-         // duration FIRST: a calendar cell shows ~13 characters, and a shared
-         // "[SAMPLE] Demo clip — " prefix made every option read identically.
-         sprintf('[SAMPLE] %ss demo clip — vertical test footage', $m['duration_s'] === null ? '?' : (string) (int) round($m['duration_s'])),
-         'preview.mp4', $clip['name'], 'video/mp4', $size, $sha,
-         $m['duration_s'], $m['width'], $m['height'], $m['aspect'], '[]', 'ready', $now, $now, 'local'],
-    );
-    fwrite(STDOUT, sprintf(
-        "  library: seeded the %s clip — measured %ss, %sx%s\n",
-        $clip['label'],
-        $m['duration_s'] === null ? '?' : (string) round((float) $m['duration_s'], 1),
-        (string) $m['width'], (string) $m['height'],
-    ));
+// What it cannot avoid is being READ AS EVIDENCE. Two guardrails score the
+// workspace's recent history by ROW ORDER, not by date:
+//   • QualityScore walks the last 20 compliance checks. Eight of them become
+//     demo checks, all clean, which pulls the average similarity down — measured
+//     on the dev workspace: 0.275 with the demo against 0.345 without, lifting
+//     the score from 84 to 87, in the permissive direction.
+//   • SlopScorer compares new content against the last 10 runs. Eight of them
+//     become demo runs, EVICTING the operator's real history from the window —
+//     and slop takes the maximum similarity over it, so eviction can only make a
+//     real near-duplicate score cleaner.
+// In Manual mode a person is still the gate and this is cosmetic. In AUTO mode
+// those two numbers help decide what publishes with nobody looking — so the
+// seed refuses that workspace unless the operator says otherwise in as many
+// words.
+if ((string) ($wsRow['approval_mode'] ?? 'manual') === 'auto' && !in_array('--auto-mode-ok', $args, true)) {
+    fwrite(STDERR, "demo-seed: workspace #{$ws} approves automatically.\n"
+        . "  Demo runs are read as evidence by two guardrails that score recent history:\n"
+        . "  the quality score (last 20 compliance checks) and slop similarity (last 10 runs).\n"
+        . "  In Auto mode those help decide what publishes with nobody looking.\n"
+        . "  Switch the workspace to Manual for the capture, pick another with DEMO_WORKSPACE=N,\n"
+        . "  or re-run with --auto-mode-ok if you accept that.\n");
+    exit(1);
 }
 
-// ── 2. Accounts: revive the MOCK demo channel ───────────────────────────────
-// Only a mock one. A real account's connection state is a fact about the real
-// world and is never written here. followers_count stays NULL, which is exactly
-// what makes the card mark its figures as a sample instead of as measured.
-$demo = $db->one(
-    "SELECT id, status FROM accounts WHERE workspace_id = ? AND handle = '@smoke_tt'",
-    [$ws],
-);
-if ($demo === null) {
-    fwrite(STDOUT, "  accounts: no mock demo channel to revive\n");
-} elseif ((string) $demo['status'] === 'connected') {
-    fwrite(STDOUT, "  accounts: mock demo channel already connected\n");
-} else {
-    $db->run(
-        "UPDATE accounts SET status = 'connected', health = 'ok', connected_at = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?",
-        [$now, $now, (int) $demo['id'], $ws],
-    );
-    fwrite(STDOUT, "  accounts: mock demo channel reconnected (figures stay sample-marked)\n");
-}
-
-// ── 3. Queue: one post actually waiting for approval ────────────────────────
-// STARTED, not written. Whatever the card ends up showing — the compliance
-// verdict, the slop score, the approval record — is the real pipeline's output.
+// ── the hazard that outlives the seed: a live publish path ──────────────────
+// The seed writes no claimable job, but it does put five REAL approval gates on
+// the queue screen. Approving one is a human act the seed cannot make inert:
+// PublishGateExecutor returns early for human-approved runs, so neither the
+// daily cap nor the kill switch applies, and ZernioPublishExecutor fans out to
+// every CONNECTED channel — the operator's real one, not the demo rows. The
+// caption that would go out begins with "[SAMPLE]".
 //
-// And ONLY where a human gate exists. In a workspace set to auto-approval an
-// empty queue is the truth: nothing is waiting because nothing needs a person.
-// Starting runs to fill that screen would both misrepresent the workspace's own
-// configuration and spawn a fresh run on every invocation — which is exactly
-// what the first version of this script did.
-$mode = (string) ($db->one('SELECT approval_mode FROM workspaces WHERE id = ?', [$ws])['approval_mode'] ?? 'manual');
-// Guarded on a live RUN, not on the approval gate. "Is anything awaiting
-// approval" is a state the worker has to walk the run to — so with the worker
-// stopped, which is the normal state on a demo machine, every invocation
-// started another run. Each one makes real caption/hashtag calls when
-// OPENAI_MOCK=false, and the default workspace here has no budget cap, so the
-// preflight gate would not stop the bleeding either.
-$waiting = $db->one(
-    "SELECT COUNT(*) AS n FROM runs
-     WHERE workspace_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
-    [$ws],
-);
-if ($mode !== 'manual') {
-    fwrite(STDOUT, "  queue: workspace approves automatically, so an empty queue is the honest state — nothing started\n");
-} elseif ((int) ($waiting['n'] ?? 0) > 0) {
-    fwrite(STDOUT, "  queue: a run is already in flight — not starting another\n");
-} else {
-    $asset = $db->one(
-        "SELECT id FROM assets WHERE workspace_id = ? AND kind = 'video' AND status = 'ready' AND duration_s >= 15
-         ORDER BY id DESC LIMIT 1",
-        [$ws],
-    );
-    $wf = $db->one("SELECT id FROM workflows WHERE workspace_id = ? AND template = 'distribution' LIMIT 1", [$ws]);
-    if ($asset === null || $wf === null || $userId === 0) {
-        fwrite(STDOUT, "  queue: no usable clip, workflow or owner — skipped\n");
-    } else {
-        $engine = $container->get(Kuyash\Workflow\Engine::class);
-        $runId = $engine->startRunFor($ws, (int) $wf['id'], (int) $asset['id'], $userId);
-        fwrite(STDOUT, "  queue: started run #{$runId} — the worker will carry it to its approval gate\n");
-    }
+// This is checked BEFORE anything is written rather than warned about after, in
+// the trailing lines of a summary that reads like success.
+$mockPublish = $container->get(Config::class)->get('zernio.mock') === true;
+if (!$mockPublish && !in_array('--live-publish-ok', $args, true)) {
+    fwrite(STDERR, "demo-seed: publishing is LIVE (ZERNIO_MOCK=false).\n"
+        . "  This seed puts five real approval gates on the queue. Approving one during a\n"
+        . "  capture publishes a [SAMPLE] caption to your connected channels for real —\n"
+        . "  and a human-approved run bypasses both the daily cap and the kill switch.\n"
+        . "  Set ZERNIO_MOCK=true for the capture session, or re-run with\n"
+        . "  --live-publish-ok if you accept that.\n");
+    exit(1);
 }
 
-fwrite(STDOUT, "demo-seed: done. Nothing here is presented as measured that was not.\n");
+// ── idempotency: remove the previous demo set first ─────────────────────────
+$manifest = new SeedManifest($db);
+if (!$manifest->isEmpty()) {
+    $teardown = new ShowcaseTeardown($db);
+    $blockers = $teardown->blockers();
+    if ($blockers !== []) {
+        fwrite(STDERR, "demo-seed: a previous demo set cannot be removed cleanly:\n  - "
+            . implode("\n  - ", $blockers) . "\n"
+            . "  Resolve that first (bin/demo-teardown.php --dry-run explains it), then re-run.\n");
+        exit(1);
+    }
+    $undone = $teardown->run();
+    fwrite(STDOUT, '  reset: removed the previous demo set ('
+        . array_sum($undone['rows']) . " row(s), {$undone['files']} file(s))\n");
+}
+
+// ── seed ────────────────────────────────────────────────────────────────────
+$seed = new ShowcaseSeed(
+    $db,
+    $container->get(MediaPaths::class),
+    new FfmpegMediaFactory(dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4', new MediaProbe()),
+);
+
+$report = $seed->run($ws, $now);
+
+foreach ($report['notes'] as $note) {
+    // notes go to STDERR: they are the only place a partial seed says so, and
+    // STDOUT here is a tidy summary that reads like success either way
+    fwrite(STDERR, "  note: {$note}\n");
+}
+$total = 0;
+foreach ($report['counts'] as $table => $n) {
+    $total += $n;
+    fwrite(STDOUT, sprintf("  %-22s %d\n", $table, $n));
+}
+fwrite(STDOUT, "demo-seed: {$total} tracked entries.\n");
+fwrite(STDOUT, "  Undo with: php bin/demo-teardown.php --yes\n");
+
+// Said again at the end, on STDERR: the publishing hazard is a precondition
+// above, but this one only bites later.
+fwrite(STDERR, "\n  TEAR IT DOWN WHEN THE CAPTURE IS OVER. The seed is inert on the day it runs,\n"
+    . "  but its calendar days age: once one passes its time the worker closes it and appends\n"
+    . "  a guardrail line to the audit log, which is append-only — that pins the run it names,\n"
+    . "  and teardown can no longer remove it (it says so and keeps the rest).\n");
+fwrite(STDERR, "\n  THE APPROVAL QUEUE IS REAL. Those cards are live approval gates"
+    . ($mockPublish
+        ? ", on the mock provider.\n  Approving exactly one is how you photograph a truthful approval record — the\n"
+          . "  seed deliberately fabricates none, and teardown keeps a run you approved.\n"
+        : " and publishing is LIVE.\n  You passed --live-publish-ok; approving one publishes for real.\n"));
+exit(0);

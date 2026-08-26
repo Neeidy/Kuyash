@@ -1,23 +1,101 @@
 {
   "_comment": "Phase 15.9 visual-test screen inventory. shot.mjs renders each page at every width x locale. 'auth' false = reachable without login (skipped during the authenticated pass). Detail routes mostly stay out — they need a stable seeded id. The exceptions are /runs/2 and /runs/3, added in Phase 25 because the post-text editor lives there and on /queue, and a screen nobody photographs is a screen nobody checks: run 2 is still editable, run 3 has finished so it shows the read-only state, and run 4 was edited by a person so it carries the edit chip and the compliance chip derived from that edit. bin/visual-seed.php creates all three deterministically.",
   "screens": [
-    { "path": "/login", "name": "login", "auth": false },
-    { "path": "/dashboard", "name": "dashboard", "auth": true },
-    { "path": "/quick", "name": "quick-create", "auth": true },
-    { "path": "/trends", "name": "trends", "auth": true },
-    { "path": "/library", "name": "library", "auth": true },
-    { "path": "/workflows", "name": "workflows", "auth": true },
-    { "path": "/queue", "name": "queue", "auth": true },
-    { "path": "/runs/2", "name": "run-detail", "auth": true },
-    { "path": "/runs/3", "name": "run-detail-done", "auth": true },
-    { "path": "/runs/4", "name": "run-detail-edited", "auth": true },
-    { "path": "/plan", "name": "plan", "auth": true },
-    { "path": "/accounts", "name": "accounts", "auth": true },
-    { "path": "/logs", "name": "logs", "auth": true },
-    { "path": "/digest", "name": "digest", "auth": true },
-    { "path": "/usage", "name": "usage", "auth": true },
-    { "path": "/settings", "name": "settings", "auth": true }
+    {
+      "path": "/login",
+      "name": "login",
+      "auth": false
+    },
+    {
+      "path": "/dashboard",
+      "name": "dashboard",
+      "auth": true
+    },
+    {
+      "path": "/quick",
+      "name": "quick-create",
+      "auth": true
+    },
+    {
+      "path": "/trends",
+      "name": "trends",
+      "auth": true
+    },
+    {
+      "path": "/library",
+      "name": "library",
+      "auth": true
+    },
+    {
+      "path": "/workflows",
+      "name": "workflows",
+      "auth": true
+    },
+    {
+      "path": "/queue",
+      "name": "queue",
+      "auth": true
+    },
+    {
+      "path": "/runs/2",
+      "name": "run-detail",
+      "auth": true
+    },
+    {
+      "path": "/runs/3",
+      "name": "run-detail-done",
+      "auth": true
+    },
+    {
+      "path": "/runs/4",
+      "name": "run-detail-edited",
+      "auth": true
+    },
+    {
+      "path": "/plan",
+      "name": "plan",
+      "auth": true
+    },
+    {
+      "path": "/accounts",
+      "name": "accounts",
+      "auth": true
+    },
+    {
+      "path": "/logs",
+      "name": "logs",
+      "auth": true
+    },
+    {
+      "path": "/digest",
+      "name": "digest",
+      "auth": true
+    },
+    {
+      "path": "/usage",
+      "name": "usage",
+      "auth": true
+    },
+    {
+      "path": "/settings",
+      "name": "settings",
+      "auth": true
+    },
+    {
+      "path": "/runs/5",
+      "name": "run-detail-demo-published",
+      "auth": true,
+      "demo": true,
+      "_why": "the showcase seed's own finished+published run. Without it the gate photographs only visual-seed fixtures, so what the demo seed writes on a published run has no visual coverage. 'demo': true = only captured when VISUAL_DEMO=1 seeded it; otherwise this id does not exist and would 404."
+    }
   ],
-  "widths": [375, 768, 1280],
-  "locales": ["en", "tr"]
+  "widths": [
+    375,
+    768,
+    1280
+  ],
+  "locales": [
+    "en",
+    "tr"
+  ]
 }

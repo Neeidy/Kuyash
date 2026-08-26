@@ -312,9 +312,9 @@ $mdb = new Database(':memory:');
 $migrator = new Migrator($mdb, $basePath . '/database/migrations');
 $applied = $migrator->migrate();
 
-check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql', '0016_publish_slots.sql', '0017_plan_occurrences.sql']);
+check('migrate: fresh DB applies all in order', $applied === ['0001_init.sql', '0002_assets.sql', '0003_workflow_engine.sql', '0004_trends.sql', '0005_media.sql', '0006_storage_location.sql', '0007_compliance.sql', '0008_accounts.sql', '0009_usage_ledger.sql', '0010_ai_video.sql', '0011_rate_limits.sql', '0012_user_locale.sql', '0013_ai_disclosure.sql', '0014_account_metrics.sql', '0015_accounts_dedup.sql', '0016_publish_slots.sql', '0017_plan_occurrences.sql', '0018_demo_seed_manifest.sql']);
 check('migrate: second run applies nothing', $migrator->migrate() === []);
-check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 17);
+check('migrate: tracking rows recorded', count($mdb->all('SELECT filename FROM migrations')) === 18);
 check('migrate: schema tables exist', count($mdb->all(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','workspaces','workspace_users','login_attempts')"
 )) === 4);
@@ -10976,38 +10976,44 @@ check('fix/plan: a day whose publish is IN FLIGHT is still refused', (static fun
 
 echo "== demo-seed: the showcase top-up cannot lie or run by accident ==\n";
 
-check('demo-seed: it refuses to write without an explicit confirmation', (static function () use ($basePath): bool {
+check('demo-seed: both scripts refuse to write without an explicit confirmation', (static function () use ($basePath): bool {
     $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+    $down = (string) file_get_contents($basePath . '/bin/demo-teardown.php');
 
-    return str_contains($seed, "in_array('--yes', array_slice(\$argv, 1), true)")
-        && str_contains($seed, "PHP_SAPI !== 'cli'");
+    return str_contains($seed, "in_array('--yes', \$args, true)")
+        && str_contains($seed, "PHP_SAPI !== 'cli'")
+        && str_contains($down, "in_array('--yes', \$args, true)")
+        && str_contains($down, "PHP_SAPI !== 'cli'")
+        // …and teardown offers a way to see the damage before doing it
+        && str_contains($down, "--dry-run")
+        // The seed puts five REAL approval gates on screen. A human-approved run
+        // bypasses the daily cap and the kill switch and fans out to every
+        // connected channel, so live publishing is refused UP FRONT rather than
+        // warned about in a trailing line of an otherwise successful summary.
+        && str_contains($seed, "--live-publish-ok")
+        && strpos($seed, "zernio.mock") < strpos($seed, '$seed->run(')
+        // …and an auto-approving workspace is refused before anything is written
+        && str_contains($seed, "--auto-mode-ok")
+        && strpos($seed, "--auto-mode-ok") < strpos($seed, '$seed->run(');
 })());
 
-check('demo-seed: it never writes a figure for a REAL account, and never fakes an outcome', (static function () use ($basePath): bool {
-    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+check('demo-seed: it never writes a follower count, and never publishes for real', (static function () use ($basePath): bool {
+    // A follower count is the one field that flips an account card out of its
+    // "sample" branch and makes every figure on it read as measured. The seed
+    // must never write one — not for a real channel, and not for a demo one.
+    $src = (string) file_get_contents($basePath . '/src/Demo/ShowcaseSeed.php');
 
-    return
-        // the only account it touches is the mock one, matched by handle
-        str_contains($seed, "handle = '@smoke_tt'")
-        // …and it never assigns a follower count, which is what keeps the card
-        // marking that account's figures as a sample rather than as measured
-        && !str_contains($seed, 'followers_count =')
-        // runs are STARTED, so the queue card, the verdict and the approval
-        // record are the pipeline's real output — never inserted job rows
-        && str_contains($seed, 'startRunFor')
-        && !str_contains($seed, 'INSERT INTO jobs')
-        && !str_contains($seed, 'INSERT INTO posts')
-        && !str_contains($seed, 'INSERT INTO approvals')
-        // library clips say what they are, in the title, on every screen
-        && str_contains($seed, '[SAMPLE] Demo clip')
-        // …and every NUMBER is measured off the file, never asserted.
-        // duration_s is not a caption: AssetFetchExecutor copies it into the job
-        // result and ComplianceCheckExecutor checks the 15-45s band against it,
-        // so a declared figure would produce an audit record saying a 3-second
-        // video passed the format check at 22 seconds.
-        && str_contains($seed, "\$probe->probe(\$made, 'video')")
-        && str_contains($seed, "\$m['duration_s']")
-        && !preg_match("/'dur'\s*=>\s*[0-9]/", $seed);
+    // reading it is how the seed AVOIDS a provider-backed channel; what it must
+    // never do is write one (every write here goes through an associative
+    // column list, so a write would read `'followers_count' =>`)
+    return !preg_match("/'followers_count'\s*=>/", $src)
+        && !preg_match('/followers_count\s*=/', $src)
+        // the audit log is append-only, so nothing here may append to it
+        && !preg_match('/INSERT INTO events/i', $src)
+        && !str_contains($src, "'events'")
+        // every publish it writes is already finished and already mock
+        && !preg_match("/'status' => '(queued|processing|scheduled|publishing)'/", $src)
+        && str_contains($src, "MOCK_POST_PREFIX = 'zp_'");
 })());
 
 check('demo-seed: a seeded clip stores the duration the FILE has, measured', (static function () use ($basePath, $TEST_MEDIA_ROOT): bool {
@@ -11043,10 +11049,13 @@ check('demo-seed: a seeded clip stores the duration the FILE has, measured', (st
 check('demo-seed: a workspace that does not exist writes nothing at all', (static function () use ($basePath): bool {
     // It used to print the workspace, create its media directory, copy two files
     // and only THEN die on the foreign key — leaving orphan litter behind.
-    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+    $db = migratedDb($basePath);
+    $threw = throws(
+        static fn () => (new \Kuyash\Demo\ShowcaseSeed($db))->run(999, gmdate(NOW_ISO)),
+        RuntimeException::class,
+    );
 
-    return str_contains($seed, "SELECT id FROM workspaces WHERE id = ?")
-        && str_contains($seed, 'no such workspace');
+    return $threw && (int) $db->one('SELECT COUNT(*) n FROM demo_seed_manifest')['n'] === 0;
 })());
 
 check('health: it will not hand credentials to an arbitrary host', (static function () use ($basePath): bool {
@@ -11067,14 +11076,861 @@ check('cockpit: the workflow join is workspace-scoped like the rest of the house
         && !preg_match('/JOIN workflows w ON w\.id = r\.workflow_id(?! AND w\.workspace_id)/', $c);
 })());
 
-check('demo-seed: an auto-approving workspace keeps its honestly empty queue', (static function () use ($basePath): bool {
-    // Starting runs to fill the approval screen would misrepresent the
-    // workspace's own configuration — and, as the first version proved by
-    // spawning a run per invocation, it is not idempotent either.
-    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+echo "== demo/showcase: the seed is reversible, inert and marked ==\n";
 
-    return str_contains($seed, "\$mode !== 'manual'")
-        && str_contains($seed, 'nothing started');
+/**
+ * A workspace with REAL content of every kind the seed also writes — the rows
+ * that must still be byte-identical after a teardown. Without a real row in the
+ * same table, "teardown removed the demo rows" proves nothing about whether it
+ * would have removed a real one standing next to it.
+ *
+ * @return array{0: Database, 1: int, 2: int, 3: string}
+ */
+$demoWorld = static function (string $basePath, string $now) use ($argonHash): array {
+    $db = migratedDb($basePath);
+    [$userId, $wsId] = seedUser($db, 'demo-owner@x.com', $argonHash, 'Demo WS');
+    $db->run("UPDATE workspaces SET timezone = 'Europe/Istanbul' WHERE id = ?", [$wsId]);
+
+    // a REAL connected account with a REAL follower count
+    $db->run(
+        "INSERT INTO accounts (workspace_id, platform, handle, external_ref, status, health,
+                               followers_count, followers_synced_at, created_at, updated_at)
+         VALUES (?, 'instagram', '@real.channel', '6a2f250a5f7d1751abb4803a', 'connected', 'ok', 7, ?, ?, ?)",
+        [$wsId, $now, $now, $now],
+    );
+    // …and a MOCK one that is nonetheless CONNECTED. This is the shape the dev
+    // database actually has, and the shape the first postTarget() lost to: it
+    // filtered on provenance and never on status, so this row won and demo posts
+    // landed on a channel whose per-account daily cap is live.
+    $db->run(
+        "INSERT INTO accounts (workspace_id, platform, handle, external_ref, status, health, created_at, updated_at)
+         VALUES (?, 'tiktok', '@mock.connected', 'zacct_deadbeefcafe', 'connected', 'ok', ?, ?)",
+        [$wsId, $now, $now],
+    );
+    $db->run(
+        "INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+         VALUES (?, 'Distribution', 'distribution', '[]', ?, ?)",
+        [$wsId, $now, $now],
+    );
+    $wf = $db->lastInsertId();
+    // a REAL asset, a REAL run with a REAL job, a REAL publishing time, REAL money
+    $db->run(
+        "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime,
+                             size_bytes, sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at)
+         VALUES (?, 'video', 'own', 'My own clip', 'own.mp4', ?, 'video/mp4', 10, ?, 22.0, 1080, 1920, '9:16', '[]', 'ready', ?, ?)",
+        [$wsId, str_repeat('e', 32) . '.mp4', str_repeat('f', 64), $now, $now],
+    );
+    $db->run(
+        "INSERT INTO runs (workspace_id, workflow_id, entity_type, entity_id, nodes_json, status, created_by, created_at, updated_at)
+         VALUES (?, ?, 'library', 1, '[]', 'completed', ?, ?, ?)",
+        [$wsId, $wf, $userId, $now, $now],
+    );
+    $realRun = $db->lastInsertId();
+    $db->run(
+        "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, run_after, created_at)
+         VALUES (?, ?, 'PUBLISH', 1, 'publish', 'published', '{}', ?, ?)",
+        [$wsId, $realRun, $now, $now],
+    );
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, created_at, updated_at, mode)
+         VALUES (?, 1, '09:00', 1, ?, ?, 'manual')",
+        [$wsId, $now, $now],
+    );
+    $db->run(
+        "INSERT INTO credit_transactions (workspace_id, type, amount_cents, reason, created_at)
+         VALUES (?, 'grant', 5000, 'real top-up', ?)",
+        [$wsId, $now],
+    );
+    $db->run(
+        "INSERT INTO usage_events (workspace_id, run_id, job_id, provider, category, cost_cents, created_at)
+         VALUES (?, ?, 1, 'openai', 'ai_text', 42, ?)",
+        [$wsId, $realRun, $now],
+    );
+
+    return [$db, $wsId, $userId, $now];
+};
+
+/** Full-database fingerprint: every row of every table the seed can touch. */
+$demoFingerprint = static function (Database $db): string {
+    $tables = ['users', 'workspaces', 'workspace_users', 'accounts', 'account_metrics', 'assets',
+        'workflows', 'runs', 'jobs', 'posts', 'approvals', 'renders', 'publish_slots',
+        'slot_occurrences', 'usage_events', 'credit_transactions', 'trends', 'trend_config', 'events'];
+    $out = [];
+    foreach ($tables as $t) {
+        foreach ($db->all("SELECT * FROM {$t}") as $row) {
+            $out[] = $t . ':' . json_encode($row, JSON_THROW_ON_ERROR);
+        }
+    }
+    sort($out);
+
+    return hash('sha256', implode("\n", $out));
+};
+
+/** A media factory that writes real (tiny) files and reports what it wrote. */
+$demoMedia = new class implements \Kuyash\Demo\MediaFactory {
+    public function clip(string $target, int $seconds): ?array
+    {
+        return $this->write($target, 'video/mp4', (float) $seconds - 0.04, 1080, 1920);
+    }
+
+    public function still(string $target, int $index = 0): ?array
+    {
+        // distinct bytes per index, like the real factory's frame seek — two
+        // stills that hash the same are a collision under two different titles
+        return $this->write($target, 'image/jpeg', null, 1080, 1920, (string) $index);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function write(string $target, string $mime, ?float $duration, int $w, int $h, string $salt = ''): ?array
+    {
+        $bytes = str_repeat('x', 64) . $salt;
+        if (file_put_contents($target, $bytes) === false) {
+            return null;
+        }
+
+        return ['path' => $target, 'duration_s' => $duration, 'width' => $w, 'height' => $h,
+            'aspect' => '9:16', 'size_bytes' => strlen($bytes), 'sha256' => hash('sha256', $bytes),
+            'mime' => $mime];
+    }
+};
+
+/** Paths under a throwaway media root. */
+$demoPaths = static function (string $root): MediaPaths {
+    foreach (['asset', 'cache', 'render', 'work'] as $store) {
+        @mkdir($root . '/' . $store, 0775, true);
+    }
+
+    return new MediaPaths([
+        'asset' => $root . '/asset', 'cache' => $root . '/cache',
+        'render' => $root . '/render', 'work' => $root . '/work',
+    ]);
+};
+
+$demoNow = gmdate(NOW_ISO);
+
+// ── R1: reversibility ───────────────────────────────────────────────────────
+
+check('demo/r1: teardown restores the database to the byte it was seeded from', (static function () use (
+    $basePath, $demoWorld, $demoFingerprint, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1');
+    $before = $demoFingerprint($db);
+
+    $seed = new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia);
+    $seed->run($wsId, $demoNow);
+
+    // the demo really is there
+    $seeded = $demoFingerprint($db) !== $before
+        && (int) $db->one("SELECT COUNT(*) n FROM assets WHERE title LIKE '[SAMPLE]%'")['n'] === 10
+        && (int) $db->one('SELECT COUNT(*) n FROM runs')['n'] === 9
+        // …and the REAL rows are untouched WHILE it is there
+        && (int) $db->one("SELECT followers_count FROM accounts WHERE handle = '@real.channel'")['followers_count'] === 7
+        && (int) $db->one("SELECT COUNT(*) n FROM publish_slots WHERE time_hhmm = '09:00'")['n'] === 1;
+
+    $teardown = new \Kuyash\Demo\ShowcaseTeardown($db);
+    $teardown->run();
+
+    return $seeded
+        && $demoFingerprint($db) === $before
+        && $teardown->manifest()->isEmpty();
+})());
+
+check('demo/r1: every file the seed places is tracked and removed', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-files');
+
+    $seed = new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia);
+    $seed->run($wsId, $demoNow);
+
+    $tracked = $seed->manifest()->files();
+    $onDisk = array_merge(
+        glob($root . '/asset/*/*') ?: [],
+        glob($root . '/render/*/*') ?: [],
+    );
+    sort($tracked);
+    sort($onDisk);
+    $allTracked = $tracked === $onDisk && $tracked !== [];
+
+    (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+
+    return $allTracked
+        && (glob($root . '/asset/*/*') ?: []) === []
+        && (glob($root . '/render/*/*') ?: []) === [];
+})());
+
+check('demo/r1: a leftover media file from an earlier demo never silences the seed', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // A database replaced out of band (the visual gate wipes and re-creates one)
+    // leaves the previous demo's files behind under the same deterministic paths.
+    // The seed used to treat every one of those as occupied and skip the item —
+    // producing a library of nothing, a queue of nothing and a calendar of
+    // nothing, while still listing rows and reading like a success.
+    $root = tempDir('demo-r1-leftover');
+    $paths = $demoPaths($root);
+
+    [$first, $wsA] = $demoWorld($basePath, $demoNow);
+    (new \Kuyash\Demo\ShowcaseSeed($first, $paths, $demoMedia))->run($wsA, $demoNow);
+    $files = (new \Kuyash\Demo\SeedManifest($first))->files();
+    $stillThere = $files !== [] && array_reduce($files, static fn (bool $c, string $f): bool => $c && is_file($f), true);
+
+    // a brand-new database, the same media root, the same workspace id
+    [$second, $wsB] = $demoWorld($basePath, $demoNow);
+    $report = (new \Kuyash\Demo\ShowcaseSeed($second, $paths, $demoMedia))->run($wsB, $demoNow);
+
+    return $stillThere
+        && $wsA === $wsB
+        && ($report['counts']['assets'] ?? 0) === 10
+        && ($report['counts']['runs'] ?? 0) === 8
+        && $report['notes'] === [];
+})());
+
+check('demo/r1: a file a real asset row claims is never overwritten', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-claimed');
+    $paths = $demoPaths($root);
+
+    // find the path the seed WOULD use for its first clip, and hand it to a real
+    // asset row belonging to somebody else
+    (new \Kuyash\Demo\ShowcaseSeed($db, $paths, $demoMedia))->run($wsId, $demoNow);
+    $first = (new \Kuyash\Demo\SeedManifest($db))->files()[0];
+    (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+
+    @mkdir(dirname($first), 0775, true);
+    file_put_contents($first, 'someone-elses-bytes');
+    $db->run(
+        "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime,
+                             size_bytes, sha256, tags, status, created_at, updated_at)
+         VALUES (?, 'video', 'own', 'Not a demo clip', 'x.mp4', ?, 'video/mp4', 19, ?, '[]', 'ready', ?, ?)",
+        [$wsId, basename($first), str_repeat('a', 64), $demoNow, $demoNow],
+    );
+
+    $report = (new \Kuyash\Demo\ShowcaseSeed($db, $paths, $demoMedia))->run($wsId, $demoNow);
+
+    return file_get_contents($first) === 'someone-elses-bytes'
+        && ($report['counts']['assets'] ?? 0) === 9
+        && $report['notes'] !== [];
+})());
+
+check('demo/r1: seeding twice does not double anything', (static function () use (
+    $basePath, $demoWorld, $demoFingerprint, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-idem');
+    $paths = $demoPaths($root);
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $paths, $demoMedia))->run($wsId, $demoNow);
+    $once = $demoFingerprint($db);
+    $onceRows = (int) $db->one('SELECT COUNT(*) n FROM demo_seed_manifest')['n'];
+
+    // the second run is what bin/demo-seed.php does: undo, then seed again
+    (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+    (new \Kuyash\Demo\ShowcaseSeed($db, $paths, $demoMedia))->run($wsId, $demoNow);
+
+    return $demoFingerprint($db) === $once
+        && (int) $db->one('SELECT COUNT(*) n FROM demo_seed_manifest')['n'] === $onceRows;
+})());
+
+check('demo/r1: teardown also takes the calendar days the product itself added', (static function () use (
+    $basePath, $demoWorld, $demoFingerprint, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-cells');
+    $before = $demoFingerprint($db);
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    // the materializer runs on every worker tick and every plan page view, so a
+    // demo publishing time keeps growing new days AFTER the seed finished
+    $occ = new OccurrenceRepository($db);
+    $later = gmdate(NOW_ISO, (int) strtotime($demoNow) + 8 * 86400);
+    (new OccurrenceMaterializer($occ, new SlotResolver()))->materialize(
+        $wsId,
+        'Europe/Istanbul',
+        (new SlotRepository($db))->listForWorkspace($wsId),
+        $later,
+    );
+    $grew = (int) $db->one('SELECT COUNT(*) n FROM slot_occurrences')['n'] > 8;
+
+    (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+
+    // the REAL time's own new days are not demo rows, so they legitimately
+    // remain — the fingerprint check is therefore scoped to the demo's slots
+    $demoCellsGone = (int) $db->one(
+        'SELECT COUNT(*) n FROM slot_occurrences o
+         WHERE NOT EXISTS (SELECT 1 FROM publish_slots s WHERE s.id = o.slot_id)',
+    )['n'] === 0;
+
+    return $grew && $demoCellsGone && $demoFingerprint($db) !== $before
+        && (int) $db->one('SELECT COUNT(*) n FROM publish_slots')['n'] === 1;
+})());
+
+check('demo/r1: a reused rowid is never mistaken for the demo row that freed it', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // SQLite reuses a freed rowid unless the column is AUTOINCREMENT, and none of
+    // these are. Delete a [SAMPLE] clip from the Library screen, upload a real
+    // one, and the real one can land on the freed id — after which teardown,
+    // reading the manifest, would delete the operator's own file.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-rowid');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $manifest = new \Kuyash\Demo\SeedManifest($db);
+    // the LAST asset: a still, which no calendar day and no run points at — the
+    // same row the Library screen would let a person delete outright
+    $assetIds = $manifest->rowIds('assets');
+    $victim = $assetIds[count($assetIds) - 1];
+
+    // the operator deletes that demo clip, then uploads their own
+    $db->run('DELETE FROM assets WHERE id = ?', [$victim]);
+    $later = gmdate(NOW_ISO, (int) strtotime($demoNow) + 3600);
+    $db->run(
+        "INSERT INTO assets (id, workspace_id, kind, type, title, original_filename, stored_name, mime,
+                             size_bytes, sha256, tags, status, created_at, updated_at)
+         VALUES (?, ?, 'video', 'own', 'My real upload', 'mine.mp4', ?, 'video/mp4', 5, ?, '[]', 'ready', ?, ?)",
+        [$victim, $wsId, str_repeat('9', 32) . '.mp4', str_repeat('b', 64), $later, $later],
+    );
+
+    $result = (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+    $survivor = $db->one('SELECT title FROM assets WHERE id = ?', [$victim]);
+
+    return $survivor !== null
+        && (string) $survivor['title'] === 'My real upload'
+        && $result['kept'] !== []
+        && in_array("assets #{$victim}", $result['kept'], true);
+})());
+
+check('demo/r1: a pinned run is left WHOLE and everything else still comes out', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // The first version ran one all-or-nothing transaction: the CLI printed
+    // "those runs stay, everything else can still be removed" and then the
+    // blocked DELETE threw and nothing at all came out. A half-stripped run with
+    // its jobs gone is worse than either outcome, so the pinned run keeps its
+    // children — and keeps its manifest entries, so a later teardown finishes it.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-partial');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $manifest = new \Kuyash\Demo\SeedManifest($db);
+    $pinned = $manifest->rowIds('runs')[0];
+    $others = count($manifest->rowIds('runs')) - 1;
+    $pinnedJobs = (int) $db->one('SELECT COUNT(*) n FROM jobs WHERE run_id = ?', [$pinned])['n'];
+
+    // the worker sweeps an aged calendar day and appends a guardrail line
+    (new EventLog($db))->record($wsId, 'warn', 'guardrail', 'plan.slot_missed', [], $pinned);
+
+    $result = (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+
+    $pinnedIntact = $db->one('SELECT id FROM runs WHERE id = ?', [$pinned]) !== null
+        && (int) $db->one('SELECT COUNT(*) n FROM jobs WHERE run_id = ?', [$pinned])['n'] === $pinnedJobs;
+    $othersGone = (int) $db->one(
+        "SELECT COUNT(*) n FROM runs r JOIN demo_seed_manifest m ON m.table_name = 'runs' AND m.row_id = r.id",
+    )['n'] === 1;
+    // …and it is still tracked, so a second pass can finish once the pin is gone
+    $stillTracked = in_array("runs #{$pinned}", $result['kept'], true);
+
+    return $others > 0 && $pinnedIntact && $othersGone && $stillTracked
+        && ($result['rows']['assets'] ?? 0) > 0;
+})());
+
+check('demo/r1: an event on a demo run is reported as a blocker, not hit at delete time', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-block');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $runId = (int) $db->one(
+        "SELECT row_id FROM demo_seed_manifest WHERE table_name = 'runs' ORDER BY row_id LIMIT 1",
+    )['row_id'];
+
+    $clean = (new \Kuyash\Demo\ShowcaseTeardown($db))->blockers() === [];
+
+    // the audit log is append-only: a row here can never be taken back, which is
+    // exactly why the seed writes none and why teardown says so up front
+    (new EventLog($db))->record($wsId, 'info', 'transition', 'run.started', [], $runId);
+    $reported = (new \Kuyash\Demo\ShowcaseTeardown($db))->blockers();
+
+    return $clean
+        && count($reported) === 1
+        && str_contains($reported[0], "run #{$runId}")
+        && str_contains($reported[0], 'append-only');
+})());
+
+check('demo/r1: the seed writes nothing into the append-only audit log', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-events');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    return (int) $db->one('SELECT COUNT(*) n FROM events')['n'] === 0;
+})());
+
+// ── R2: inertia ─────────────────────────────────────────────────────────────
+
+check('demo/r2: nothing the seed writes is claimable by the worker', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r2-claim');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    // the claim loop takes 'queued' rows and nothing else
+    return (int) $db->one("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued', 'processing')")['n'] === 0
+        && (int) $db->one("SELECT COUNT(*) n FROM jobs WHERE status = 'awaiting_approval'")['n'] === 5;
+})());
+
+check('demo/r2: a plan tick over the seeded calendar produces nothing and closes nothing', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow, $p24runner
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r2-plan');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $runsBefore = (int) $db->one('SELECT COUNT(*) n FROM runs')['n'];
+    $eventsBefore = (int) $db->one('SELECT COUNT(*) n FROM events')['n'];
+
+    $engine = new Engine($db, new EventLog($db), new WorkflowValidator(), static fn (): string => $demoNow);
+    $totals = $p24runner($db, $engine)->tick($demoNow);
+
+    // 'started' is the only path in the product that spends money on its own,
+    // and 'swept' is the one that cancels runs and appends guardrail events
+    return $totals['started'] === 0
+        && $totals['swept'] === 0
+        && (int) $db->one('SELECT COUNT(*) n FROM runs')['n'] === $runsBefore
+        && (int) $db->one('SELECT COUNT(*) n FROM events')['n'] === $eventsBefore;
+})());
+
+check('demo/r2: no automatic calendar day is ever left open for the producer to take', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r2-auto');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    // dueAuto() = mode 'auto' AND status 'open' AND run_id IS NULL
+    $open = (int) $db->one(
+        "SELECT COUNT(*) n FROM slot_occurrences WHERE mode = 'auto' AND status = 'open' AND run_id IS NULL",
+    )['n'];
+    // …and the automatic time is switched off, so the materializer creates no more
+    $paused = (int) $db->one("SELECT COUNT(*) n FROM publish_slots WHERE mode = 'auto' AND enabled = 1")['n'];
+    $hasAuto = (int) $db->one("SELECT COUNT(*) n FROM slot_occurrences WHERE mode = 'auto'")['n'] > 0;
+
+    return $open === 0 && $paused === 0 && $hasAuto;
+})());
+
+check('demo/r2: demo publishing never spends a real budget or a real daily cap', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r2-cap');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    // month-to-date is the window the budget cap is enforced against; the real
+    // 42-cent charge is the only thing that may be inside it
+    $mtd = (int) $db->one(
+        'SELECT COALESCE(SUM(cost_cents), 0) c FROM usage_events WHERE workspace_id = ? AND created_at >= ?',
+        [$wsId, gmdate('Y-m-01\T00:00:00\Z', (int) strtotime($demoNow))],
+    )['c'];
+
+    // the per-account daily cap counts today's published posts on that account
+    $realAccount = (int) $db->one("SELECT id FROM accounts WHERE handle = '@real.channel'")['id'];
+    $today = (new PublishCounter($db))->publishedToday($wsId, $demoNow, $realAccount);
+
+    // …and no demo post is attributed to ANY connected channel. Provenance is not
+    // the property that matters here: connectedFor() — which drives the publish
+    // fan-out AND both daily-cap loops — filters on `status`, not on whether the
+    // channel is real. A mock-but-connected row is still live machinery.
+    $onConnected = (int) $db->one(
+        "SELECT COUNT(*) n FROM posts p JOIN accounts a ON a.id = p.account_id
+         WHERE a.status = 'connected'",
+    )['n'];
+    $mockConnected = (int) $db->one("SELECT id FROM accounts WHERE handle = '@mock.connected'")['id'];
+    $mockToday = (new PublishCounter($db))->publishedToday($wsId, $demoNow, $mockConnected);
+
+    return $mtd === 42 && $today === 0 && $onConnected === 0 && $mockToday === 0;
+})());
+
+check('demo/r2: no auto-approval record is written, so the auto cap is never touched', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // AutoApprovalGate::autoApprovalsToday() counts auto approvals for the
+    // workspace across the UTC day against the real daily_post_cap. One seeded
+    // row took a live auto-mode workspace from 2-of-2 to 3-of-2 — and when that
+    // counter trips, the gate writes `guardrail.daily_cap_reached` with the
+    // inflated number into `events`, which is APPEND-ONLY. A seed that refuses
+    // to write the audit log must not induce the product to write a false line
+    // into it either.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r2-autocap');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    // Neither mode. The `auto` row spent a live cap; the `manual` row that first
+    // replaced it fabricated a named person's decision. Both are absent.
+    return (int) $db->one('SELECT COUNT(*) n FROM approvals')['n'] === 0;
+})());
+
+check('demo/r2: not one charge lands in the month the budget cap is enforced against', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r2-month');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $monthStart = gmdate('Y-m-01\T00:00:00\Z', (int) strtotime($demoNow));
+
+    $thisMonth = (int) $db->one(
+        "SELECT COUNT(*) n FROM usage_events u
+         JOIN demo_seed_manifest m ON m.table_name = 'usage_events' AND m.row_id = u.id
+         WHERE u.created_at >= ?",
+        [$monthStart],
+    )['n'];
+
+    // …and every charge is dated WITH the job that incurred it. The first
+    // version scattered them across previous months and attached them to jobs on
+    // runs still awaiting approval today — the screen then showed a run paying
+    // for AI text three months before that run existed.
+    $beforeItsJob = (int) $db->one(
+        "SELECT COUNT(*) n FROM usage_events u
+         JOIN demo_seed_manifest m ON m.table_name = 'usage_events' AND m.row_id = u.id
+         JOIN jobs j ON j.id = u.job_id
+         WHERE u.created_at <> j.created_at",
+    )['n'];
+
+    return $thisMonth === 0 && $beforeItsJob === 0
+        && (int) $db->one("SELECT COUNT(*) n FROM usage_events u
+             JOIN demo_seed_manifest m ON m.table_name = 'usage_events' AND m.row_id = u.id")['n'] > 0;
+})());
+
+// ── R3: honesty ─────────────────────────────────────────────────────────────
+
+check('demo/r3: every operator-visible string the seed writes carries the marker', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-mark');
+    $mark = \Kuyash\Demo\ShowcaseSeed::MARK;
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $manifest = new \Kuyash\Demo\SeedManifest($db);
+
+    // titles: the marker leads the string on purpose — an ellipsis eats the END
+    // of a title, so a trailing chip is the part that vanishes at 375px
+    foreach ($manifest->rowIds('assets') as $id) {
+        $title = (string) $db->one('SELECT title FROM assets WHERE id = ?', [$id])['title'];
+        if (!str_starts_with($title, $mark)) {
+            return false;
+        }
+    }
+
+    // captions and hashtags: the text that would actually go out if somebody
+    // approved a demo card by mistake
+    $seen = 0;
+    foreach ($manifest->rowIds('jobs') as $id) {
+        $row = $db->one('SELECT type, result_json FROM jobs WHERE id = ?', [$id]);
+        $result = json_decode((string) $row['result_json'], true);
+        foreach ((array) ($result['captions'] ?? []) as $caption) {
+            $seen++;
+            if (!str_starts_with((string) $caption, $mark)) {
+                return false;
+            }
+        }
+        foreach ((array) ($result['hashtags'] ?? []) as $tag) {
+            $seen++;
+            if ($tag === '#sample') {
+                continue;
+            }
+        }
+        if (($result['hashtags'] ?? null) !== null && ($result['hashtags'][0] ?? '') !== '#sample') {
+            return false;
+        }
+    }
+
+    // …and the charge feed, whose only free-text field is the provider name
+    foreach ($manifest->rowIds('usage_events') as $id) {
+        $provider = (string) $db->one('SELECT provider FROM usage_events WHERE id = ?', [$id])['provider'];
+        if (!str_starts_with($provider, $mark)) {
+            return false;
+        }
+    }
+
+    return $seen > 0 && $manifest->rowIds('usage_events') !== [];
+})());
+
+check('demo/r3: a demo channel is never connected, and never carries a follower number', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-acct');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $manifest = new \Kuyash\Demo\SeedManifest($db);
+
+    $ids = $manifest->rowIds('accounts');
+    if ($ids === []) {
+        return false;
+    }
+    foreach ($ids as $id) {
+        $row = $db->one('SELECT status, followers_count, external_ref FROM accounts WHERE id = ?', [$id]);
+        // NOT 'connected' is a safety property, not a cosmetic one: publishing
+        // fans out to every connected account, so a connected mock row would
+        // attach itself to the operator's next real publish and fail it.
+        // followers_count IS NULL is what makes the account card mark every
+        // figure it derives with its "sample" chip.
+        if ((string) $row['status'] === 'connected'
+            || $row['followers_count'] !== null
+            || $row['external_ref'] !== null
+        ) {
+            return false;
+        }
+    }
+
+    // and the real channel is exactly as it was
+    $real = $db->one("SELECT status, followers_count FROM accounts WHERE handle = '@real.channel'");
+
+    return (string) $real['status'] === 'connected' && (int) $real['followers_count'] === 7;
+})());
+
+check('demo/r3: a stored duration is what the factory measured, never what was asked for', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-dur');
+
+    // the stub reports 0.04s less than the request; if the seed stored its own
+    // intention instead, every duration would come back a whole number
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    $rows = $db->all(
+        "SELECT a.duration_s FROM assets a
+         JOIN demo_seed_manifest m ON m.table_name = 'assets' AND m.row_id = a.id
+         WHERE a.kind = 'video'",
+    );
+    if ($rows === []) {
+        return false;
+    }
+    foreach ($rows as $row) {
+        if (abs(((float) $row['duration_s']) - round((float) $row['duration_s'])) < 0.001) {
+            return false;
+        }
+    }
+
+    // and the compliance row repeats the measurement rather than a target
+    $verdict = $db->one(
+        "SELECT result_json FROM jobs j
+         JOIN demo_seed_manifest m ON m.table_name = 'jobs' AND m.row_id = j.id
+         WHERE j.type = 'compliance_check' LIMIT 1",
+    );
+    $decoded = json_decode((string) $verdict['result_json'], true);
+    $stated = (float) $decoded['checks']['format']['duration_s'];
+    $asset = (float) $db->one(
+        "SELECT a.duration_s FROM assets a
+         JOIN demo_seed_manifest m ON m.table_name = 'assets' AND m.row_id = a.id
+         WHERE a.kind = 'video' ORDER BY a.id LIMIT 1",
+    )['duration_s'];
+
+    return abs($stated - $asset) < 0.001;
+})());
+
+check('demo/r3: a stored slop score is what the scorer measured, never a literal', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // Same rule the durations follow, for the same reason: a number on a
+    // compliance card cannot carry the [SAMPLE] marker, so it has to be true.
+    // The seed used to write hardcoded 0.11-0.24 literals, which drifted from
+    // what the product's own scorer computes over the very captions the card
+    // shows — by up to 0.06 on the seeded set.
+    //
+    // The assertion is `history_runs`, not the score itself. A score cannot be
+    // re-measured after the fact (each run is judged against the history that
+    // existed WHEN it ran — which is how production works too), but the history
+    // SIZE is a fingerprint of exactly that: the Nth seeded run must have seen
+    // the N runs seeded before it. A literal cannot produce that sequence.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-slop');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    $seen = [];
+    foreach ($db->all(
+        "SELECT j.run_id, j.result_json FROM jobs j
+         JOIN demo_seed_manifest m ON m.table_name = 'jobs' AND m.row_id = j.id
+         WHERE j.type = 'compliance_check' ORDER BY j.run_id ASC",
+    ) as $row) {
+        $slop = json_decode((string) $row['result_json'], true)['checks']['slop'] ?? null;
+        if (!is_array($slop) || !isset($slop['score'], $slop['history_runs'])
+            || $slop['score'] < 0.0 || $slop['score'] > 1.0
+        ) {
+            return false;
+        }
+        $seen[] = (int) $slop['history_runs'];
+    }
+
+    // the fixture's own run carries only a publish job, so it adds no history
+    $src = (string) file_get_contents($basePath . '/src/Demo/ShowcaseSeed.php');
+
+    return $seen === [0, 1, 2, 3, 4, 5, 6, 7]
+        && str_contains($src, 'SlopScorer($this->db))->score(')
+        && preg_match("/'history_runs' => \\d/", $src) !== 1
+        // …and the thresholds come from the policy, not from a copy of it
+        && str_contains($src, 'CompliancePolicy::SLOP_WARN')
+        && str_contains($src, 'CompliancePolicy::SLOP_BLOCK');
+})());
+
+check('demo/r3: a mock publish is never recorded as money', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-spend');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    // mock work is never real spend (the usage_events rule) — and the demo
+    // publishes are all mock
+    $publishCharges = (int) $db->one("SELECT COUNT(*) n FROM usage_events WHERE category = 'publish'")['n'];
+    // every seeded ledger line names itself in the reason it is listed under
+    $unmarked = (int) $db->one(
+        "SELECT COUNT(*) n FROM credit_transactions c
+         JOIN demo_seed_manifest m ON m.table_name = 'credit_transactions' AND m.row_id = c.id
+         WHERE c.reason NOT LIKE ? ",
+        [\Kuyash\Demo\ShowcaseSeed::MARK . '%'],
+    )['n'];
+    // and every demo post is a mock one
+    $realLooking = (int) $db->one("SELECT COUNT(*) n FROM posts WHERE external_post_id NOT LIKE 'zp\\_%' ESCAPE '\\'")['n'];
+
+    return $publishCharges === 0 && $unmarked === 0 && $realLooking === 0;
+})());
+
+check('demo/r3: a finished publish reports counts the digest can actually read', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // The digest renders "published to {published} of {posts} account(s)" from
+    // this result. A boolean where a count belongs rendered as "1 of 0" — a
+    // sentence the product itself cannot produce, on the compliance report.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-publish');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    $rows = $db->all(
+        "SELECT j.result_json FROM jobs j
+         JOIN demo_seed_manifest m ON m.table_name = 'jobs' AND m.row_id = j.id
+         WHERE j.type = 'publish'",
+    );
+    if ($rows === []) {
+        return false;
+    }
+    foreach ($rows as $row) {
+        $r = json_decode((string) $row['result_json'], true);
+        if (!is_int($r['posts'] ?? null) || !is_int($r['published'] ?? null)
+            || $r['published'] > $r['posts'] || $r['posts'] < 1
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+})());
+
+check('demo/r3: no approval record is fabricated, in either mode', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // A surface that renders only a decision, an identity and a timestamp has
+    // nowhere to put the [SAMPLE] marker — so it must not be filled at all. The
+    // run page renders a manual record as "Approved by you · <real email> ·
+    // <time>", and nobody approved these runs. Writing `manual` instead of
+    // `auto` was the WRONG fix: it turned a policy-stamped agent record into a
+    // fabricated personal one, which compliance rules forbid by name.
+    //
+    // Deliberately NOT a shape assertion. The 0007 CHECK already guarantees the
+    // shape, and a fabricated record satisfies it perfectly — which is exactly
+    // why the earlier version of this test passed while the defect was live.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-appr');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    return (int) $db->one('SELECT COUNT(*) n FROM approvals')['n'] === 0
+        && !str_contains((string) file_get_contents($basePath . '/src/Demo/ShowcaseSeed.php'), "insert('approvals'");
+})());
+
+check('demo/r3: no ledger row is written, because a balance cannot carry a marker', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // credit_transactions.reason CAN hold the marker, so the ledger list would
+    // read honestly — but balanceCents() and totals() are lifetime SUMs with no
+    // date filter, and a headline balance has nowhere to put it. On the dev
+    // workspace six seeded rows were 72% of displayed lifetime spend.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-ledger');
+    $before = (int) $db->one('SELECT COALESCE(SUM(amount_cents), 0) c FROM credit_transactions')['c'];
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    return (int) $db->one('SELECT COALESCE(SUM(amount_cents), 0) c FROM credit_transactions')['c'] === $before
+        && (new \Kuyash\Demo\SeedManifest($db))->rowIds('credit_transactions') === [];
+})());
+
+check('demo/r3: the charge feed reads newest-first, the way the screen orders it', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    // UsageRepository::recentCharges() is `ORDER BY id DESC` — INSERTION order,
+    // not timestamp. Seeding the newer month first therefore listed "recent"
+    // charges oldest-first on /usage. Row order and clock order have to agree.
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-order');
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+
+    $rows = $db->all(
+        "SELECT u.created_at FROM usage_events u
+         JOIN demo_seed_manifest m ON m.table_name = 'usage_events' AND m.row_id = u.id
+         ORDER BY u.id DESC",
+    );
+    if (count($rows) < 2) {
+        return false;
+    }
+    $previous = null;
+    foreach ($rows as $row) {
+        $at = (string) $row['created_at'];
+        if ($previous !== null && $at > $previous) {
+            return false;
+        }
+        $previous = $at;
+    }
+
+    return true;
+})());
+
+check('demo/showcase: the seed only ever inserts — a real row is never rewritten', (static function () use ($basePath): bool {
+    // The reason is structural: an UPDATE to a pre-existing row cannot be undone
+    // from a manifest that records ids. Everything outside the demo's own rows
+    // is therefore read-only, including the workspace's timezone, approval mode,
+    // caps and kill switch.
+    $src = (string) file_get_contents($basePath . '/src/Demo/ShowcaseSeed.php');
+    preg_match_all('/UPDATE\s+(\w+)\s+SET/i', $src, $m);
+    foreach ($m[1] as $table) {
+        // the only two updates are on rows this seed created moments earlier:
+        // its own publishing time, and its own runs' planned instant
+        if (!in_array($table, ['publish_slots', 'runs'], true)) {
+            return false;
+        }
+    }
+
+    return $m[1] !== [] && !preg_match('/UPDATE\s+workspaces\s+SET/i', $src);
 })());
 
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)

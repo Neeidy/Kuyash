@@ -8,6 +8,11 @@
 #   tools/visual/gate.sh --only /dashboard        # self-test → 6 PNGs
 #   tools/visual/gate.sh --out storage/visual/baseline
 #
+# VISUAL_DEMO=1 additionally runs bin/demo-seed.php against the isolated DB, so
+# the screenshots cover the case-study showcase (a full library, a used calendar,
+# a busy approval queue) instead of the sparse fixture. Same isolation: the demo
+# seed writes into the visual DB, never the real one.
+#
 # Never touches the real dev DB: a dedicated DB_PATH + APP_ENV=dev keeps it
 # isolated, and the session cookie non-Secure so headless http login works.
 set -euo pipefail
@@ -25,6 +30,10 @@ export DB_PATH="$DB_FILE"
 export APP_ENV="dev"
 export APP_DEBUG="false"
 export OPENAI_MOCK="true"
+# The gate mocked every other provider but inherited ZERNIO_MOCK from .env — so
+# an isolated, throwaway visual run was one publish away from the real provider.
+# Caught by bin/demo-seed.php's live-publish precondition refusing to seed here.
+export ZERNIO_MOCK="true"
 export STORAGE_DRIVER="local"
 export APP_URL="http://127.0.0.1:${PORT}"
 export VISUAL_TEST_EMAIL="${VISUAL_TEST_EMAIL:-visual@kuyash.local}"
@@ -36,6 +45,14 @@ rm -f "$DB_FILE" "$DB_FILE-wal" "$DB_FILE-shm"
 echo "[gate] migrate + seed"
 "$PHP_BIN" bin/migrate.php >/dev/null
 "$PHP_BIN" bin/visual-seed.php
+if [ "${VISUAL_DEMO:-}" = "1" ]; then
+  echo "[gate] + showcase demo seed (isolated DB)"
+  # the isolated DB is a throwaway fixture: its workspace is Manual and its
+  # publishing is mocked, so both of the seed's preconditions are satisfied
+  # honestly rather than waived.
+  "$PHP_BIN" bin/demo-seed.php --yes
+  export VISUAL_DEMO   # shot.mjs reads it to include "demo": true screens
+fi
 
 echo "[gate] start dev server on 127.0.0.1:${PORT}"
 "$PHP_BIN" -S "127.0.0.1:${PORT}" -t public public/index.php >/dev/null 2>&1 &

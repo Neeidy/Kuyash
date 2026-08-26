@@ -37,6 +37,10 @@ const opt = (name, def) => {
 const BASE_URL = (opt('--base-url', process.env.VISUAL_BASE_URL || 'http://127.0.0.1:8099')).replace(/\/$/, '');
 const OUT_DIR = opt('--out', join(process.cwd(), 'storage/visual/run'));
 const ROUTES_FILE = opt('--routes', join(HERE, 'routes.json'));
+/* Screens marked "demo": true exist only after bin/demo-seed.php has run
+   (VISUAL_DEMO=1 in gate.sh). Capturing one without it would 404 on an id that
+   was never seeded, so the plain gate skips them. */
+const WITH_DEMO = process.env.VISUAL_DEMO === '1';
 const ONLY = opt('--only', null); // a single path like /dashboard for self-test
 const EMAIL = process.env.VISUAL_TEST_EMAIL || 'visual@kuyash.local';
 const PASSWORD = process.env.VISUAL_TEST_PASSWORD || 'visual-dev-only-password';
@@ -45,6 +49,7 @@ const DEBUG_PORT = Number(opt('--port', '0')) || 9333;
 
 const cfg = JSON.parse(readFileSync(ROUTES_FILE, 'utf8'));
 let screens = cfg.screens;
+if (!WITH_DEMO) screens = screens.filter((s) => s.demo !== true);
 if (ONLY) screens = screens.filter((s) => s.path === ONLY);
 if (screens.length === 0) {
   console.error(`No screens matched (--only ${ONLY}).`);
@@ -205,6 +210,31 @@ try {
     );
   }
 
+  /**
+   * Screenshot with animations OFF.
+   *
+   * WHY: the dashboard KPI is a count-up (public/assets/js/motion.js) that
+   * animates 0 → N over --dur-count (1000ms) and prints `toFixed(0)`, which
+   * ROUNDS. The 450ms settle below lands inside the window where 7 still prints
+   * as "6" — so every dashboard PNG carried a KPI one short of the truth while
+   * the DB, the server HTML, the SSE payload and a real browser all said 7.
+   * A wrong number in a screenshot is not a cosmetic problem: the same count-up
+   * drives the remaining-budget DOLLAR figure, so the first capture of a
+   * workspace with a budget cap would have shown a plausible, wrong amount.
+   *
+   * `prefers-reduced-motion: reduce` zeroes every duration in base.css AND makes
+   * countUp return before it touches the DOM, so the page renders its final
+   * values immediately. That is a truer screenshot than a timing race, and it is
+   * the accessibility path a real user can be in anyway.
+   */
+  async function disableAnimations() {
+    await cdp.send(
+      'Emulation.setEmulatedMedia',
+      { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] },
+      sessionId,
+    );
+  }
+
   async function shoot(name, width, locale) {
     errors = [];
     await go(screenPath(name));
@@ -224,6 +254,9 @@ try {
   function screenPath(name) {
     return byName[name];
   }
+
+  // animations off for every capture from here on (see disableAnimations)
+  await disableAnimations();
 
   const results = [];
 
