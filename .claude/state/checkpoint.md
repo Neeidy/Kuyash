@@ -7,7 +7,7 @@
 ## Son güncelleme
 
 - Tarih: 2026-08-26
-- Güncelleyen: Claude (**FAZ 25 KAPALI + KAPANIŞ TURU BİTTİ — 1059 PASS / 0 FAIL, hepsi push'lu.**
+- Güncelleyen: Claude (**FAZ 25 KAPALI + KAPANIŞ TURU BİTTİ — 1065 PASS / 0 FAIL, hepsi push'lu.**
   Faz 25 (onay adımında caption+hashtag düzenleme) `447451c`'ye kadar commit+push edildi.
   Sonrasında kapanış turu: **dev DB 0017'ye taşındı** (Faz 24 takvimi o DB'de ÖLÜYDÜ),
   panelin iki yan kartına **üçüncü durum** eklendi (okuma patlarsa "hiç yok" ifadesini
@@ -20,8 +20,8 @@
 ## Mevcut durum (kaldığımız yer)
 
 - Aşama: **Faz 25 KAPALI. Kapanış turu da bitti. Working tree temiz, origin/main senkron.**
-  **1059 PASS / 0 FAIL** · görsel gate 93 PNG / 0 console error / 0 taşma ·
-  14 route **gövde-temiz** 200 · lang paritesi 825=825 · secret taraması temiz.
+  **1065 PASS / 0 FAIL** · görsel gate 93 PNG / 0 console error / 0 taşma ·
+  14 route **gövde-temiz** 200 · lang paritesi 828=828 · secret taraması temiz.
 - **Dev DB artık 0017.** Faz 24 oturum logu "0017" diyordu ama gerçek DB 0016'daydı —
   `slot_occurrences` yoktu, yani haftalık takvim o veritabanında çalışmıyordu ve
   /dashboard SLOT'U OLAN workspace'te 500 veriyordu. Yedek:
@@ -31,6 +31,19 @@
   plan `['unavailable'=>true]` (null "planı yok" demek, sıfır ise ölçülmemiş sayı),
   hesaplar `null` (boş liste "hiç hesabın yok" demek). Kalan okumalar (kpis, activeRuns,
   awaiting, nextPublish, business) PANELİN KENDİSİ — onlar sesli patlamaya devam etmeli.
+- **Kapanış gate'lerinin bulduğu ve kapatılanlar:** (1) `demo-seed` 3 saniyelik bir dosyaya
+  **22.0s uydurmuştu** — o sayı caption değil, compliance'ın 15-45sn bandını ONA göre
+  kontrol ettiği değer; artık ffmpeg ile klip ÜRETİLİYOR ve `MediaProbe` ile ÖLÇÜLÜYOR.
+  (2) `health.php` argv'deki HERHANGİ bir host'a şifre POST edebiliyordu → sadece
+  http/https, loopback dışında https zorunlu. (3) `/accounts` her workspace'e
+  "onaylananlar hemen yayınlanır" diyordu — planı OLANA da; üçüncü durum eklendi.
+  (4) `demo-seed` "idempotent" değildi: worker duruksa her çağrı yeni run başlatıyordu
+  (gerçek üretim sağlayıcılarına para harcayarak). (5) Hata durumları boş durumlardan
+  görsel olarak ayrıldı. (6) **Compliance'ın iptal ettiği bir run'ın günü ASLA
+  temizlenemiyordu** (`cancelRun` "already decided" → "çok geç") — o tarih kalıcı
+  kayıptı; artık bitmiş run'ın günü boşaltılabiliyor, uçuştaki yayın hâlâ reddediliyor.
+- **Smoke artıklarım temizlendi:** 31 Ağustos'a sabitlenmiş GERÇEK yayın iptal edildi;
+  mock (`zp_`) 3 post silindi (gerçek günlük cap'i tüketiyorlardı → bugün 0).
 - **Canlı smoke (yayın MOCK):** compliance 3sn klibi 15-45sn bandına karşı bloklardı
   (dürüst gerekçe + 2 denetim satırı); slop 0.6452 → warn → otomatik onay REDDETTİ,
   insana bıraktı; onay kayıtları `auto/decided_by=NULL/policy` ve `manual/decided_by=2/policy=NULL`;
