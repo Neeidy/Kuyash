@@ -135,7 +135,9 @@ foreach ($clips as $clip) {
                              sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at, storage_disk)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [$ws, 'video', 'own',
-         sprintf('[SAMPLE] Demo clip — %ss vertical test footage', $m['duration_s'] === null ? '?' : (string) (int) round($m['duration_s'])),
+         // duration FIRST: a calendar cell shows ~13 characters, and a shared
+         // "[SAMPLE] Demo clip — " prefix made every option read identically.
+         sprintf('[SAMPLE] %ss demo clip — vertical test footage', $m['duration_s'] === null ? '?' : (string) (int) round($m['duration_s'])),
          'preview.mp4', $clip['name'], 'video/mp4', $size, $sha,
          $m['duration_s'], $m['width'], $m['height'], $m['aspect'], '[]', 'ready', $now, $now, 'local'],
     );

@@ -611,7 +611,7 @@ return [
     'accounts.subtitle' => 'Your connected channels. Kuyash keeps only a link to each account and its health — never your password.',
     'accounts.publishing_mock' => 'Ready to publish',
     'accounts.next_scheduled' => 'Next scheduled publish:',
-    'accounts.nothing_scheduled' => 'nothing scheduled — approved renders publish immediately.',
+    'accounts.nothing_scheduled' => 'nothing scheduled — approved videos go out as soon as they are ready.',
     'accounts.nothing_scheduled_planned' => 'nothing queued right now — approved videos go out at your weekly publishing times.',
     'accounts.run_at' => 'run #{run} at',
     'accounts.connect_account' => 'Connect an account',

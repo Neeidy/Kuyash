@@ -188,7 +188,10 @@ $cellLabel = static fn (string $state): string => View::t(match ($state) {
                    day pointing at it with no skip_reason, and the cell showed a
                    bare red "Stopped" with nothing to explain it. The day says
                    what it knows and where to look, rather than nothing. */ ?>
-          <p class="cell__note muted"><?= View::t('plan.reason_stopped_unknown') ?></p>
+          <p class="cell__note muted"><?= View::t('plan.reason_stopped_unknown') ?><?php if ($cell['run_id'] !== null): ?>
+            <?php /* the sentence says "open the run", so the run is one click
+                     away rather than something to go hunting for */ ?>
+            <a href="/runs/<?= (int) $cell['run_id'] ?>"><?= View::t('common.view_run') ?></a><?php endif; ?></p>
           <?php elseif ($cell['state'] === PlanBoard::PUBLISHED && $cell['post_count'] > 0): ?>
           <p class="cell__note muted"><?= View::t('plan.published_targets', ['done' => $cell['published_count'], 'total' => $cell['post_count']]) ?></p>
           <?php elseif ($cell['state'] === PlanBoard::AUTO_WAITING): ?>

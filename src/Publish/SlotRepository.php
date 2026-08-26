@@ -31,11 +31,6 @@ final class SlotRepository
     }
 
     /**
-     * Slots for the picker/settings, ordered as a week reads.
-     *
-     * @return list<array<string, mixed>>
-     */
-    /**
      * Does this workspace publish on a schedule at all?
      *
      * A screen that says "approved renders publish immediately" is making a
@@ -52,6 +47,11 @@ final class SlotRepository
         return (int) ($row['n'] ?? 0) > 0;
     }
 
+    /**
+     * Slots for the picker/settings, ordered as a week reads.
+     *
+     * @return list<array<string, mixed>>
+     */
     public function listFor(WorkspaceContext $ctx, bool $enabledOnly = false): array
     {
         return $this->listForWorkspace($ctx->id(), $enabledOnly);

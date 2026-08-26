@@ -10827,6 +10827,46 @@ check('fix/plan: a day whose run compliance cancelled can be cleared and reused'
     return (string) $after['status'] === 'open' && $after['run_id'] === null;
 })());
 
+check('fix/plan: "publishes immediately" is only said where no publishing time exists', (static function () use ($basePath, $argonHash): bool {
+    // The predicate behind the /accounts banner. A PAUSED slot must read as no
+    // plan, because a paused slot holds nothing — and another workspace's slot
+    // must not make this one look scheduled.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'slots-has@x.com', $argonHash, 'Slots has');
+    [, $other] = seedUser($db, 'slots-other@x.com', $argonHash, 'Slots other');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $now = gmdate(NOW_ISO);
+    $slots = new SlotRepository($db);
+
+    $none = $slots->hasAny($ctx);
+
+    // a neighbour's publishing time must not count as ours
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 1, '09:00', 1, 'manual', ?, ?)",
+        [$other, $now, $now],
+    );
+    $stillNone = $slots->hasAny($ctx);
+
+    // a PAUSED time of our own holds nothing, so it is not a plan either
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 2, '10:00', 0, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $paused = $slots->hasAny($ctx);
+
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 3, '11:00', 1, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $enabled = $slots->hasAny($ctx);
+
+    return $none === false && $stillNone === false && $paused === false && $enabled === true;
+})());
+
 check('fix/plan: a day that actually PUBLISHED can never be cleared', (static function () use ($basePath, $argonHash, $view): bool {
     // `Nodes::RUN_TERMINAL` counts `completed`, and a completed run may well have
     // published — while the occurrence stays `assigned`, because the calendar

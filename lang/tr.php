@@ -607,7 +607,7 @@ return [
     'accounts.subtitle' => 'Bağlı kanalların. Kuyash yalnızca her hesaba bir bağlantı ve sağlık durumunu saklar — parolanı asla.',
     'accounts.publishing_mock' => 'Yayına hazır',
     'accounts.next_scheduled' => 'Sıradaki zamanlanmış yayın:',
-    'accounts.nothing_scheduled' => 'zamanlanmış bir şey yok — onaylanan render’lar hemen yayınlanır.',
+    'accounts.nothing_scheduled' => 'zamanlanmış bir şey yok — onaylanan videolar hazır olur olmaz çıkar.',
     'accounts.nothing_scheduled_planned' => 'şu anda kuyrukta bir şey yok — onaylanan videolar haftalık yayın saatlerinde çıkar.',
     'accounts.run_at' => '#{run} çalışması, şu zamanda:',
     'accounts.connect_account' => 'Bir hesap bağla',
