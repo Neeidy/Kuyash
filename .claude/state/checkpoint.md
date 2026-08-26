@@ -7,7 +7,12 @@
 ## Son güncelleme
 
 - Tarih: 2026-08-26
-- Güncelleyen: Claude (**CASE-STUDY VİTRİNİ TAMAM — `2f1537f`'ye kadar push'lu,
+- Güncelleyen: Claude (**AÇIK İŞ DENETİMİ — `726f3ed` push'lu, 1104 PASS/0 FAIL,
+  99 PNG temiz. Takvim `<select>` caret örtüşmesi KAPANDI (pixel kanıtlı).
+  İki KARAR kullanıcıda: /workflows çerçevesi + "seni bekleyen"in TEK tanımı —
+  panelde aynı anda 7 / 4 / 4 yazıyor. Vitrin hâlâ ws2'de KURULU,
+  ön koşullar hâlâ GEÇİCİ.**)
+- Önceki: Claude (**CASE-STUDY VİTRİNİ TAMAM — `2f1537f`'ye kadar push'lu,
   1104 PASS / 0 FAIL, working tree temiz.** Poster'lar GERÇEK stok karesi,
   hesap kartlarında mock görüntü, görsel gate artık boyanmamış görseli
   YAKALIYOR. Vitrin seed **ws2'ye kurulu**.
@@ -149,6 +154,22 @@
 
 ## Sıradaki adım
 
+**KARAR BEKLEYEN İKİ ÜRÜN SORUSU (denetimde kanıtlandı, 2026-08-26):**
+
+- **K1 — "seni bekleyen" için TEK tanım.** `dashboard__1280__en.png` tek karede
+  üç farklı sayı gösteriyor: KPI **7** (run), onay kartı rozeti **4**
+  (`Cockpit.php:76` `array_slice(...,0,4)` — rozet dilimi sayıyor,
+  `dashboard.php:151`), plan bandı **4** (haftanın hücreleri); ACTIVE RUNS
+  listesi aynı sayfada **7** "awaiting" satırı basıyor. Rozet düpedüz eksik
+  söylüyor ve "N tane daha" yok. Ama düzeltmek tanım seçmeyi gerektiriyor
+  (job mu run mu) — KPI'ı değiştirmek `business()` üzerinden bütçe/maliyet
+  yüzeylerine dokunur, o yüzden tek başıma seçmedim.
+- **K2 — /workflows.** `workflows__1280__en.png`: iki küçük kart + ~570px boşluk,
+  CTA yok, node graph yok, selection state yok, sağ ayar paneli yok.
+  `frontend.md` node graph için ikisini de şart koşuyor. Case study "görsel
+  workflow builder" diyecekse bu ekran onu yalanlıyor: ya panel yapılacak ya
+  sayfa yeniden çerçevelenecek.
+
 0. **Case study'yi yakala.** Ekranlar dolu, poster'lar gerçek kare.
    Yakalama sırasında **bir demo run'ı gerçekten onayla** — teardown onu korur
    (event pinler), böylece gerçek bir onay kaydı da fotoğraflanır.
@@ -205,6 +226,8 @@
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
+
+- 2026-08-26 — **AÇIK İŞ DENETİMİ + 1 KAPANIŞ — `726f3ed` push'lu, 1104 PASS/0 FAIL, 99 PNG (0 console error / 0 taşma / 0 kırık görsel).** Doc okumak yerine gerçek render'dan denetim: izole görsel gate (`VISUAL_DEMO=1`) ile /dashboard, /plan, /workflows yakalandı. **Kapanan:** takvim video seçicisinin caret'i son harfin ÜSTÜNE biniyordu (`.cell__assign select` `padding-inline: 4px`; native caret kontrolün sağ iç kenarına boyanır) → `4px 15px`. Kanıt aynı koordinatlardan önce/sonra pixel crop; 1280'de `Talking-head intr`+ok-üstünde-"o" → ayrık caret. `text-overflow: ellipsis` denendi, **GERİ ALINDI** (görünen etiketi ~9→~5 karaktere düşürüyordu). **Dürüst uyarı:** görsel gate bu kusur ekrandayken 99 PNG boyunca yeşildi — glyph örtüşmesini ölçen kontrol YOK; guard yazmadan önce Chrome'da `select`'in kırpılmayı `scrollWidth`'le bildirip bildirmediği doğrulanmalı, yoksa assert kör-yeşil olur. **Kapanmayan, KARARA bağlı:** (K1) panelde "seni bekleyen" için tek karede 7/4/4 — rozet `array_slice` dilimini sayıyor, "N tane daha" yok, ama tek tanım seçmek KPI'ı ve `business()` üzerinden bütçe yüzeylerini etkiliyor; (K2) /workflows 1280'de iki kart + ~570px boşluk, node graph/selection/ayar paneli hiçbiri yok. **Değişmeyen:** vitrin ws2'de KURULU (134 kayıt), `ZERNIO_MOCK=true`, ws2 `manual` — geri alma SIRASI hâlâ geçerli (önce teardown, sonra flag'ler).
 
 - 2026-08-26 — **POSTER TURU: "görsel çalışmıyor" şikâyeti HAKLIYDI — `2f1537f`'ye kadar push'lu, 1104 PASS/0 FAIL.** Kullanıcı bağımsız olarak /library ve dashboard'un hâlâ düz gradient olduğunu bildirdi. **Kök-neden ikiliydi ve ikisi de benimdi:** (1) demo klipleri sentetik gradient test footage'ıydı → **doğru çıkarılmış kare de gradient**; önceki turda bunu yarım söyleyip hue kaydırmasıyla geçiştirmiştim (on aynı wash'ı birbirinden ayırdı, hiçbirini videoya benzetmedi). (2) Görsel gate aynı gradient fixture'ını kullandığı için **render edilen poster ile eksik poster'ı ayırt edemiyordu** — bozuk `<img>` console error da üretmediğinden beş tur yeşil geçti. **Düzeltmeler:** `StockMediaFactory` gerçek Pexels dikey klipleri indiriyor (öğe başına kendi arama terimi, sessiz fallback YOK); fixture'lar gerçek stok oldu (`stock/01..10.mp4`, kütüphane sırasıyla); harness lazy görselleri zorla yükleyip `naturalWidth`'e bakıyor. **UX gate ikinci bir körlük buldu:** ilk düzeltmem `i.complete && i.naturalWidth === 0` filtreliyordu — hiç yüklenmeye başlamamış lazy `<img>`'de `complete === false`, yani tam da önemli olan durum dışlanıyordu; 375px'te 8 poster lazy eşiğinin altında kalıp hiç boyanmıyordu ve gate boş döşemelere yeşil diyordu (sabotaj testim sadece 404 yolunu denemişti). Artık sadece zorlamayı kapatarak kırmızıya düştüğünü kanıtladım. **Ayrıca:** /plan hücrelerinde hiç poster yoktu → eklendi; "önizleme yok" döşemesi kesikli çerçeve oldu (gradient placeholder washy footage poster'ından ayırt edilemiyordu); hesap kartlarında örnek kartlara mock kare, **provider-backed karta ASLA**; `bin/refresh-legacy-demo-media.php` manifest'in sahip olmadığı eski `[SAMPLE]` asset baytlarını yeniliyor (#27'nin mor wash'ı) — **süreyi değiştirmiyor**, çünkü mevcut compliance kaydı ölçtüğü süreyi beyan ediyor (teyit: kayıt 22s, satır 22.0s). Fixture'a ilk kez provider-backed hesap eklendi: "gerçek kanala uydurma değer yazılmaz" kuralı kodda doğruydu ama 99 ekran görüntüsünün hiçbirinde gösterilmiyordu.
 
