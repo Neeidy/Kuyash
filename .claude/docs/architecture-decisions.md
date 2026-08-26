@@ -530,6 +530,52 @@ SURVIVED, record `manual`/real user/no policy). Dev DB migrated to 0017 after a
 WAL-safe backup: 0 FK violations, existing times defaulted to `manual`. Deferred:
 `.claude/docs/phase-24-followups.md`.
 
+
+## ADR-024: A side card may fail; the dashboard may not (2026-08-26)
+
+Two reads on the dashboard — the week's plan line and the accounts card — could
+take the entire page down. The plan one actually did: /dashboard answered 500 for
+every workspace that had a publishing time and stayed fine for every workspace
+that had none, so the fault read as unrelated to the plan and survived a route
+sweep that only looked at status codes. The trigger was a database behind on its
+migrations; the defect was that a trigger like that could reach the page at all.
+
+**The line we drew, and where we stopped.** A side card is one the dashboard is
+fully useful without: the plan band, the accounts card. Those are guarded. The
+reads that remain — kpis, activeRuns, awaiting, nextPublish, business — ARE the
+dashboard; if `runs` or `jobs` cannot be read there is nothing honest left to
+render, and those must keep failing loudly. Blanket-catching `snapshot()` would
+turn the page into one that quietly shows less and less.
+
+**Why a failure gets its own state rather than an existing one.** This is the
+part worth remembering. Both cards already had a zero-ish state that MEANS
+something to a reader, and handing a failed read that value would have said
+something false:
+
+- Zeros for the plan would state a measurement nobody took — above all
+  `0 missed`, which an operator reads as "nothing was missed".
+- Null for the plan is what a workspace with NO plan looks like, and the page
+  renders that as "approved videos publish straight away". A workspace whose plan
+  is alive would have been told its posts publish immediately.
+- An empty list for the accounts card is what "No accounts connected yet" is
+  rendered from; a failed read returning one would tell an operator with live
+  channels that they have none.
+
+So each failure carries its own third value and its own sentence: the count is
+missing, not zero; these accounts could not be read, which is not the same as
+having none. The compliance rule against dressing up a zero is the same rule —
+this is what it looks like when the number is absent rather than small.
+
+**A status code is not proof a page worked.** `bin/health.php` logs in, checks
+status AND body, and names the workspace it landed in — there is no
+workspace-switch route, so one run only ever proves one tenant, which is exactly
+the distinction this bug turned on. It exists because an ad-hoc `curl -o /dev/null
+-w '%{http_code}'` sweep reported 200 for a dashboard that was a stack trace and
+the reading was never afterwards accounted for.
+
+Verification: 1059 PASS / 0 FAIL; both guards proven by removing them and watching
+the regression tests reproduce the real PDOException.
+
 ## ADR-023: A person can edit the post's text — without a way around compliance or the AI label (Phase 25, 2026-08-24)
 
 Until now the AI wrote the caption and hashtags and the operator could only approve

@@ -6,55 +6,36 @@
 
 ## Son güncelleme
 
-- Tarih: 2026-08-25
-- Güncelleyen: Claude (**FAZ 25 KAPANIŞA GELDİ — 1048 PASS / 0 FAIL, COMMIT YOK, KABUL BEKLİYOR.**
-  Faz 25 = **onay adımında caption + hashtag'i insanın elle düzenleyebilmesi** — distribution-only
-  senaryonun en değerli eksiği. Token `START PHASE 25` VERİLDİ; Görev 0–6 TAMAM.
-  **Tasarım otoritesi: `.claude/docs/phase-25-plan.md`**, kararlar **ADR-023**, ertelenenler
-  `phase-25-followups.md`. Faz 24 `c62d640`'a kadar PUSH'LU — o iş KAPALI.
-  **Çekirdek fikir:** düzenleme `jobs.result_json`'da `captions`/`hashtags` anahtarlarının ÜZERİNE
-  yazılır (publish zaten orayı okuyor → "üretileni yayınlama" hatası yapısal olarak imkânsız), AI
-  orijinali `captions_ai`'de korunur, `compliance_check` sonucu HİÇ ellenmez, **migration YOK**.
-  AI ifşası publish anında kompoze edilir (`Publish\Disclosure`) → hiçbir edit onu sıyıramaz.
-  Kapı iki noktalı: kaydetmede `ContentGate` (aynı SlopScorer + aynı eşikler), publish'te içerik-hash
-  (uymazsa `failedPermanent`). Limitler **warn-only ve DOĞRULANMAMIŞ**; tek blok = bağlı platformda
-  boş caption. Düzenleme penceresi: `render_review awaiting_approval` **VEYA `final_render`
-  queued/processing** VEYA `publish queued`.
-  **Kapanış turunda eklenen:** uyumluluk/benzerlik rozeti, düzenleme varsa
-  `edit.verdict`'ten türetiliyor (kuyruk + panel + run ekranı AYNI değeri okur) —
-  yayın butonunun yanındaki sayı artık yayınlanacak metne ait; `compliance_check`
-  kaydı ELLENMİYOR. "Uyarıldı" ile "fazla benziyor" ayrıldı (etiket sayısı uyarısı
-  "benzerlik 0.00" diye çıkıyordu = yanlış kontrolü adlandırıp anlamsız sayı basmak).
-  Rozeti düzeltmek TEK BAŞINA yetmedi: kartta 4 satır aşağıda taslağın verdict'inden
-  gelen ikinci bir "Uyumluluk: geçti" cümlesi vardı → düzenleme varsa bastırılıyor
-  (AI etiketi satırı KALIYOR, o medyaya ait). Rozet artık HER run'da var — düzenleme
-  hangi verdict'in geçerli olduğunu değiştirir, kontrol edilip edilmediğini değil.
-  **KALAN: kullanıcı kabulü → commit + push.** Reviewer durumu ve kapanış kanıtı "Sıradaki adım"da.)
+- Tarih: 2026-08-26
+- Güncelleyen: Claude (**FAZ 25 KAPALI + KAPANIŞ TURU BİTTİ — 1059 PASS / 0 FAIL, hepsi push'lu.**
+  Faz 25 (onay adımında caption+hashtag düzenleme) `447451c`'ye kadar commit+push edildi.
+  Sonrasında kapanış turu: **dev DB 0017'ye taşındı** (Faz 24 takvimi o DB'de ÖLÜYDÜ),
+  panelin iki yan kartına **üçüncü durum** eklendi (okuma patlarsa "hiç yok" ifadesini
+  ödünç ALAMAZ) → **ADR-024**, uçtan uca canlı smoke yapıldı (**ürün defect'i YOK**),
+  `bin/health.php` (status DEĞİL gövde de taranır) ve `bin/demo-seed.php` (korumalı,
+  etiketli vitrin seed'i) eklendi. Smoke kaydı: `.claude/docs/smoke-2026-08-26.md`.
+  **ZERNIO_MOCK smoke için true'ya alındı ve tur sonunda false'a GERİ ALINDI** (teyit
+  edildi). Başka `.env` değişikliği YOK.)
 
 ## Mevcut durum (kaldığımız yer)
 
-- Aşama: **FAZ 25 TAMAMLANDI, KABUL BEKLİYOR — COMMIT YOK, 34 dosya working tree'de. 1048 PASS / 0 FAIL.**
-  Görsel gate **93 PNG / 0 console error / 0 yatay taşma**; 12 nav route + `/runs/22` + `/runs/11` canlı
-  200; secret scan temiz; lang paritesi **822 = 822**.
-  **Yeni dosyalar:** `config/platforms.php`, `src/Content/{PlatformLimits,ContentRevision,TextEditorView,DraftStash}.php`,
-  `src/Compliance/ContentGate.php`, `src/Publish/Disclosure.php`, `src/Controllers/ContentController.php`,
-  `templates/partials/text-editor.php`, `.claude/docs/phase-25-{plan,followups,open-work}.md`.
-  **Değişen:** `ZernioPublishExecutor` (hash guard + boş-caption koruması + `withDisclosure` delegasyonu),
-  `Core/Database` (**`immediateTransaction`**), `Content/Sanitizer` (bozuk UTF-8 satırı artık boşaltmıyor),
-  `Queue/WorkflowController`, `routes.php` (`POST /runs/{id}/text`, `/text/restore`), `bindings/{core,web}.php`,
-  `templates/{queue/index,runs/show}.php`, `public/assets/{css/app.css,js/app.js}`, `bin/visual-seed.php`,
-  `tools/visual/routes.json` (`/runs/2` + `/runs/3` + `/runs/4`), `Controllers/DashboardController`, `templates/dashboard.php`, `lang/{en,tr}.php`, `tests/run.php`.
-- **Üç kapanış gate'i ilk turda NO-GO döndü; hepsinin bulguları kapatıldı** (ayrıntı → `phase-25-open-work.md`).
-  En ağır üçü: (1) **reddedilen kayıt yazılanı çöpe atıyordu** — bir platformun boş olması yüzünden ÜÇ gövde
-  ve etiketler birden siliniyordu → yeni `DraftStash` (tek sayfalık, **workspace + run** anahtarlı; run id'leri
-  workspace başına yeniden başladığı için yalnız run yetmiyordu); (2) **salt-okunur editör yayınlanmış bir
-  paylaşımı BUGÜNKÜ Ayarlar'la anlatıyordu** — toggle çevrilince geçmiş yeniden yazılıyordu → iş bittiyse
-  editör ifşa hakkında HİÇBİR ŞEY iddia etmiyor; (3) **Kaydet-vs-Onayla tuzağı** + kaydettikten sonra bile
-  "Kuyash'ın yazdığı çıkar" diyen yanlış cümle → `$text['edited']`'e göre dallanıyor.
-- **Güvenlik kritik:** eski deferred `BEGIN` WAL'de worker ile çakışınca `BUSY_SNAPSHOT` → **500 + yazılan metin
-  kayıp** (reviewer bunu makinede kanıtladı) → `Database::immediateTransaction` + 2 denemelik retry + dürüst
-  "yeniden yükle" mesajı. Ayrıca edit hash'i artık **yalnız gerçekten yazılanı** kapsıyor ve ikinci CAS'ın
-  `rowCount()`'u kontrol ediliyor (aksi halde publish, operatörü yapmadığı bir kurcalamayla suçluyordu).
+- Aşama: **Faz 25 KAPALI. Kapanış turu da bitti. Working tree temiz, origin/main senkron.**
+  **1059 PASS / 0 FAIL** · görsel gate 93 PNG / 0 console error / 0 taşma ·
+  14 route **gövde-temiz** 200 · lang paritesi 825=825 · secret taraması temiz.
+- **Dev DB artık 0017.** Faz 24 oturum logu "0017" diyordu ama gerçek DB 0016'daydı —
+  `slot_occurrences` yoktu, yani haftalık takvim o veritabanında çalışmıyordu ve
+  /dashboard SLOT'U OLAN workspace'te 500 veriyordu. Yedek:
+  `storage/database/kuyash.pre-0017-apply.20260825T222409Z.bak.sqlite`.
+- **ADR-024 — yan kart düşebilir, panel düşemez.** `Cockpit::snapshot()` plan satırı ve
+  hesap kartı okumalarını koruyor; her biri KENDİ üçüncü durumunu döndürüyor:
+  plan `['unavailable'=>true]` (null "planı yok" demek, sıfır ise ölçülmemiş sayı),
+  hesaplar `null` (boş liste "hiç hesabın yok" demek). Kalan okumalar (kpis, activeRuns,
+  awaiting, nextPublish, business) PANELİN KENDİSİ — onlar sesli patlamaya devam etmeli.
+- **Canlı smoke (yayın MOCK):** compliance 3sn klibi 15-45sn bandına karşı bloklardı
+  (dürüst gerekçe + 2 denetim satırı); slop 0.6452 → warn → otomatik onay REDDETTİ,
+  insana bıraktı; onay kayıtları `auto/decided_by=NULL/policy` ve `manual/decided_by=2/policy=NULL`;
+  düzenlenen caption yayınlandı (`captions_ai` korunmuş); 1 kuruşluk bütçe cap'i run
+  satırı bile yaratmadı. **Ürün defect'i bulunmadı.**
 
 ## Verilmiş kararlar (özet)
 
@@ -77,34 +58,21 @@
 
 ## Sıradaki adım
 
-0. **FAZ 25 — KULLANICI KABULÜ BEKLİYOR. Kabul gelirse: commit (feat + chore ayrımı) → `git push origin main`.**
-   Kabul beklemeden commit YOK (token talimatı). Commit sonrası phase-plan/checkpoint zaten güncel.
-   Kapanış kanıtı: **1048 PASS / 0 FAIL**, görsel gate 93 PNG / 0 hata / 0 taşma, 14 canlı route 200,
-   secret temiz, lang 822=822. Testlerde gerçek yayın YOK, `.env` flip YOK, migration YOK.
-   **Reviewer'lar: üçü de GO** (security-auditor, ux-reviewer, compliance-reviewer). İlk tur
-   security GO+2 MEDIUM, ux NO-GO, compliance NO-GO idi; hepsi kapatıldı ve üçü yeniden koştu.
-   Ne bulundu / nasıl kapandı → `.claude/docs/phase-25-open-work.md` (kapanış kaydı). Ertelenenler → `.claude/docs/phase-25-followups.md`
-   (en önemlisi: **JS kapalıyken Onayla hâlâ kaydedilmemiş metni sessizce atar** — sunucu tarafı kemer
-   ayrı bir iş; ve **hash uyuşmazlığı kalıcı**, operatöre düzeltme yolu yok).
-1. **FAZ 10 önceki kararı (hâlâ açık):** `ZERNIO_MOCK=false` şu an ON; ilk kontrollü gerçek yayın kullanıcı
-   inisiyatifinde (render_review Manual onay kapısı publish öncesi durdurur).
-2. **Operatör enable-time (production-readiness.md):** R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra
-   `STORAGE_DRIVER=r2`; backup cron (`bin/backup.php`); `caddy validate` + canlı tunnel; prod `.env`
-   APP_DEBUG=false + gerçek key'ler. Not: gerçek dev DB **0013'e** migrate edildi.
-
-1. **Operatör enable-time (production-readiness.md):** R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra
-   `STORAGE_DRIVER=r2`; backup cron (`bin/backup.php`); `caddy validate` + canlı tunnel; prod `.env`
-   APP_DEBUG=false + gerçek key'ler. Not: gerçek dev DB **0012'ye** migrate edildi (WAL-safe yedek:
-   `storage/database/kuyash.pre-0012.bak.sqlite` + `storage/backups/20260613T215117Z/`).
-2. Faz 12 ertelenenler: `.claude/docs/phase-12-followups.md` (localSourcePath dedup, startRun branch
-   stratejisi, ai_video units=seconds gerçek-fiyatla, executor real-cost passthrough testi, async/poll
-   gerçek-entegrasyon → ai-video-notes.md 7 madde).
-3. Faz 11 ertelenenler: `.claude/docs/phase-11-followups.md` (MTD basis-change deploy notu, model/units
-   executor seam'inden surface etme, OpenAI/Pexels quota /usage'da, 401/403 non-retryable fast-fail).
-4. Açık HARD GATE'ler (Faz 8'den): STORAGE_DRIVER=r2 enable-time canlı-bucket SigV4 smoke + PRIVATE/no-ACL
-   teyidi; Faz 13'e ertelenen assembly-side staging + render/cache eviction. Detay: ADR-014.
-5. Faz 10 ertelenenler: `.claude/docs/phase-10-followups.md` (cockpit countdown, account-subset UI, webhook
-   rate-limit, cap-unification asymmetry [S1]).
+0. **Kuyash'ta CC tarafında bekleyen iş YOK.** Faz 25 ve kapanış turu kapandı, hepsi
+   push'lu. Yeni iş yalnız `START PHASE N` token'ı ile başlar.
+1. **Operatör kararı bekleyenler (ürün değil, işletim):**
+   - `ZERNIO_MOCK=false` geri alındı → gerçek yayın yolu yeniden AÇIK. İlk kontrollü
+     gerçek yayın senin inisiyatifinde.
+   - ws2 `approval_mode=auto` — bu yüzden onay kuyruğu dürüstçe boş. Manuel kapı
+     isteniyorsa /settings'ten değiştir (ürün kararı, ben değiştirmedim).
+   - R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra `STORAGE_DRIVER=r2`;
+     backup cron (`bin/backup.php`); `caddy validate` + canlı tunnel; prod `.env`
+     APP_DEBUG=false + gerçek key'ler.
+2. **Ertelenenler:** `.claude/docs/phase-25-followups.md` — en önemlisi **JS kapalıyken
+   Onayla hâlâ kaydedilmemiş metni sessizce atar** (sunucu kemeri ayrı iş), **hash
+   uyuşmazlığı kalıcı** (operatöre düzeltme yolu yok), ve panelin `error_log()`'u
+   uygulama log'una düşmüyor.
+3. Eski faz ertelenenleri: phase-24/12/11/10/5 followups dosyaları.
 
 ## Açık konular / bekleyenler
 
@@ -149,6 +117,8 @@
   finalize-throw fallback, EventLog clock, autoload extraction hâlâ açık (düşük öncelik).
 
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
+
+- 2026-08-26 — **KAPANIS TURU (A-E) — 1059 PASS/0 FAIL, 4 commit push'lu, urun defect'i YOK.** (A) Panelin **hesap karti** da plan satiri gibi korumasizdi -> ayni ucuncu-durum deseni: `null`, bos liste DEGIL (bos liste "hic hesabin yok" ifadesinin kaynagi; basarisiz okuma onu odunc alirsa canli kanali olan operatore hic kanali yokmus denir). Guard'i kaldirip testin gercek `PDOException`'i urettigini kanitladim. **Nerede DURDUGUMUZ da karar:** kpis/activeRuns/awaiting/nextPublish/business PANELIN KENDISI — `runs`/`jobs` okunamiyorsa durustce gosterilecek bir sey kalmaz, onlar sesli patlamali (ADR-024). (B) **Canli uctan uca smoke, yayin MOCK** (`ZERNIO_MOCK=true`, `PublishProvider::name()==='mock'` ile teyitli): 25 HTTP kontrolu pass; compliance 3sn klibi 15-45sn bandina karsi **blokladi** (durust gerekce + 2 denetim satiri); slop 0.6452 -> warn -> **otomatik onay reddetti**, insana birakti; onay kayitlari invaryanti tuttu (`auto/NULL/policy` ve `manual/2/NULL`); duzenlenen caption yayinlandi, `captions_ai` korundu; 1 kurusluk butce cap'i **run satiri bile yaratmadi**; yabanci workspace run'i 404, cross-tenant metin yazimi hicbir sey yazmadi. **Iki "hata" benim smoke'umun hatasiydi** (run 1'i baska workspace sandim — kendi workspace'imizdi; kill switch'e `state` gondermedim — o blind toggle degil), kayda gecirdim cunku bunlari gizleyen yesil matris daha az degerli. (C) B defect bulmadi -> **uydurma is yapmadim**. (D) `bin/demo-seed.php`: korumali (`--yes` + CLI), etiketli vitrin seed'i — gercek hesaba **asla** sayi yazmaz (`followers_count`'a dokunmaz -> kart "sample" isaretlemeye devam eder), job/post/approval **INSERT etmez** (run'lari BASLATIR, kart/verdict/onay kaydi gercek pipeline ciktisi olur). Ilk surumu her cagrida yeni run doguruyordu — iki kez calistirinca yakaladim: otomatik-onayli workspace'te kuyrugun bos olmasi DOGRU, o yuzden artik hicbir sey baslatmiyor. (E) 3 gate + ADR-024 + phase-plan + checkpoint. **ZERNIO_MOCK false'a geri alindi, teyit edildi.**
 
 - 2026-08-25 — **FAZ 25 (onay adımında caption+hashtag düzenleme) TAMAM — 1048 PASS/0 FAIL, görsel gate 93 PNG/0 hata, 14 route canlı 200. COMMIT YOK, kabul bekliyor.** Ara verilen turdan devam: önce kırık tek testin ortaya çıkardığı **gerçek ürün boşluğu** kapatıldı — düzenleme penceresi `final_render` queued/processing'i de kapsıyor (o adım videoyu render eder, metne HİÇ dokunmaz, publish job'ı henüz doğmamıştır; dışarıda bırakmak "onayladın, şimdi birkaç dakika yazım hatası düzeltemezsin" demekti ve bunu ekranda açıklayan hiçbir şey yoktu). Sonra üç gate'in kalan bulguları. **En ağır üçü:** (1) **reddedilen kayıt yazılanı yok ediyordu** — POST→redirect→GET, GET saklanan metni yeniden basıyor; bir platformun boş olması yüzünden ÜÇ gövde ve etiketler birden gidiyordu, geri alma yok → yeni `Content\DraftStash` (tek sayfalık, **workspace + run** anahtarlı; yalnız run ile anahtarlamak workspace başına yeniden başlayan id'ler yüzünden başka workspace'in taslağını gösterebiliyordu — testte yakalandı). Yalnız GÖRÜNEN değerler değişir; `hash`/`edited`/`edit` hâlâ veritabanını anlatır, yani kaydedilmemiş metin asla kaydedilmiş gibi sunulmaz. (2) **salt-okunur editör yayınlanmış paylaşımı BUGÜNKÜ Ayarlar'la anlatıyordu** — Instagram ifşa toggle'ı sonradan kapatılınca ifşayla çıkmış bir post "eklenmeyecek" diyordu, açılınca hiç eklenmemiş olan "eklendi" diyordu → iş bittiyse editör ifşa hakkında hiçbir şey iddia etmiyor, geçmişi `posts.ai_label_applied` taşıyor. (3) **Kaydet-vs-Onayla tuzağı**: onay formuna dirty-guard + JS'siz de görünen statik satır; ayrıca kaydettikten SONRA bile "Kuyash'ın yazdığı çıkar" diyen cümle `$text['edited']`'e göre dallandı. **Güvenlik (reviewer makinede kanıtladı):** eski deferred `BEGIN` WAL'de worker commit'iyle çakışınca `BUSY_SNAPSHOT` → **500 + yazılan metin kayıp**, ve `busy_timeout` bunu kapsamıyor → `Database::immediateTransaction` + 2 denemelik retry + dürüst "yeniden yükle". Edit hash'i artık yalnız GERÇEKTEN yazılanı kapsıyor ve ikinci CAS'ın `rowCount()`'u kontrol ediliyor (aksi halde publish operatörü yapmadığı kurcalamayla suçluyordu). **Compliance:** geçen düzenleme de artık denetime yazılıyor (`content.edit_checked`, skor + politika sürümü); geri alma `content.restored` olarak ayrı kaydediliyor (eskiden "sen düzenledin" diyordu); seed'de yayınlanmış run'ın COMPLIANCE'ı "pending" görünüyordu (olamayacak bir sonuç) ve `render_review` yanlış node'daydı ('PREVIEW' → engine'in kullandığı 'PUBLISH'). **Kendim bulduğum:** "TikTok ve YouTube'da not native bayrakla verilir" satırı toggle'ı KAPALI platformları da sayıyordu = yanlış güvence → yalnız etkin olanları adlandırıyor. Seed artık düzenlenmiş + limite yakın bir run da içeriyor (chip, geri-al butonu, uyarı callout'u, 14/15 etiket sayacı ilk kez fotoğraflandı). Ertelenenler `phase-25-followups.md`'de, en önemlisi: **JS kapalıyken Onayla hâlâ kaydedilmemiş metni sessizce atar** (sunucu kemeri ayrı iş) ve **hash uyuşmazlığı kalıcı** (operatöre düzeltme yolu yok).
 

@@ -124,5 +124,19 @@ Goals: per-platform caption + hashtag editing on the approval card and the run s
 Non-goals: **blocking on a platform limit** — the numbers in `config/platforms.php` are UNVERIFIED and may only warn; re-scoring slop at publish (corpus drift would strand approved content); AI video; bulk editing; caption templates; per-platform hashtag lists; "regenerate with AI" from the editor; a permanent archive of published text.
 Acceptance: an edit cannot remove the AI disclosure or move a native AI flag; no edit reaches publish without passing the gate; an unedited run behaves bit-for-bit as before; `approvals` and `events.kind` unchanged; an edit after an approval does not rewrite that approval; tenant isolation on every read and write; tests + visual gate green. Reviewers: security-auditor + ux-reviewer + compliance-reviewer (mandatory — the approval record and the disclosure path are touched).
 
+
+## Closing round — 2026-08-26 (no new phase)
+
+Not a phase: the wrap-up after Phase 25. Dev database migrated to 0017 (the Phase
+24 calendar had been dead on it); both dashboard side cards given a third state so
+a failed read cannot borrow the wording of "you have nothing" (**ADR-024**); a
+live end-to-end smoke recorded in `.claude/docs/smoke-2026-08-26.md` with what it
+did NOT cover stated plainly; `bin/health.php` (route health on status AND body)
+and `bin/demo-seed.php` (guarded, labelled showcase top-up) added.
+
+No product defect was found by the smoke. Deferred work stays in
+`.claude/docs/phase-25-followups.md` — the largest being that with scripting off
+nothing yet stops Approve from discarding unsaved text.
+
 ## V2 / SaaS-ification Parking Lot (documented, NOT planned)
 Stripe billing & plans, multi-tenant UI, customer onboarding, team roles, AI avatars (HeyGen-class), ElevenLabs premium voice/music, additional AI-video providers, lip-sync/dubbing, multi-language; **boost suggestion (detect high-engagement posts → "Promote in Ads Manager" deep link — recommendation + link ONLY, never an ads platform)**; **workspace→account branching graph visualization (read-only view; engine stays linear)**; **revenue/MRR panel (meaningful only after Stripe)**.
