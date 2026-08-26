@@ -906,5 +906,7 @@ return [
     'cockpit.open_plan' => 'Weekly plan',
     'cockpit.next_publish' => 'Next publish',
     'cockpit.next_publish_none' => 'Nothing scheduled — approved videos publish straight away.',
+    'cockpit.next_publish_unknown' => 'Nothing is waiting to go out right now.',
+    'cockpit.plan_unreadable' => 'This week\'s plan could not be read just now — the count is missing, not zero.',
     'cockpit.in_time' => 'in {when}',
 ];

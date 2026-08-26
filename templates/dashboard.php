@@ -88,21 +88,37 @@ $biz = $cockpit['business'];
           data-t-hours="<?= View::t('time.in_hours', ['n' => '{n}']) ?>"
           data-t-days="<?= View::t('time.in_days', ['n' => '{n}']) ?>"><?= View::e(Messages::until($nextAt)) ?></time>
     <?php else: ?>
-    <?php /* Two different empty states. "approved videos publish straight away"
-             is true of a workspace with NO plan; saying it to one that has a
-             plan contradicts the summary line right underneath. */ ?>
-    <span class="muted"><?= View::t(
-        (($cockpit['planWeek'] ?? null) !== null && $cockpit['planWeek']['planned'] > 0)
-            ? 'cockpit.next_publish_planned'
-            : 'cockpit.next_publish_none'
-    ) ?></span>
+    <?php
+      // THREE empty states, not two. "approved videos publish straight away" is
+      // true of a workspace with NO plan; saying it to one that has a plan
+      // contradicts the summary line right underneath. And when the plan could
+      // not be READ we know neither, so we claim neither.
+      $planWeek = $cockpit['planWeek'] ?? null;
+      $planUnreadable = is_array($planWeek) && ($planWeek['unavailable'] ?? false) === true;
+      $planHasDays = is_array($planWeek) && !$planUnreadable && ($planWeek['planned'] ?? 0) > 0;
+    ?>
+    <span class="muted"><?= View::t(match (true) {
+        $planUnreadable => 'cockpit.next_publish_unknown',
+        $planHasDays => 'cockpit.next_publish_planned',
+        default => 'cockpit.next_publish_none',
+    }) ?></span>
     <?php endif; ?>
     <?php /* the empty state is the natural place to discover the weekly plan —
              otherwise it is only reachable by scrolling through Settings */ ?>
     <a class="next-publish__plan" href="/plan"><?= View::t('cockpit.open_plan') ?></a>
+    <?php
+      // the branch above only runs when nothing is queued; recompute so the
+      // band is right on the other path too
+      $planWeek = $cockpit['planWeek'] ?? null;
+      $planUnreadable = is_array($planWeek) && ($planWeek['unavailable'] ?? false) === true;
+    ?>
     <?php /* Phase 24 — one honest line about the week's plan. Shown only when
              there IS a plan; every number is counted, never filled in. */ ?>
-    <?php if (($cockpit['planWeek'] ?? null) !== null && $cockpit['planWeek']['planned'] > 0): ?>
+    <?php if ($planUnreadable): ?>
+    <?php /* said out loud rather than left as an absence: a missing band already
+             means "nothing planned", and a failed read must not borrow that */ ?>
+    <p class="next-publish__week muted"><?= View::t('cockpit.plan_unreadable') ?></p>
+    <?php elseif (is_array($planWeek) && ($planWeek['planned'] ?? 0) > 0): ?>
     <p class="next-publish__week muted"><?= View::t(
         $cockpit['planWeek']['published'] > 0 ? 'plan.summary_published' : 'plan.summary',
         [

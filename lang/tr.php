@@ -902,5 +902,7 @@ return [
     'cockpit.open_plan' => 'Haftalık plan',
     'cockpit.next_publish' => 'Sıradaki yayın',
     'cockpit.next_publish_none' => 'Planlanmış yayın yok — onaylanan videolar hemen yayınlanır.',
+    'cockpit.next_publish_unknown' => 'Şu anda çıkmayı bekleyen bir şey yok.',
+    'cockpit.plan_unreadable' => 'Bu haftanın planı şu an okunamadı — sayı sıfır değil, eksik.',
     'cockpit.in_time' => '{when} içinde',
 ];

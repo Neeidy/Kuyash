@@ -10576,6 +10576,138 @@ check('p25/write: an edit made while the final video renders still reaches the p
         && (string) $run['status'] === 'completed';   // NOT dead-lettered as tampering
 })());
 
+
+echo "== fix/dashboard: the plan line can never take the whole screen down ==\n";
+
+check('fix/dashboard: a broken plan read leaves the rest of the dashboard standing', (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+    // The real failure, reproduced: a database behind on its migrations has no
+    // slot_occurrences, so the plan read throws. It answered 500 for every
+    // workspace that had a publishing time and stayed fine for every workspace
+    // that had none — which is why it read as an unrelated fault and survived a
+    // route sweep that only looked at status codes.
+    //
+    // The plan is ONE line on that page. The KPIs, the approvals waiting, the
+    // accounts and the balance have nothing to do with it.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'dash-guard@x.com', $argonHash, 'Dash guard');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $now = gmdate(NOW_ISO);
+    // a workspace WITH a publishing time — the only kind that reached the read
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 1, '09:00', 1, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $db->run('DROP TABLE slot_occurrences');
+
+    $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+    $cockpit = new \Kuyash\Workflow\Cockpit(
+        $db,
+        new AssetCache($db, $paths),
+        new CreditLedger($db),
+        new UsageRepository($db),
+        new AccountRepository($db),
+        new \Kuyash\Workflow\JobRepository($db),
+        new \Kuyash\Publish\PlanBoard(new OccurrenceRepository($db)),
+        new WorkspaceSettings($db),
+    );
+
+    $snap = $cockpit->snapshot($ctx, $now);   // must NOT throw
+
+    return is_array($snap)
+        // its OWN state — not zeroed (a number nobody took) and not null
+        // (which is what "this workspace has no plan" looks like, and would
+        // make the screen tell a planned workspace it has nothing planned)
+        && $snap['planWeek'] === ['unavailable' => true]
+        // …and everything that has nothing to do with the plan is still there
+        && is_array($snap['kpis']) && is_array($snap['business'])
+        && array_key_exists('awaiting', $snap) && array_key_exists('accounts', $snap);
+})());
+
+check('fix/dashboard: a healthy workspace with a publishing time still gets its plan line', (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+    // The guard must not swallow the working case: with the table present, the
+    // line is real. Otherwise the fix would be indistinguishable from deleting
+    // the feature.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'dash-ok@x.com', $argonHash, 'Dash ok');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $now = gmdate(NOW_ISO);
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 1, '09:00', 1, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+
+    $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+    $cockpit = new \Kuyash\Workflow\Cockpit(
+        $db,
+        new AssetCache($db, $paths),
+        new CreditLedger($db),
+        new UsageRepository($db),
+        new AccountRepository($db),
+        new \Kuyash\Workflow\JobRepository($db),
+        new \Kuyash\Publish\PlanBoard(new OccurrenceRepository($db)),
+        new WorkspaceSettings($db),
+    );
+
+    $snap = $cockpit->snapshot($ctx, $now);
+
+    return is_array($snap['planWeek'])
+        && array_key_exists('planned', $snap['planWeek'])
+        && $snap['planWeek']['planned'] === 0;   // honest zero: nothing materialized yet
+})());
+
+check('fix/dashboard: a plan that could not be read never reads as "nothing planned"', (static function () use ($basePath): bool {
+    // The failure state and the no-plan state must not share wording. The
+    // dashboard's queue-empty line says "approved videos publish straight away",
+    // which is true of a workspace with no plan and false of one whose plan
+    // simply could not be read — and the band's own absence already means
+    // "nothing planned", so a failed read must not borrow that either.
+    $tpl = (string) file_get_contents($basePath . '/templates/dashboard.php');
+    $en = require $basePath . '/lang/en.php';
+    $tr = require $basePath . '/lang/tr.php';
+
+    return str_contains($tpl, "\$planUnreadable => 'cockpit.next_publish_unknown'")
+        && str_contains($tpl, "View::t('cockpit.plan_unreadable')")
+        // the unknown wording claims neither direction
+        && !str_contains(strtolower($en['cockpit.next_publish_unknown']), 'straight away')
+        // …and the band says the count is MISSING, not zero
+        && str_contains($en['cockpit.plan_unreadable'], 'not zero')
+        && str_contains($tr['cockpit.plan_unreadable'], 'sıfır değil');
+})());
+
+check('fix/dashboard: the plan read is scoped to one workspace at every join', (static function () use ($basePath): bool {
+    // Tenant isolation on the read this bug ran through — asserted rather than
+    // assumed, because it is the query a dashboard runs for whoever is logged in.
+    $sql = (string) file_get_contents($basePath . '/src/Publish/OccurrenceRepository.php');
+
+    return str_contains($sql, 'WHERE o.workspace_id = ? AND o.publish_at >= ? AND o.publish_at < ?')
+        && str_contains($sql, 'JOIN publish_slots s ON s.id = o.slot_id AND s.workspace_id = o.workspace_id')
+        && str_contains($sql, 'LEFT JOIN assets a ON a.id = o.asset_id AND a.workspace_id = o.workspace_id')
+        && str_contains($sql, 'LEFT JOIN runs r ON r.id = o.run_id AND r.workspace_id = o.workspace_id');
+})());
+
+check('fix/dashboard: the health harness reads the BODY, not just the status code', (static function () use ($basePath): bool {
+    // A status-only sweep reported 200 for a dashboard that was a stack trace,
+    // because the debug error page IS a response. This is the check that stops
+    // that reading as "all green" again.
+    $harness = (string) file_get_contents($basePath . '/bin/health.php');
+
+    return str_contains($harness, 'FAILURE_MARKERS')
+        && str_contains($harness, "'SQLSTATE['")
+        && str_contains($harness, "'no such table'")
+        && str_contains($harness, 'str_contains($res[\'body\'], $marker)')
+        // and it authenticates, because every screen worth checking is behind auth
+        && str_contains($harness, "'/login'")
+        && str_contains($harness, 'exit($failures === 0 ? 0 : 1)')
+        // …with credentials from the environment, never a copy baked into a
+        // committed script
+        && !str_contains($harness, 'SmokePassword123')
+        && str_contains($harness, "getenv('HEALTH_PASSWORD')");
+})());
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(

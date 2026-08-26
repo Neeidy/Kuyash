@@ -12,6 +12,7 @@ use Kuyash\Workspace\WorkspaceSettings;
 use Kuyash\Usage\CreditLedger;
 use Kuyash\Usage\UsageRepository;
 use Kuyash\Workspace\WorkspaceContext;
+use Throwable;
 
 /**
  * Read-model for the dashboard cockpit. Phase 7 gave it the operational KPIs +
@@ -50,6 +51,7 @@ final class Cockpit
      *   pipeline: array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null,
      *   activeRuns: list<array<string, mixed>>,
      *   awaiting: list<array<string, mixed>>,
+     *   planWeek: array{unavailable: true}|array<string, int>|null,
      *   accounts: list<array<string, mixed>>,
      *   nextPublish: array{run_id: int, run_after: string}|null
      * }
@@ -72,10 +74,49 @@ final class Cockpit
             'nextPublish' => $this->nextPublish($ws, $now),
             // Phase 24: a one-line read of the week's plan. Derive-only, and a
             // zero stays a zero — nothing here is invented to fill the line.
-            'planWeek' => ($this->board === null || $this->settings === null)
-                ? null
-                : $this->board->summary($ctx, $this->settings->timezone($ws), $now),
+            'planWeek' => $this->planWeek($ctx, $ws, $now),
         ];
+    }
+
+    /**
+     * The week's plan line, or null when there is none to show.
+     *
+     * GUARDED, for the same reason the worker guards its plan tick
+     * (PlanRunner::tick): the plan is ONE line on this page, and it must never
+     * be able to take the operator's main screen down with it — the KPIs, the
+     * approvals waiting, the accounts and the balance all have nothing to do
+     * with it. A database behind on its migrations did exactly that: /dashboard
+     * answered 500 for every workspace that had a publishing time and stayed
+     * fine for every workspace that had none, so the fault looked unrelated to
+     * the plan and went unnoticed while the worker quietly logged it every
+     * five minutes.
+     *
+     * Never zeros: a read that failed means we do not KNOW what the week holds,
+     * and "0 planned" — above all "0 missed" — would state a number nobody
+     * measured, which is the one thing this class refuses to do.
+     *
+     * But it does not return null either, and that distinction is the point.
+     * Null is what a workspace with no plan board looks like, and the dashboard
+     * renders THAT as "nothing planned — approved videos publish straight away".
+     * Handing a failed read the same value would make the page say something
+     * false to a workspace that does have a plan. So a failure is its own
+     * third state, and the screen says the count is missing rather than zero.
+     *
+     * @return array{unavailable: true}|array<string, int>|null
+     */
+    private function planWeek(WorkspaceContext $ctx, int $workspaceId, string $now): ?array
+    {
+        if ($this->board === null || $this->settings === null) {
+            return null;
+        }
+
+        try {
+            return $this->board->summary($ctx, $this->settings->timezone($workspaceId), $now);
+        } catch (Throwable $e) {
+            error_log("Kuyash: dashboard plan summary failed for workspace {$workspaceId} — " . $e->getMessage());
+
+            return ['unavailable' => true];
+        }
     }
 
     /**
