@@ -161,8 +161,13 @@ $biz = $cockpit['business'];
           <?php if ($draftId !== null || $libId !== null): ?>
           <?php $src = $draftId !== null ? '/render/' . (int) $draftId : '/media/' . (int) $libId; ?>
           <div class="inline-player" data-inline-player>
+            <?php /* a distribution run has no draft render — its preview IS the
+                     library clip, and that clip's poster is what makes this a
+                     picture instead of a grey box */ ?>
             <?php if ($draftId !== null): ?>
             <img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy">
+            <?php else: ?>
+            <img class="inline-player__poster" src="/media/<?= (int) $libId ?>/poster" alt="" loading="lazy">
             <?php endif; ?>
             <video class="inline-player__video" src="<?= $src ?>" preload="metadata" playsinline></video>
             <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">

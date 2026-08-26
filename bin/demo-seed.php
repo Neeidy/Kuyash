@@ -38,6 +38,7 @@ use Kuyash\Demo\SeedManifest;
 use Kuyash\Demo\ShowcaseSeed;
 use Kuyash\Demo\ShowcaseTeardown;
 use Kuyash\Library\MediaProbe;
+use Kuyash\Media\AssetPoster;
 use Kuyash\Media\MediaPaths;
 
 if (PHP_SAPI !== 'cli') {
@@ -157,6 +158,9 @@ $seed = new ShowcaseSeed(
     $db,
     $container->get(MediaPaths::class),
     new FfmpegMediaFactory(dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4', new MediaProbe()),
+    // the same poster service the product uses at ingest, so a demo clip
+    // previews exactly the way an uploaded one does
+    $container->get(AssetPoster::class),
 );
 
 $report = $seed->run($ws, $now);
@@ -182,7 +186,6 @@ fwrite(STDERR, "\n  TEAR IT DOWN WHEN THE CAPTURE IS OVER. The seed is inert on 
     . "  and teardown can no longer remove it (it says so and keeps the rest).\n");
 fwrite(STDERR, "\n  THE APPROVAL QUEUE IS REAL. Those cards are live approval gates"
     . ($mockPublish
-        ? ", on the mock provider.\n  Approving exactly one is how you photograph a truthful approval record — the\n"
-          . "  seed deliberately fabricates none, and teardown keeps a run you approved.\n"
+        ? ", on the mock provider.\n  The seed's own approval records name a DEMO account, never you.\n"
         : " and publishing is LIVE.\n  You passed --live-publish-ok; approving one publishes for real.\n"));
 exit(0);

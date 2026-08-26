@@ -8,6 +8,7 @@ use Kuyash\Compliance\CompliancePolicy;
 use Kuyash\Compliance\SlopScorer;
 use Kuyash\Content\ContentRevision;
 use Kuyash\Core\Database;
+use Kuyash\Media\AssetPoster;
 use Kuyash\Media\MediaPaths;
 use Kuyash\Publish\OccurrenceMaterializer;
 use Kuyash\Publish\OccurrenceRepository;
@@ -84,6 +85,7 @@ final class ShowcaseSeed
         private readonly Database $db,
         private readonly ?MediaPaths $paths = null,
         private readonly ?MediaFactory $media = null,
+        private readonly ?AssetPoster $posters = null,
     ) {
         $this->manifest = new SeedManifest($this->db);
     }
@@ -242,7 +244,7 @@ final class ShowcaseSeed
             // sha256, which is a collision waiting for anything that dedups.
             $made = $isStill
                 ? $this->media->still($dest, $i)
-                : $this->media->clip($dest, (int) $item['seconds']);
+                : $this->media->clip($dest, (int) $item['seconds'], $i);
             if ($made === null) {
                 @unlink($dest);
                 $notes[] = 'could not build ' . ($isStill ? 'a still' : 'a clip') . ' (is ffmpeg installed?) — skipped';
@@ -436,7 +438,7 @@ final class ShowcaseSeed
     {
         $ids = [];
         foreach ($library as $i => $item) {
-            $ids[] = $this->insert('assets', [
+            $id = $this->insert('assets', [
                 'workspace_id' => $workspaceId,
                 'kind' => $item['kind'],
                 'type' => $item['type'],
@@ -457,6 +459,22 @@ final class ShowcaseSeed
                 'updated_at' => self::shift($now, -86400 * (12 - $i)),
                 'storage_disk' => 'local',
             ], $now);
+            $ids[] = $id;
+
+            // A still frame, through the SAME service the product uses at ingest —
+            // so a demo clip previews exactly the way an uploaded one does, and
+            // the poster is tracked so teardown takes it too.
+            $poster = $this->posters?->ensure([
+                'id' => $id,
+                'workspace_id' => $workspaceId,
+                'kind' => $item['kind'],
+                'stored_name' => $item['stored_name'],
+                'sha256' => $item['sha256'],
+                'storage_disk' => 'local',
+            ]);
+            if ($poster !== null) {
+                $this->manifest->trackFile($poster, $now);
+            }
         }
 
         return $ids;

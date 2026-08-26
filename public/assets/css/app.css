@@ -1386,11 +1386,20 @@ html:not(.js) .topbar__live { display: none; }
 @media (prefers-reduced-motion: reduce) { .trend-grid > * { animation: none; } }
 
 /* library: a play affordance fades in over video tiles on hover */
+/* The play affordance is HOVER-ONLY on a bare tile (the icon underneath already
+   says "video"), but ALWAYS VISIBLE over a poster — otherwise a still frame is
+   indistinguishable from a photo, and on touch there is no hover to reveal it. */
 .asset-card__play {
   position: absolute; inset: 0; margin: auto; width: 40px; height: 40px; border-radius: 50%;
   background: rgba(0, 0, 0, 0.45); border: 1.5px solid rgba(255, 255, 255, 0.6); color: #fff;
   display: grid; place-items: center; opacity: 0;
   transition: opacity var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--spring);
+}
+.asset-thumb:has(.asset-thumb__poster) .asset-card__play { opacity: 0.92; }
+/* the poster fills the tile: cover, never letterboxed, never stretched */
+.asset-thumb__poster {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
 }
 .asset-card__play svg { width: 18px; height: 18px; }
 .asset-card:hover .asset-card__play { opacity: 1; transform: scale(1.06); }
@@ -1513,7 +1522,11 @@ html:not(.js) .topbar__live { display: none; }
   font-size: 13px;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
+  /* wraps on purpose: in a ~68px day cell the chip and the title cannot share a
+     line, so the title drops below it and gets the full width instead of three
+     characters. At desktop widths they sit side by side as one line. */
+  flex-wrap: wrap;
   min-width: 0;
 }
 .cell__tag { flex: none; font-size: 9px; padding: 1px 4px; letter-spacing: 0.02em; }

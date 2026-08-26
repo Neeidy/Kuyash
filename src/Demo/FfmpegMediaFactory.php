@@ -30,7 +30,7 @@ final class FfmpegMediaFactory implements MediaFactory
         return is_file($this->fixture) && $this->binaryExists();
     }
 
-    public function clip(string $target, int $seconds): ?array
+    public function clip(string $target, int $seconds, int $variant = 0): ?array
     {
         if (!$this->available() || $seconds < 1) {
             return null;
@@ -38,11 +38,18 @@ final class FfmpegMediaFactory implements MediaFactory
 
         // -stream_loop -1 repeats the short fixture until -t cuts it, so any
         // requested length is reachable from one small committed file.
+        //
+        // The hue rotation is what stops a demo library from being ten copies of
+        // the same purple gradient — with posters on, identical frames made four
+        // different clips indistinguishable in the grid. It shifts the LOOK of
+        // synthetic test footage; it does not pretend the footage is something
+        // else, and every title using it still leads with the [SAMPLE] marker.
         $ok = $this->exec(sprintf(
-            '%s -y -stream_loop -1 -i %s -t %d -c:v libx264 -preset veryfast -pix_fmt yuv420p -an %s',
+            '%s -y -stream_loop -1 -i %s -t %d -vf %s -c:v libx264 -preset veryfast -pix_fmt yuv420p -an %s',
             escapeshellcmd($this->ffmpeg),
             escapeshellarg($this->fixture),
             $seconds,
+            escapeshellarg(sprintf('hue=h=%d:s=%s', ($variant * 41) % 360, $variant % 2 === 0 ? '1.05' : '0.85')),
             escapeshellarg($target),
         ));
 

@@ -11176,9 +11176,9 @@ $demoFingerprint = static function (Database $db): string {
 
 /** A media factory that writes real (tiny) files and reports what it wrote. */
 $demoMedia = new class implements \Kuyash\Demo\MediaFactory {
-    public function clip(string $target, int $seconds): ?array
+    public function clip(string $target, int $seconds, int $variant = 0): ?array
     {
-        return $this->write($target, 'video/mp4', (float) $seconds - 0.04, 1080, 1920);
+        return $this->write($target, 'video/mp4', (float) $seconds - 0.04, 1080, 1920, 'v' . $variant);
     }
 
     public function still(string $target, int $index = 0): ?array

@@ -25,12 +25,14 @@ interface MediaFactory
 {
     /**
      * Produce a vertical video of roughly $seconds at $target and MEASURE it.
+     * $variant shifts the look so a library of demo clips does not read as ten
+     * copies of one gradient.
      * Returns null when it could not be made (no ffmpeg, no source fixture) —
      * the caller then seeds nothing rather than a row pointing at no bytes.
      *
      * @return array<string, mixed>|null
      */
-    public function clip(string $target, int $seconds): ?array;
+    public function clip(string $target, int $seconds, int $variant = 0): ?array;
 
     /**
      * Produce a single still frame at $target and measure it. $index picks a
