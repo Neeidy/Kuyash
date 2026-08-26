@@ -1359,6 +1359,12 @@ html:not(.js) .topbar__live { display: none; }
 .acc-card__sample--foot { margin-left: 0; flex: none; }
 /* "no data yet" is NOT a sample marker: it states an honest gap on a real
    channel, so it must not borrow the stand-in badge's voice */
+/* the sample frame sits exactly where the gradient did, under the same overlay */
+.acc-card__frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+
 .acc-card__sample--empty { text-transform: none; letter-spacing: 0.02em;
   background: rgba(0,0,0,0.35); border-color: rgba(255,255,255,0.16); color: var(--text-2); }
 .acc-card__grow { display: inline-flex; align-items: center; gap: 4px; flex: none;

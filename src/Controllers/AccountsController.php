@@ -48,6 +48,8 @@ final class AccountsController
         private readonly \Kuyash\Publish\SlotRepository $slots,
         // Optional (null = no throttling) so existing constructions stay valid.
         private readonly ?RateLimiter $rateLimiter = null,
+        private readonly ?\Kuyash\Media\AssetPoster $posters = null,
+        private readonly ?\Kuyash\Core\Database $db = null,
     ) {
     }
 
@@ -71,6 +73,10 @@ final class AccountsController
             'csrfField' => $this->csrf->field(),
             'flashes' => Messages::resolveFlashes($this->flash),
             'accounts' => $accounts,
+            // frames a SAMPLE card may show (see partials/account-card.php)
+            'samplePosters' => ($this->posters !== null && $this->db !== null)
+                ? $this->posters->samplePool($this->db, $this->workspace->id(), \Kuyash\Demo\ShowcaseSeed::MARK)
+                : [],
             'platforms' => AccountRepository::PLATFORMS,
             'references' => $this->assets->readyReferencesFor($this->workspace),
             'nextScheduled' => $this->posts->nextScheduled($this->workspace, $now),

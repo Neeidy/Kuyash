@@ -80,6 +80,33 @@ final class AssetPoster
     }
 
     /**
+     * Asset ids in this workspace that are marked demo content AND have a poster
+     * on disk — the pool a sample account card draws its preview frame from.
+     *
+     * DEMO ONLY, BY QUERY. The title filter is what keeps this away from the
+     * operator's own footage: a sample card may show a sample frame, and a real
+     * channel may never show a frame it did not publish.
+     *
+     * @return list<int>
+     */
+    public function samplePool(\Kuyash\Core\Database $db, int $workspaceId, string $marker): array
+    {
+        $ids = [];
+        foreach ($db->all(
+            "SELECT id, workspace_id, sha256, kind FROM assets
+             WHERE workspace_id = ? AND kind = 'video' AND status = 'ready' AND title LIKE ?
+             ORDER BY id ASC",
+            [$workspaceId, $marker . '%'],
+        ) as $row) {
+            if ($this->exists($row)) {
+                $ids[] = (int) $row['id'];
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
      * Does the clip named by an awaiting-approval job have a poster?
      *
      * Takes the sha256 the job row already carries (JobRepository correlates it),

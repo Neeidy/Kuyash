@@ -264,6 +264,8 @@ return static function (Container $container, string $basePath): void {
         // one live provider call per click, against an undocumented vendor
         // rate limit: 20 syncs / 60s per IP
         new RateLimiter($c->get(Database::class), 20, 60),
+            $c->get(AssetPoster::class),
+        $c->get(Database::class),
     ));
 
     $container->bind(WebhookController::class, static fn (Container $c): WebhookController => new WebhookController(

@@ -261,6 +261,7 @@ $biz = $cockpit['business'];
       </div>
       <?php else: ?>
       <div class="acc-grid">
+        <?php $samplePosters = $cockpit['samplePosters'] ?? []; ?>
         <?php foreach ($cockpit['accounts'] as $account): $manage = false; require __DIR__ . '/partials/account-card.php'; ?>
         <?php endforeach; ?>
       </div>

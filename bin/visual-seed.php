@@ -594,16 +594,24 @@ $db->transaction(static function (Database $db) use ($workspaceId, $userId, $ema
     );
 
     // Social accounts (populate /accounts; no reference asset → no media dep).
+    // The last one is PROVIDER-BACKED (a real follower count). Without it the
+    // fixture could only ever exercise the sample branch of the account card, so
+    // the rule that matters most — a real channel is never given a fabricated
+    // figure or a fabricated preview frame — was true in the code and
+    // undemonstrated in every screenshot.
     $accounts = [
-        ['instagram', '@visual.kitchen', 'connected', 'ok'],
-        ['tiktok', '@visual.kitchen', 'connected', 'ok'],
-        ['youtube', 'Visual Kitchen', 'reauth_needed', 'degraded'],
+        ['instagram', '@visual.kitchen', 'connected', 'ok', null],
+        ['tiktok', '@visual.kitchen', 'connected', 'ok', null],
+        ['youtube', 'Visual Kitchen', 'reauth_needed', 'degraded', null],
+        ['instagram', '@visual.real', 'connected', 'ok', 7],
     ];
-    foreach ($accounts as [$platform, $handle, $status, $health]) {
+    foreach ($accounts as [$platform, $handle, $status, $health, $followers]) {
         $db->run(
-            'INSERT INTO accounts (workspace_id, platform, handle, status, health, connected_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [$workspaceId, $platform, $handle, $status, $health, $now, $now, $now],
+            'INSERT INTO accounts (workspace_id, platform, handle, status, health, followers_count,
+                                   followers_synced_at, connected_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$workspaceId, $platform, $handle, $status, $health, $followers,
+             $followers === null ? null : $now, $now, $now, $now],
         );
     }
 

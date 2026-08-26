@@ -127,8 +127,25 @@ $statusKey = ['connected' => 'acct.status_connected', 'reauth_needed' => 'acct.s
 $statusTone = ['connected' => 'ok', 'reauth_needed' => 'err'][$status] ?? 'neutral';
 ?>
 <article class="acc-card">
+  <?php
+  /* A SAMPLE frame, and only ever on a sample card.
+     The tile was a bare gradient, which on a screen that now shows real frames
+     everywhere else reads as an image that failed to load. A demo card may show
+     demo imagery — every figure on it already carries the sample chip and the
+     handle says what it is. A PROVIDER-BACKED card may not: putting a frame the
+     account never published under a real handle would be a claim about that
+     channel, which is the one thing this file exists to prevent. */
+  $samplePosters = $samplePosters ?? [];
+  $sampleFrame = (!$providerBacked && $samplePosters !== [])
+      ? '/media/' . (int) $samplePosters[$seed % count($samplePosters)] . '/poster'
+      : null;
+  ?>
   <div class="acc-card__media" role="img" aria-label="<?= View::t('acct.video_aria', ['handle' => $handle]) ?>">
+    <?php if ($sampleFrame !== null): ?>
+    <img class="acc-card__frame" src="<?= View::e($sampleFrame) ?>" alt="" loading="lazy">
+    <?php else: ?>
     <span class="acc-card__kenburns" style="background-image: <?= $grad ?>"></span>
+    <?php endif; ?>
     <span class="acc-card__overlay"></span>
     <div class="acc-card__head">
       <span class="acc-card__avatar" style="background-image: <?= $avatar ?>" aria-hidden="true"></span>

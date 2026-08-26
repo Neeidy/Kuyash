@@ -75,6 +75,9 @@ final class Cockpit
                 return $job;
             }, array_slice($this->jobs->awaitingApproval($ctx), 0, 4)),
             'accounts' => $this->accounts($ctx),
+            // frames a SAMPLE account card may show; empty when there is no demo
+            // content, which is why a real card can never accidentally get one
+            'samplePosters' => $this->posters?->samplePool($this->db, $ws, \Kuyash\Demo\ShowcaseSeed::MARK) ?? [],
             // Phase 23: the soonest publish actually waiting in the queue. Read
             // from the real job gate, not from the slot plan — a slot is only a
             // template, this is a scheduled fact.

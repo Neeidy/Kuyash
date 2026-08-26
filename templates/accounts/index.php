@@ -68,6 +68,7 @@ use Kuyash\Core\View;
     </div>
     <?php else: ?>
     <div class="acc-grid">
+      <?php $samplePosters = $samplePosters ?? []; ?>
       <?php foreach ($accounts as $account): $manage = true; require __DIR__ . '/../partials/account-card.php'; ?>
       <?php endforeach; ?>
     </div>
