@@ -84,6 +84,24 @@ Deliberately NOT done in the phase. Each has enough detail to act on directly.
   here; fixing it means deciding what the queue's flagship card should show,
   because either the script gate or the downstream rows has to go.
 
+- **The dashboard's accounts card can still take the page down.** `Cockpit::snapshot`
+  reads `AccountRepository::listFor`, which LEFT JOINs `account_metrics` — the
+  second-newest table on that page, and so the next one to go missing on a
+  database behind on its migrations. It is a side card: the dashboard is fully
+  useful without it, exactly like the plan line. It was NOT guarded here on
+  purpose: catching it and returning `[]` would reproduce the bug just fixed —
+  a failed read borrowing the "you have none" wording — so doing it properly
+  needs the same third state the plan line now has, on a card this change was
+  not asked to touch. Guard it there and stop; the reads that remain
+  (`kpis`, `activeRuns`, `awaiting`, `nextPublish`, `business`) ARE the
+  dashboard, and if `runs` or `jobs` cannot be read there is nothing honest
+  left to render — those must keep failing loudly.
+- **`error_log()` does not reach the app log.** The guard logs the same way the
+  rest of the codebase does (13 call sites), but that goes to the SAPI log,
+  while every Kuyash exception goes to `storage/logs/app-YYYY-MM-DD.log`. An
+  operator tailing the app log never sees a degraded plan band. Pre-existing
+  convention, worth revisiting as one change across all the call sites.
+
 ## Correctness / ops
 
 - **Slop is re-scored at save only.** The reasoning is in ADR-023: corpus drift

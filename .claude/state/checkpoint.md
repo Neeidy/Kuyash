@@ -108,15 +108,38 @@
 
 ## Açık konular / bekleyenler
 
-- **DÜZELTME — gerçek dev DB `0016`'da, `0017` DEĞİL.** Faz 24 oturum logu "Dev DB 0017"
-  diyor; ölçtüm, YANLIŞ: `migrations` son satırı `0016_publish_slots.sql`, `slot_occurrences`
-  tablosu YOK. `kuyash.pre-0017.20260823T185852Z.bak.sqlite` yedeği var (migration
-  hazırlanmış ama uygulanmamış). **Sonuç:** Faz 24'ün haftalık takvimi bu DB'de ölü —
-  `PlanRunner::tick()` her worker başlangıcında ve her 300 sn chore'da "no such table:
-  slot_occurrences" ile patlıyor. Faz 24 bunu BİLEREK yakalıyor (yayın durmasın diye),
-  o yüzden fark edilmemiş; yayın yolu etkilenmiyor, plan özelliği çalışmıyor.
-  **Karar kullanıcının:** WAL-safe yedek + `php bin/migrate.php` ile 0017'ye taşımak.
-  Ben uygulamadım — canlı dev DB'ye migration istenmeden yapılacak bir iş değil.
+- **ÇÖZÜLDÜ — dev DB 0017 UYGULANDI** (2026-08-25, kullanıcı talimatıyla).
+  Yedek: `storage/database/kuyash.pre-0017-apply.20260825T222409Z.bak.sqlite`
+  (WAL checkpoint TRUNCATE sonrası kopyalandı, `integrity_check ok`).
+  `php bin/migrate.php` → yalnız bekleyen `0017_plan_occurrences.sql`. Sonrası:
+  `slot_occurrences` + 3 index var, `publish_slots.mode`/`workspaces.auto_lead_minutes`/
+  `plan_paused` default'larıyla geldi, `integrity_check ok`, **0 FK ihlali**,
+  veri korundu (22 run · 205 job · 5 post · 2 hesap · 2 slot).
+  Worker temiz: "plan: 4 slot(s) added", `no such table` YOK. 14 route 200 + gövdede
+  0 exception izi. **Neden fark edilmemişti:** Faz 24 `PlanRunner::tick()` hatasını
+  bilerek yutuyor (yayın durmasın diye), ve /dashboard yalnız SLOT'U OLAN workspace'te
+  patlıyordu — ws2'de 2 slot var, ws1/ws3'te 0.
+  **Kalan (ürün değil veri):** ws2'de hazır kütüphane videosu YOK (Faz 8 ölü-asset
+  temizliğinden kalma), o yüzden /plan takvimi dürüst boş-durum gösteriyor ve gerçek
+  bir atama CANLI DB'de denenemedi. Kod yolu testte kanıtlı
+  (`p24/ui: putting a video on a day starts the work and pins it to that time`).
+  Bir video yüklenince akış uçtan uca denenebilir.
+
+- **BUG FIX (aynı gün, ayrı commit):** /dashboard, SLOT'U OLAN workspace'te 500 veriyordu.
+  Kök-neden yukarıdaki eksik migration'dı (giderildi), ama ASIL kod kusuru ayrı:
+  `Cockpit::snapshot()` plan özetini KORUMASIZ okuyordu — tek satırlık bir bant,
+  patlayınca KPI'ları/onayları/hesapları da birlikte götürüyordu. Worker aynı okumayı
+  `PlanRunner::tick()` içinde bilerek koruyor; panelde karşılığı yoktu. Artık try/catch +
+  `error_log` → **üçüncü durum** `['unavailable' => true]`.
+  **Neden null DEĞİL:** null = "bu workspace'in planı yok" ve panel bunu
+  "onaylanan videolar hemen yayınlanır" diye yazıyor — planı OLAN bir workspace'e
+  bunu söylemek yalan olurdu. Sıfır da değil: okunamayan sayı 0 değil, EKSİK.
+  Ekranda: "Bu haftanın planı şu an okunamadı — sayı sıfır değil, eksik."
+  **Yeni: `bin/health.php`** — status + GÖVDE taraması, login'li, hangi workspace'e
+  düştüğünü söyler (workspace switch route'u yok → bir koşu TEK tenant kanıtlar).
+  Kimlik bilgisi env'den (`HEALTH_EMAIL`/`HEALTH_PASSWORD`), dosyada varsayılan YOK.
+  **Ertelenen (gerekçeli):** panelin hesap kartı da aynı şekilde sayfayı düşürebilir —
+  `phase-25-followups.md`'de, neden bu commit'te yapılmadığıyla birlikte.
 
 - `.env` lokal dev/debug=true; `.env.example` prod/false (bilinçli ayrım).
 - Port 8080'de eski bir `php -S` süreci dinliyor — dev için 8082 kullan.
