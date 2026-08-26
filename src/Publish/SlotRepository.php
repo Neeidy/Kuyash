@@ -35,6 +35,23 @@ final class SlotRepository
      *
      * @return list<array<string, mixed>>
      */
+    /**
+     * Does this workspace publish on a schedule at all?
+     *
+     * A screen that says "approved renders publish immediately" is making a
+     * claim about HOW things go out, and it is false wherever a publishing time
+     * exists — so the screens that say it have to be able to ask.
+     */
+    public function hasAny(WorkspaceContext $ctx): bool
+    {
+        $row = $this->db->one(
+            'SELECT COUNT(*) AS n FROM publish_slots WHERE workspace_id = ? AND enabled = 1',
+            [$ctx->id()],
+        );
+
+        return (int) ($row['n'] ?? 0) > 0;
+    }
+
     public function listFor(WorkspaceContext $ctx, bool $enabledOnly = false): array
     {
         return $this->listForWorkspace($ctx->id(), $enabledOnly);

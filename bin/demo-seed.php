@@ -19,7 +19,8 @@ declare(strict_types=1);
  *     queue card, the compliance verdict and the approval record are all real
  *     output of the real pipeline. Nothing is written to make a capability look
  *     like it works when it does not.
- *   • idempotent: run it twice and nothing doubles.
+ *   • idempotent: clips are keyed by name, the demo channel is only revived
+ *     if it is disconnected, and a run is started only when none is in flight.
  *
  * Usage (refuses without the confirmation, so it cannot run by accident):
  *   php bin/demo-seed.php --yes
@@ -45,8 +46,10 @@ $wsArg = getenv('DEMO_WORKSPACE');
 if ($wsArg !== false && ctype_digit($wsArg)) {
     $ws = (int) $wsArg;
 }
-if ($ws === 0) {
-    fwrite(STDERR, "demo-seed: no workspace found.\n");
+if ($ws === 0 || $db->one('SELECT id FROM workspaces WHERE id = ?', [$ws]) === null) {
+    // Checked BEFORE anything is written: an id that does not exist used to
+    // create a media directory and two files, then die on the foreign key.
+    fwrite(STDERR, "demo-seed: no such workspace (#{$ws}).\n");
     exit(1);
 }
 $owner = $db->one(
@@ -57,33 +60,91 @@ $userId = (int) ($owner['user_id'] ?? 0);
 fwrite(STDOUT, "demo-seed: workspace #{$ws}\n");
 
 // ── 1. Library: labelled demo clips ─────────────────────────────────────────
-// A clip that PASSES the format band (15-45s) and one that does not, so the
-// screens can show both a usable video and the honest block it produces.
+// One clip inside the 15-45s format band and one below it, so the screens can
+// show a usable video AND the honest block a too-short one produces.
+//
+// EVERY NUMBER HERE IS MEASURED, NEVER ASSERTED. duration_s is not a caption:
+// AssetFetchExecutor copies it into the job result and ComplianceCheckExecutor
+// checks the format band against it — for a distribution run there is no render
+// row yet, so the asset's own figure IS the one the verdict is computed from.
+// An earlier version of this script declared "22.0" for a copy of a 3-second
+// file, which would have produced an audit record reading "format passed,
+// duration 22.0s" for a 3-second video. That is the one thing a tool whose
+// whole job is screenshots must never do.
 $fixture = dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4';
+$probe = new Kuyash\Library\MediaProbe();
+
+/** Build a clip of about $seconds by looping the fixture; null when ffmpeg cannot. */
+$build = static function (string $source, string $target, int $seconds): ?string {
+    $cmd = sprintf(
+        'ffmpeg -y -stream_loop -1 -i %s -t %d -c:v libx264 -pix_fmt yuv420p -an %s 2>/dev/null',
+        escapeshellarg($source),
+        $seconds,
+        escapeshellarg($target),
+    );
+    exec($cmd, $out, $code);
+
+    return ($code === 0 && is_file($target)) ? $target : null;
+};
+
 $clips = [
-    ['name' => str_repeat('a', 32) . '.mp4', 'title' => '[SAMPLE] Demo clip — 3s vertical test footage', 'dur' => 3.0],
-    ['name' => str_repeat('b', 32) . '.mp4', 'title' => '[SAMPLE] Demo clip — 22s vertical test footage', 'dur' => 22.0],
+    ['name' => str_repeat('a', 32) . '.mp4', 'label' => 'short (below the format band)', 'seconds' => null],
+    ['name' => str_repeat('b', 32) . '.mp4', 'label' => 'inside the format band', 'seconds' => 22],
 ];
 foreach ($clips as $clip) {
     if ($db->one('SELECT id FROM assets WHERE workspace_id = ? AND stored_name = ?', [$ws, $clip['name']]) !== null) {
-        fwrite(STDOUT, "  library: {$clip['title']} already present\n");
+        fwrite(STDOUT, "  library: {$clip['label']} clip already present\n");
         continue;
     }
     if (!is_file($fixture)) {
         fwrite(STDOUT, "  library: no fixture clip on disk — skipped\n");
         break;
     }
+
+    // Produce the file FIRST, in a temp location, so nothing is written into
+    // media storage for a row that turns out not to be insertable.
+    $tmp = sys_get_temp_dir() . '/kuyash-demo-' . bin2hex(random_bytes(6)) . '.mp4';
+    $made = $clip['seconds'] === null ? (copy($fixture, $tmp) ? $tmp : null) : $build($fixture, $tmp, $clip['seconds']);
+    if ($made === null) {
+        @unlink($tmp);
+        fwrite(STDOUT, "  library: could not build the {$clip['label']} clip (is ffmpeg installed?) — skipped\n");
+        continue;
+    }
+
+    // …then MEASURE it. Whatever the file actually is, is what gets stored.
+    $m = $probe->probe($made, 'video');
     $dest = $paths->pathFor('asset', $ws, $clip['name']);
     @mkdir(dirname($dest), 0775, true);
-    copy($fixture, $dest);
+    if (is_link($dest) || file_exists($dest)) {
+        @unlink($tmp);
+        fwrite(STDOUT, "  library: {$clip['name']} already occupies its path — skipped\n");
+        continue;
+    }
+    // Bytes FIRST, row second. The other order can leave a row marked `ready`
+    // pointing at nothing — a library screen listing a clip that is not there —
+    // and /tmp is a different device here, so rename() is a copy that can fail.
+    $size = (int) filesize($made);
+    $sha = hash_file('sha256', $made);
+    if (!@rename($made, $dest) && !(@copy($made, $dest) && @unlink($made))) {
+        @unlink($made);
+        fwrite(STDOUT, "  library: could not place the {$clip['label']} clip on disk — skipped\n");
+        continue;
+    }
     $db->run(
         'INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime, size_bytes,
                              sha256, duration_s, width, height, aspect, tags, status, created_at, updated_at, storage_disk)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [$ws, 'video', 'own', $clip['title'], 'preview.mp4', $clip['name'], 'video/mp4',
-         (int) filesize($dest), hash_file('sha256', $dest), $clip['dur'], 540, 960, '9:16', '', 'ready', $now, $now, 'local'],
+        [$ws, 'video', 'own',
+         sprintf('[SAMPLE] Demo clip — %ss vertical test footage', $m['duration_s'] === null ? '?' : (string) (int) round($m['duration_s'])),
+         'preview.mp4', $clip['name'], 'video/mp4', $size, $sha,
+         $m['duration_s'], $m['width'], $m['height'], $m['aspect'], '[]', 'ready', $now, $now, 'local'],
     );
-    fwrite(STDOUT, "  library: seeded {$clip['title']}\n");
+    fwrite(STDOUT, sprintf(
+        "  library: seeded the %s clip — measured %ss, %sx%s\n",
+        $clip['label'],
+        $m['duration_s'] === null ? '?' : (string) round((float) $m['duration_s'], 1),
+        (string) $m['width'], (string) $m['height'],
+    ));
 }
 
 // ── 2. Accounts: revive the MOCK demo channel ───────────────────────────────
@@ -117,14 +178,21 @@ if ($demo === null) {
 // configuration and spawn a fresh run on every invocation — which is exactly
 // what the first version of this script did.
 $mode = (string) ($db->one('SELECT approval_mode FROM workspaces WHERE id = ?', [$ws])['approval_mode'] ?? 'manual');
+// Guarded on a live RUN, not on the approval gate. "Is anything awaiting
+// approval" is a state the worker has to walk the run to — so with the worker
+// stopped, which is the normal state on a demo machine, every invocation
+// started another run. Each one makes real caption/hashtag calls when
+// OPENAI_MOCK=false, and the default workspace here has no budget cap, so the
+// preflight gate would not stop the bleeding either.
 $waiting = $db->one(
-    "SELECT COUNT(*) AS n FROM jobs WHERE workspace_id = ? AND status = 'awaiting_approval'",
+    "SELECT COUNT(*) AS n FROM runs
+     WHERE workspace_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')",
     [$ws],
 );
 if ($mode !== 'manual') {
     fwrite(STDOUT, "  queue: workspace approves automatically, so an empty queue is the honest state — nothing started\n");
 } elseif ((int) ($waiting['n'] ?? 0) > 0) {
-    fwrite(STDOUT, "  queue: something is already waiting for approval\n");
+    fwrite(STDOUT, "  queue: a run is already in flight — not starting another\n");
 } else {
     $asset = $db->one(
         "SELECT id FROM assets WHERE workspace_id = ? AND kind = 'video' AND status = 'ready' AND duration_s >= 15

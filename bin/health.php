@@ -37,6 +37,24 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $base = rtrim($argv[1] ?? 'http://127.0.0.1:8082', '/');
+
+// The base URL comes from argv and this script POSTs a password to it. A
+// "run the health check against staging" line copy-pasted with a lookalike host
+// would hand that password over, and the host could answer with a page carrying
+// a CSRF field and a 303 so the run still reported everything clean. So: only
+// http/https, and plaintext only to loopback.
+$parts = parse_url($base);
+$scheme = strtolower((string) ($parts['scheme'] ?? ''));
+$host = strtolower((string) ($parts['host'] ?? ''));
+if (!in_array($scheme, ['http', 'https'], true) || $host === '') {
+    fwrite(STDERR, "health: the base must be an http(s) URL, e.g. http://127.0.0.1:8082\n");
+    exit(1);
+}
+$loopback = in_array($host, ['127.0.0.1', '::1', 'localhost'], true);
+if ($scheme === 'http' && !$loopback) {
+    fwrite(STDERR, "health: refusing to send credentials in the clear to {$host}. Use https.\n");
+    exit(1);
+}
 // Credentials come from the environment and are never defaulted here: a local
 // dev password is still a password, and a second copy of one living in a
 // committed script is how they spread.
@@ -87,6 +105,8 @@ $get = static function (string $url) use ($jar): array {
         CURLOPT_COOKIEJAR => $jar,
         CURLOPT_COOKIEFILE => $jar,
         CURLOPT_TIMEOUT => 20,
+        CURLOPT_PROTOCOLS_STR => 'http,https',
+        CURLOPT_REDIR_PROTOCOLS_STR => 'http,https',
     ]);
     $body = (string) curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -104,6 +124,8 @@ $post = static function (string $url, array $fields) use ($jar): array {
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => http_build_query($fields),
         CURLOPT_TIMEOUT => 20,
+        CURLOPT_PROTOCOLS_STR => 'http,https',
+        CURLOPT_REDIR_PROTOCOLS_STR => 'http,https',
     ]);
     $body = (string) curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -135,7 +157,13 @@ if ($auth['status'] !== 303) {
     exit(1);
 }
 
-/** A readable slice of the page around the first failure marker. */
+/**
+ * A readable slice of the page around the first failure marker.
+ *
+ * With APP_DEBUG on this can carry PDO text and host paths, so treat the output
+ * as you would a log: it is for the person running the check, not for pasting
+ * into an issue unread.
+ */
 $excerpt = static function (string $body, string $marker): string {
     $at = strpos($body, $marker);
     if ($at === false) {

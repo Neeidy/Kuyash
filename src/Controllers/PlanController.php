@@ -23,6 +23,7 @@ use Kuyash\Usage\CostEstimator;
 use Kuyash\Usage\BudgetExceededException;
 use Kuyash\Workflow\Decision;
 use Kuyash\Workflow\Engine;
+use Kuyash\Workflow\Nodes;
 use Kuyash\Workflow\EventLog;
 use Kuyash\Workflow\WorkflowException;
 use Kuyash\Workflow\WorkflowRepository;
@@ -239,6 +240,14 @@ final class PlanController
      *
      * @param array<string, string> $params
      */
+    /** Is this run finished for good — nothing running, nothing left to stop? */
+    private function runIsOver(int $workspaceId, int $runId): bool
+    {
+        $run = $this->occurrences->runStatus($workspaceId, $runId);
+
+        return $run !== null && in_array($run, Nodes::RUN_TERMINAL, true);
+    }
+
     public function unassign(array $params = []): Response
     {
         if ($this->throttled()) {
@@ -261,7 +270,13 @@ final class PlanController
 
         if ($cell['run_id'] !== null) {
             $decision = $this->engine->cancelRun($wsId, (int) $cell['run_id'], $this->userEmail(), 'plan.cleared');
-            if ($decision !== Decision::Ok) {
+            // "Already decided" covers two very different situations. A run that
+            // is PUBLISHING is genuinely past the point of no return and the day
+            // must stay as it is. A run that is already over — cancelled by
+            // compliance, say, or failed — has nothing left to cancel, and
+            // refusing there left the day occupied by a dead run FOREVER: the
+            // operator could not clear it and could not reassign that date.
+            if ($decision !== Decision::Ok && !$this->runIsOver($wsId, (int) $cell['run_id'])) {
                 return $this->back('error', 'plan.too_late');
             }
         }

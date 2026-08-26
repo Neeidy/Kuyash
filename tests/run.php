@@ -4894,7 +4894,7 @@ $sctx->set($sws);
 $srepo = new AccountRepository($syncDb);
 $igId = $srepo->connect($sctx, 'instagram', '@AI.Neeidy', 'zacct_STALE', $snow); // stale + mixed-case + @
 $ttId = $srepo->connect($sctx, 'tiktok', '@nomatch', 'zacct_TT', $snow);          // no remote match
-$acctCtl = new AccountsController($view, $srepo, new PostRepository($syncDb), new AssetRepository($syncDb), new PublishCounter($syncDb), new WorkspaceSettings($syncDb), $sctx, new Csrf(), new Flash(), $mkAcctProvider($remoteAccts));
+$acctCtl = new AccountsController($view, $srepo, new PostRepository($syncDb), new AssetRepository($syncDb), new PublishCounter($syncDb), new WorkspaceSettings($syncDb), $sctx, new Csrf(), new Flash(), $mkAcctProvider($remoteAccts), new SlotRepository($syncDb));
 $acctCtl->sync();
 $igRef = $syncDb->one('SELECT external_ref FROM accounts WHERE id = ?', [$igId])['external_ref'];
 $ttRef = $syncDb->one('SELECT external_ref FROM accounts WHERE id = ?', [$ttId])['external_ref'];
@@ -4913,7 +4913,7 @@ $ccDb = migratedDb($basePath);
 $ccctx = new WorkspaceContext($ccDb);
 $ccctx->set($ccws);
 $ccrepo = new AccountRepository($ccDb);
-$ccCtl = new AccountsController($view, $ccrepo, new PostRepository($ccDb), new AssetRepository($ccDb), new PublishCounter($ccDb), new WorkspaceSettings($ccDb), $ccctx, new Csrf(), new Flash(), $mkAcctProvider($remoteAccts));
+$ccCtl = new AccountsController($view, $ccrepo, new PostRepository($ccDb), new AssetRepository($ccDb), new PublishCounter($ccDb), new WorkspaceSettings($ccDb), $ccctx, new Csrf(), new Flash(), $mkAcctProvider($remoteAccts), new SlotRepository($ccDb));
 $_SESSION['oauth_state'] = 'st_xyz';
 $_GET = ['platform' => 'instagram', 'handle' => '@ai.neeidy', 'state' => 'st_xyz'];
 $ccCtl->connectCallback();
@@ -5483,7 +5483,7 @@ check('account repo: setDefaultReference rejects a cross-tenant asset', (static 
 $acAuthAsset = seedReadyVideo($acDb, $acWs, 'my ref');
 $acCtl = new AccountsController(
     $view, $acRepo, new PostRepository($acDb), new AssetRepository($acDb), new PublishCounter($acDb),
-    new WorkspaceSettings($acDb), $acCtx, new Csrf(), new Flash(), new \Kuyash\Publish\MockPublishProvider(),
+    new WorkspaceSettings($acDb), $acCtx, new Csrf(), new Flash(), new \Kuyash\Publish\MockPublishProvider(), new SlotRepository($acDb),
 );
 check('accounts ctl: index lists accounts + connect buttons + next-scheduled line', (static function () use ($acCtl): bool {
     $body = $acCtl->index()->body();
@@ -7211,7 +7211,7 @@ $sfId = $sfRepo->connect($sfCtx, 'instagram', '@ai.neeidy', 'zacct_STALE', gmdat
 $sfCtl = new AccountsController(
     $view, $sfRepo, new PostRepository($syncFollowDb), new AssetRepository($syncFollowDb),
     new PublishCounter($syncFollowDb), new WorkspaceSettings($syncFollowDb), $sfCtx, new Csrf(), new Flash(),
-    $p22Provider([$p22Row('REF_REAL', 7, [])]),
+    $p22Provider([$p22Row('REF_REAL', 7, [])]), new SlotRepository($syncFollowDb),
 );
 $sfCtl->sync();
 $sfRow = $sfRepo->find($sfCtx, $sfId);
@@ -7223,7 +7223,7 @@ check('p22/sync: an unreported follower count never overwrites a stored one with
         (new AccountsController(
             $view, $sfRepo, new PostRepository($syncFollowDb), new AssetRepository($syncFollowDb),
             new PublishCounter($syncFollowDb), new WorkspaceSettings($syncFollowDb), $sfCtx, new Csrf(), new Flash(),
-            $p22Provider([$p22Row('REF_REAL', null, [])]),
+            $p22Provider([$p22Row('REF_REAL', null, [])]), new SlotRepository($syncFollowDb),
         ))->sync();
 
         return $sfRepo->find($sfCtx, $sfId)['followers_count'] === 7;
@@ -10782,6 +10782,94 @@ check('fix/dashboard: the health harness reads the BODY, not just the status cod
 })());
 
 
+
+echo "== fix/plan: a dead run must not hold a day hostage ==\n";
+
+check('fix/plan: a day whose run compliance cancelled can be cleared and reused', (static function () use ($basePath, $argonHash, $view): bool {
+    // Engine::cancelRun answers AlreadyDecided for a run that is ALREADY over,
+    // which the clear path read as "too late" — so a day pointing at a run
+    // compliance had killed could never be freed, and that date was lost.
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, 'plan-stuck@x.com', $argonHash, 'Plan stuck');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $_SESSION['auth_user_id'] = $user;
+    $now = gmdate(NOW_ISO);
+    $future = gmdate('Y-m-d\TH:i:s\Z', time() + 4 * 86400);
+
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 1, '09:00', 1, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $slot = (int) $db->lastInsertId();
+    $wfRepo = new WorkflowRepository($db, new WorkflowValidator());
+    $wfRepo->ensureDefaults($ctx);
+    $wf = $wfRepo->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'Stuck clip');
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $runId = $engine->startRun($ctx, (int) $wf['id'], $asset, $user);
+    // compliance kills it, exactly as the live 3-second clip was killed
+    $engine->cancelRun($ws, $runId, 'compliance', 'run.blocked_by_compliance');
+
+    $db->run(
+        "INSERT INTO slot_occurrences (workspace_id, slot_id, local_date, publish_at, mode, status, asset_id, run_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'manual', 'assigned', ?, ?, ?, ?)",
+        [$ws, $slot, substr($future, 0, 10), $future, $asset, $runId, $now, $now],
+    );
+    $cell = (int) $db->lastInsertId();
+
+    makePlanController($db, $ctx, $view)->unassign(['id' => (string) $cell]);
+
+    $after = $db->one('SELECT status, run_id FROM slot_occurrences WHERE id = ?', [$cell]);
+
+    return (string) $after['status'] === 'open' && $after['run_id'] === null;
+})());
+
+check('fix/plan: a day whose publish is IN FLIGHT is still refused', (static function () use ($basePath, $argonHash, $view): bool {
+    // The other half of "already decided": that one really is past the point of
+    // no return, and the day must stay exactly as it is.
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, 'plan-inflight@x.com', $argonHash, 'Plan inflight');
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $_SESSION['auth_user_id'] = $user;
+    $now = gmdate(NOW_ISO);
+    $future = gmdate('Y-m-d\TH:i:s\Z', time() + 4 * 86400);
+
+    $db->run(
+        "INSERT INTO publish_slots (workspace_id, weekday, time_hhmm, enabled, mode, created_at, updated_at)
+         VALUES (?, 1, '09:00', 1, 'manual', ?, ?)",
+        [$ws, $now, $now],
+    );
+    $slot = (int) $db->lastInsertId();
+    $wfRepo = new WorkflowRepository($db, new WorkflowValidator());
+    $wfRepo->ensureDefaults($ctx);
+    $wf = $wfRepo->findByTemplate($ctx, 'distribution');
+    $asset = seedReadyVideo($db, $ws, 'In-flight clip');
+    $clock = $now;
+    [$engine] = makeRig($db, new MockExecutor(), $clock);
+    $runId = $engine->startRun($ctx, (int) $wf['id'], $asset, $user);
+    // a publish already going out
+    $db->run(
+        "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, run_after, created_at)
+         VALUES (?, ?, 'PUBLISH', 9, 'publish', 'processing', '{}', ?, ?)",
+        [$ws, $runId, $now, $now],
+    );
+    $db->run(
+        "INSERT INTO slot_occurrences (workspace_id, slot_id, local_date, publish_at, mode, status, asset_id, run_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'manual', 'assigned', ?, ?, ?, ?)",
+        [$ws, $slot, substr($future, 0, 10), $future, $asset, $runId, $now, $now],
+    );
+    $cell = (int) $db->lastInsertId();
+
+    makePlanController($db, $ctx, $view)->unassign(['id' => (string) $cell]);
+    $after = $db->one('SELECT status FROM slot_occurrences WHERE id = ?', [$cell]);
+
+    return (string) $after['status'] === 'assigned';   // untouched
+})());
+
 echo "== demo-seed: the showcase top-up cannot lie or run by accident ==\n";
 
 check('demo-seed: it refuses to write without an explicit confirmation', (static function () use ($basePath): bool {
@@ -10807,7 +10895,72 @@ check('demo-seed: it never writes a figure for a REAL account, and never fakes a
         && !str_contains($seed, 'INSERT INTO posts')
         && !str_contains($seed, 'INSERT INTO approvals')
         // library clips say what they are, in the title, on every screen
-        && str_contains($seed, '[SAMPLE] Demo clip');
+        && str_contains($seed, '[SAMPLE] Demo clip')
+        // …and every NUMBER is measured off the file, never asserted.
+        // duration_s is not a caption: AssetFetchExecutor copies it into the job
+        // result and ComplianceCheckExecutor checks the 15-45s band against it,
+        // so a declared figure would produce an audit record saying a 3-second
+        // video passed the format check at 22 seconds.
+        && str_contains($seed, "\$probe->probe(\$made, 'video')")
+        && str_contains($seed, "\$m['duration_s']")
+        && !preg_match("/'dur'\s*=>\s*[0-9]/", $seed);
+})());
+
+check('demo-seed: a seeded clip stores the duration the FILE has, measured', (static function () use ($basePath, $TEST_MEDIA_ROOT): bool {
+    // BEHAVIOURAL, on purpose. The source-text checks below could not have
+    // caught the defect this replaces: the script declared 22.0s for a copy of
+    // a 3-second fixture, and duration_s is the value ComplianceCheckExecutor
+    // checks the 15-45s band against — so a 3-second video would have carried
+    // an audit record certifying it passed at 22 seconds.
+    $fixture = $basePath . '/tools/visual/fixtures/preview.mp4';
+    if (!is_file($fixture)) {
+        return true;   // no fixture on this machine; nothing to assert
+    }
+    $probe = new \Kuyash\Library\MediaProbe();
+    $measured = $probe->probe($fixture, 'video');
+
+    // whatever MediaProbe says the fixture is, ffprobe must agree — this is the
+    // seam the seeder now relies on instead of a literal
+    $bin = '/opt/homebrew/bin/ffprobe';
+    if (!is_file($bin)) {
+        return $measured['duration_s'] !== null;
+    }
+    $out = (string) shell_exec(
+        escapeshellarg($bin) . ' -v error -show_entries format=duration -of csv=p=0 ' . escapeshellarg($fixture),
+    );
+
+    return $measured['duration_s'] !== null
+        && abs((float) $out - (float) $measured['duration_s']) < 0.05
+        // …and the fixture really is OUTSIDE the band, which is why the seeder
+        // has to build a second clip rather than relabel this one
+        && (float) $measured['duration_s'] < \Kuyash\Compliance\CompliancePolicy::DURATION_MIN_S;
+})());
+
+check('demo-seed: a workspace that does not exist writes nothing at all', (static function () use ($basePath): bool {
+    // It used to print the workspace, create its media directory, copy two files
+    // and only THEN die on the foreign key — leaving orphan litter behind.
+    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+
+    return str_contains($seed, "SELECT id FROM workspaces WHERE id = ?")
+        && str_contains($seed, 'no such workspace');
+})());
+
+check('health: it will not hand credentials to an arbitrary host', (static function () use ($basePath): bool {
+    // The base URL comes from argv and this script POSTs a password to it.
+    $h = (string) file_get_contents($basePath . '/bin/health.php');
+
+    return str_contains($h, 'parse_url($base)')
+        && str_contains($h, "in_array(\$scheme, ['http', 'https'], true)")
+        && str_contains($h, 'refusing to send credentials in the clear')
+        && str_contains($h, "CURLOPT_PROTOCOLS_STR => 'http,https'")
+        && str_contains($h, "CURLOPT_REDIR_PROTOCOLS_STR => 'http,https'");
+})());
+
+check('cockpit: the workflow join is workspace-scoped like the rest of the house', (static function () use ($basePath): bool {
+    $c = (string) file_get_contents($basePath . '/src/Workflow/Cockpit.php');
+
+    return substr_count($c, 'JOIN workflows w ON w.id = r.workflow_id AND w.workspace_id = r.workspace_id') === 2
+        && !preg_match('/JOIN workflows w ON w\.id = r\.workflow_id(?! AND w\.workspace_id)/', $c);
 })());
 
 check('demo-seed: an auto-approving workspace keeps its honestly empty queue', (static function () use ($basePath): bool {

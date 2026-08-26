@@ -255,6 +255,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(Flash::class),
         $c->get(\Kuyash\Publish\PublishProvider::class),
+        $c->get(\Kuyash\Publish\SlotRepository::class),
         // one live provider call per click, against an undocumented vendor
         // rate limit: 20 syncs / 60s per IP
         new RateLimiter($c->get(Database::class), 20, 60),

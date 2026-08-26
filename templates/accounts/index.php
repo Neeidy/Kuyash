@@ -29,7 +29,11 @@ use Kuyash\Core\View;
 <div class="callout callout--banner callout--ok" role="status">
   <span class="icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 11h.01"/></svg></span>
   <div><strong><?= View::t('accounts.next_scheduled') ?></strong>
-    <?php if ($nextScheduled === null): ?>
+    <?php if ($nextScheduled === null && ($hasPlan ?? false) === true): ?>
+    <?php /* "publishes immediately" is false wherever a publishing time exists.
+             Nothing is queued right now, but that is not the same claim. */ ?>
+    <?= View::t('accounts.nothing_scheduled_planned') ?>
+    <?php elseif ($nextScheduled === null): ?>
     <?= View::t('accounts.nothing_scheduled') ?>
     <?php else: ?>
     <?= View::t('accounts.run_at', ['run' => (int) $nextScheduled['run_id']]) ?>

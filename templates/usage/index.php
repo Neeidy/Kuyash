@@ -140,7 +140,9 @@ foreach ($breakdown as $b) {
         <div class="job-row__main">
           <span class="job-row__type"><?= View::e($categoryLabels[(string) $c['category']] ?? (string) $c['category']) ?>
             <?php if (($c['run_id'] ?? null) !== null): ?><span class="muted">· <?= View::t('common.run_n', ['n' => (int) $c['run_id']]) ?></span><?php endif; ?></span>
-          <span class="job-row__entity mono"><?= View::e((string) $c['provider']) ?><?php if (($c['unit_type'] ?? null) !== null): ?> · <?= View::e((string) $c['unit_type']) ?><?php endif; ?> · <?= View::e(Format::utcTime((string) $c['created_at'])) ?></span>
+          <?php /* the DATE matters: these rows sat under a "spent this month"
+                   heading showing $0.00, and a bare time reads as today */ ?>
+          <span class="job-row__entity mono"><?= View::e((string) $c['provider']) ?><?php if (($c['unit_type'] ?? null) !== null): ?> · <?= View::e((string) $c['unit_type']) ?><?php endif; ?> · <?= View::e(substr((string) $c['created_at'], 0, 10) . ' ' . Format::utcTime((string) $c['created_at'])) ?></span>
         </div>
         <span class="chip chip--neutral mono num"><?= View::e(Format::cents((int) $c['cost_cents'])) ?></span>
       </li>
@@ -172,7 +174,7 @@ foreach ($breakdown as $b) {
       <li class="job-row">
         <div class="job-row__main">
           <span class="job-row__type"><?= $ledgerLabels[(string) $tx['type']] ?? View::e((string) $tx['type']) ?><?php if (($tx['reason'] ?? null) !== null && (string) $tx['reason'] !== ''): ?> <span class="muted">· <?= View::e((string) $tx['reason']) ?></span><?php endif; ?></span>
-          <span class="job-row__entity mono"><?= View::e(Format::utcTime((string) $tx['created_at'])) ?></span>
+          <span class="job-row__entity mono"><?= View::e(substr((string) $tx['created_at'], 0, 10) . ' ' . Format::utcTime((string) $tx['created_at'])) ?></span>
         </div>
         <span class="chip chip--<?= (int) $tx['amount_cents'] < 0 ? 'neutral' : 'ok' ?> mono num"><?= View::e(Format::cents((int) $tx['amount_cents'])) ?></span>
       </li>

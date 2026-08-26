@@ -183,6 +183,12 @@ $cellLabel = static fn (string $state): string => View::t(match ($state) {
           <p class="cell__note muted"><?= View::t('plan.reason_' . $cell['reason']) ?></p>
           <?php elseif ($cell['state'] === PlanBoard::MISSED): ?>
           <p class="cell__note muted"><?= View::t('plan.reason_missed') ?></p>
+          <?php elseif ($cell['state'] === PlanBoard::STOPPED): ?>
+          <?php /* A run cancelled mid-pipeline — by compliance, say — leaves the
+                   day pointing at it with no skip_reason, and the cell showed a
+                   bare red "Stopped" with nothing to explain it. The day says
+                   what it knows and where to look, rather than nothing. */ ?>
+          <p class="cell__note muted"><?= View::t('plan.reason_stopped_unknown') ?></p>
           <?php elseif ($cell['state'] === PlanBoard::PUBLISHED && $cell['post_count'] > 0): ?>
           <p class="cell__note muted"><?= View::t('plan.published_targets', ['done' => $cell['published_count'], 'total' => $cell['post_count']]) ?></p>
           <?php elseif ($cell['state'] === PlanBoard::AUTO_WAITING): ?>

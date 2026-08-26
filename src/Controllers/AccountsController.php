@@ -45,6 +45,7 @@ final class AccountsController
         private readonly Csrf $csrf,
         private readonly Flash $flash,
         private readonly PublishProvider $publisher,
+        private readonly \Kuyash\Publish\SlotRepository $slots,
         // Optional (null = no throttling) so existing constructions stay valid.
         private readonly ?RateLimiter $rateLimiter = null,
     ) {
@@ -73,6 +74,11 @@ final class AccountsController
             'platforms' => AccountRepository::PLATFORMS,
             'references' => $this->assets->readyReferencesFor($this->workspace),
             'nextScheduled' => $this->posts->nextScheduled($this->workspace, $now),
+            // Whether a weekly plan EXISTS. Without it this screen said
+            // "approved renders publish immediately" to every workspace,
+            // including ones whose posts go out on a schedule — the same lie
+            // the dashboard's plan band was fixed for, one screen over.
+            'hasPlan' => $this->slots->hasAny($this->workspace),
         ], 'layout/app'));
     }
 

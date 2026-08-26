@@ -141,6 +141,22 @@ final class OccurrenceRepository
         ));
     }
 
+    /**
+     * The status of a run this workspace owns, or null when it owns no such run.
+     *
+     * Tenant-scoped like every other read here: a caller must never learn the
+     * state of another workspace's run, not even as a yes/no.
+     */
+    public function runStatus(int $workspaceId, int $runId): ?string
+    {
+        $row = $this->db->one(
+            'SELECT status FROM runs WHERE id = ? AND workspace_id = ?',
+            [$runId, $workspaceId],
+        );
+
+        return $row === null ? null : (string) $row['status'];
+    }
+
     /** @return array<string, mixed>|null */
     public function find(WorkspaceContext $ctx, int $id): ?array
     {

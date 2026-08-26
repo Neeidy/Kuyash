@@ -1590,6 +1590,12 @@ html:not(.js) .topbar__live { display: none; }
   .cal__day { padding: var(--s2); }
   .cal__head { flex-direction: column; align-items: flex-start; gap: 2px; }
   .cell__actions, .cell__assign { flex-direction: column; align-items: stretch; }
+  /* A calendar cell is ~110px at 1280, so a video title in a closed <select>
+     truncates to its shared prefix. The native dropdown still shows every title
+     in full, so the control works — this just buys back a few characters of the
+     closed label. A picker that reads properly at this width needs the cell to
+     stop being 1/7th of the row, which is a calendar redesign. */
+  .cell__assign select { font-size: 11px; padding-inline: 4px; }
 }
 
 
@@ -1635,6 +1641,14 @@ html:not(.js) .topbar__live { display: none; }
 .textedit__count--over { color: var(--warn); }
 /* approaching the limit is not a problem yet — it gets weight, not alarm */
 .textedit__count--near { color: var(--text-1); font-weight: 500; }
+
+/* A read that FAILED must not look like a screen with nothing on it. The words
+   already say so; frontend.md asks empty and error to be distinct states, and
+   until now they shared a border, an icon colour and a heading weight. */
+.ui-state--unreadable { border-style: solid; border-color: var(--warn); }
+.ui-state--unreadable .ui-state__icon { color: var(--warn); }
+.ui-state--unreadable h3 { color: var(--text-1); }
+.next-publish__week--unreadable { color: var(--warn); font-size: 12px; }
 .textedit__locked {
   display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap;
   margin: 0 0 var(--s3); padding: var(--s2) var(--s3);

@@ -117,7 +117,7 @@ $biz = $cockpit['business'];
     <?php if ($planUnreadable): ?>
     <?php /* said out loud rather than left as an absence: a missing band already
              means "nothing planned", and a failed read must not borrow that */ ?>
-    <p class="next-publish__week muted"><?= View::t('cockpit.plan_unreadable') ?></p>
+    <p class="next-publish__week next-publish__week--unreadable"><?= View::t('cockpit.plan_unreadable') ?></p>
     <?php elseif (is_array($planWeek) && ($planWeek['planned'] ?? 0) > 0): ?>
     <p class="next-publish__week muted"><?= View::t(
         $cockpit['planWeek']['published'] > 0 ? 'plan.summary_published' : 'plan.summary',
@@ -164,7 +164,7 @@ $biz = $cockpit['business'];
             <?php if ($draftId !== null): ?>
             <img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy">
             <?php endif; ?>
-            <video class="inline-player__video" src="<?= $src ?>" preload="none" playsinline></video>
+            <video class="inline-player__video" src="<?= $src ?>" preload="metadata" playsinline></video>
             <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
@@ -243,10 +243,12 @@ $biz = $cockpit['business'];
                read that FAILED has not established it, and this card is where an
                operator checks whether their channels are wired up. */ ?>
       <?php if ($cockpit['accounts'] === null): ?>
-      <div class="ui-state">
+      <div class="ui-state ui-state--unreadable">
         <span class="ui-state__icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.5v3M8 5h.01"/></svg></span>
         <h3><?= View::t('dash.accounts_unreadable') ?></h3>
-        <p><a href="/accounts"><?= View::t('nav.accounts') ?></a></p>
+        <?php /* the one thing an operator wants after a failed read is to try
+                 again — not a second link to the page they can already see */ ?>
+        <p><a href="/dashboard"><?= View::t('common.try_again') ?></a></p>
       </div>
       <?php elseif ($cockpit['accounts'] === []): ?>
       <div class="ui-state">

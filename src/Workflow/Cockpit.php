@@ -179,7 +179,7 @@ final class Cockpit
     {
         $run = $this->db->one(
             "SELECT r.id, r.nodes_json, w.template
-             FROM runs r JOIN workflows w ON w.id = r.workflow_id
+             FROM runs r JOIN workflows w ON w.id = r.workflow_id AND w.workspace_id = r.workspace_id
              WHERE r.workspace_id = ? AND r.status IN ('running', 'awaiting_approval')
              ORDER BY r.updated_at DESC, r.id DESC LIMIT 1",
             [$ws],
@@ -342,7 +342,7 @@ final class Cockpit
     {
         return $this->db->all(
             "SELECT r.id, r.status, r.current_node, r.updated_at, w.name AS workflow_name, w.template
-             FROM runs r JOIN workflows w ON w.id = r.workflow_id
+             FROM runs r JOIN workflows w ON w.id = r.workflow_id AND w.workspace_id = r.workspace_id
              WHERE r.workspace_id = ? AND r.status IN ('running', 'awaiting_approval')
              ORDER BY r.updated_at DESC, r.id DESC
              LIMIT 8",
