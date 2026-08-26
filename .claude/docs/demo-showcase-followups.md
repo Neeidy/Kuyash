@@ -119,3 +119,40 @@ rewrite yok"tu.
   yaparsan kuyrukta 5 gerçek onay kapısı canlı yayın yoluna bakar durumda kalır
   (insan onaylı run günlük cap'i de kill switch'i de atlar).
   `.env` yedeği: `.env.bak.pre-casestudy.20260826T144421Z`.
+
+## Cila turu, 2. gate turu — ertelenenler (HEAD 64a9286)
+
+- **N2 (ux, P1) — onay önizlemesi 16:9 kutuda 9:16 klibi KIRPIYOR.** Dashboard'da
+  karenin yalnız **%31.6**'sı görünüyor (üstten ~%34, alttan ~%34 gidiyor) ve bu
+  kutu doğrudan "Approve & publish" butonunun üstünde. Gerçek bir Reel'de hook
+  (üst üçte bir) ve CTA/handle (alt üçte bir) önizlemede GÖRÜNMÜYOR. Kuyruk
+  kartı `aspect-ratio: 9/16` beyan ediyor ama `max-height:320px` onu eziyor →
+  gerçek oran 0.686, beyan 0.5625; ikisi çelişiyor. Fixture klipleri düz gradient
+  olduğu için gate "0 taşma / 0 siyah piksel" derken bu görünmez kalıyor.
+  **Doğru çözüm:** dashboard önizlemesine portre kutu (`max-width` ile), ve
+  kuyruğun beyan ettiği oranla render ettiğini uzlaştırmak.
+- **run-detail PRODUCTION STEPS şeridi 7. düğümü kesiyor**, kaydırma afordansı
+  yok — "completed" rozetli bir run'da göremediğin düğüm PUBLISH.
+- **TR `mod: manual`** — etiket çevrilmiş, değer çevrilmemiş (`manuel`).
+  Compliance taşıyan bir alanda parite boşluğu.
+- **Kütüphanede baytı olmayan 3 gerçek video ikon döşemesinde**, [SAMPLE]
+  klipler poster'lı → ızgara yarı bozuk görünüyor (dürüst ama tekdüze değil).
+- Kopya: `Approved by · [SAMPLE] Demo operator` — edattan sonraki orta nokta
+  liste ayracı gibi okunuyor.
+
+## Güvenlik — ertelenenler (gate onaylı, V1 için bloklamıyor)
+
+- **`POST /library/upload`'da rate limit YOK.** Diğer dört controller'da var.
+  15s poster tavanı bir tavan, hız kontrolü değil: tek oturum FPM worker'larını
+  15'er saniyelik bloklarla süresiz tutabilir. **Çok kiracılı UI'dan ÖNCE
+  zorunlu.**
+- **Poster çıkarımı hâlâ istek içinde** (ingest), kuyruklu iş değil. 15s ile
+  sınırlı. `MediaProbe` bilerek saf-PHP'ydi; bu, yükleme yoluna gerçek bir
+  decoder sokan ilk şey — kalan risk bir decoder CVE'si, ki timeout onu kapsamaz.
+- `POSTER_TIMEOUT` `.env.example`'da yok (artık bir DoS kontrolü, görünmeli).
+- `RunRepository::approvalsForRun`'ın `LEFT JOIN users`'ında workspace yüklemi
+  yok (önceden var olan; bu tur `u.name` de seçiliyor).
+- `MediaPaths::pathFor()` GET yolunda `mkdir` yapıyor (okuma yolunda yazma yan
+  etkisi; 0750 + NAME_RE ile zararsız).
+- Eklenmeyen testler: silme poster'ı kaldırıyor mu + paylaşılan-sha koruması,
+  ve R2 staging sonrası work-dir temizliği.

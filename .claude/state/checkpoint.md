@@ -7,24 +7,38 @@
 ## Son güncelleme
 
 - Tarih: 2026-08-26
-- Güncelleyen: Claude (**VİTRİN SEED (case study) — commit `ef638ae`, push'lu.
-  1093 PASS / 0 FAIL.** Manifest'li, tek komutla geri alınabilir, atıl ve
-  işaretli demo seed + `bin/demo-teardown.php`. **HİÇBİR WORKSPACE'E KURULU
-  DEĞİL** — compliance gate ws2'ye kurmayı NO-GO'ladı, haklıydı, geri alındı.
-  Üç gate turu: ux CONDITIONAL GO, compliance CONDITIONAL GO; her iki turun
-  koşulu da commit'te kapatıldı. Ertelenenler:
-  `.claude/docs/demo-showcase-followups.md`. Önceki durum aşağıda.)
-- Önceki: (**FAZ 25 KAPALI + KAPANIŞ TURU BİTTİ — 1068 PASS / 0 FAIL, hepsi push'lu.**
-  Faz 25 (onay adımında caption+hashtag düzenleme) `447451c`'ye kadar commit+push edildi.
-  Sonrasında kapanış turu: **dev DB 0017'ye taşındı** (Faz 24 takvimi o DB'de ÖLÜYDÜ),
-  panelin iki yan kartına **üçüncü durum** eklendi (okuma patlarsa "hiç yok" ifadesini
-  ödünç ALAMAZ) → **ADR-024**, uçtan uca canlı smoke yapıldı (**ürün defect'i YOK**),
-  `bin/health.php` (status DEĞİL gövde de taranır) ve `bin/demo-seed.php` (korumalı,
-  etiketli vitrin seed'i) eklendi. Smoke kaydı: `.claude/docs/smoke-2026-08-26.md`.
-  **ZERNIO_MOCK smoke için true'ya alındı ve tur sonunda false'a GERİ ALINDI** (teyit
-  edildi). Başka `.env` değişikliği YOK.)
+- Güncelleyen: Claude (**CASE-STUDY CİLA + DOLDURMA — commit `64a9286`'ya kadar
+  push'lu. 1103 PASS / 0 FAIL.** Poster'lar, opacity-only Live nokta,
+  kesilmeyen [SAMPLE] çipi (**ADR-025**, **ADR-026**); vitrin seed **ws2'ye
+  KURULU**. Üç gate koştu, üçü de gerçek kusur buldu; hepsi kapatıldı.
+  **ÖN KOŞULLAR GEÇİCİ: `ZERNIO_MOCK=true` + ws2 `manual` — yakalama bitince
+  ÖNCE teardown, SONRA geri al.** Ertelenenler:
+  `.claude/docs/demo-showcase-followups.md`.)
 
 ## Mevcut durum (kaldığımız yer)
+- **VİTRİN SEED ws2'YE KURULU** (134 manifest kaydı: 10 poster'lı klip, 2 mock
+  kanal, 8 run, 4 saat + 8 takvim hücresi, 6 masraf, 1 demo kullanıcı).
+  Geri alma: `php bin/demo-teardown.php --yes`.
+- **ÖN KOŞULLAR SAĞLANDI, FERAGAT EDİLMEDİ — ve GEÇİCİ:** ws2 `approval_mode`
+  `auto`→`manual` (SQL), `.env` `ZERNIO_MOCK` `false`→`true` (yedek:
+  `.env.bak.pre-casestudy.20260826T144421Z`), worker yeniden başlatıldı.
+  Sağlayıcı `mock` olarak çözülüyor (teyitli). **SIRA ÖNEMLİ:** yakalama bitince
+  ÖNCE teardown, SONRA flag'ler geri. Ters sırada kuyrukta 5 GERÇEK onay kapısı
+  canlı yayın yoluna bakar kalır (insan onaylı run günlük cap'i de kill
+  switch'i de ATLAR).
+- **Poster mimarisi (ADR-025):** `assets.sha256`'dan türetilen içerik-adresli
+  dosya, `cache` store'da — **migration YOK, kolon YOK**. Çıkarım ingest'te,
+  `bin/backfill-posters.php`'de ve seed'de; **sayfa sunan istekte ASLA**.
+  Kendi `Ffmpeg`'i **15s** timeout ile (paylaşılan 900s assembly watchdog'u
+  yükleme isteğinde bir DoS bütçesiydi). R2 nesnesi work-dir'e stage edilip
+  temizleniyor (kanonik yola değil — yoksa backfill tüm kütüphaneyi yerele
+  geri indirirdi).
+- **ADR-026 — "Approved by you" yalnız KARAR VERENE söyleniyor.** Etiket sabit
+  kodluydu; "you" deiktik olduğu için okuyan HERKESE "sen onayladın" diyordu,
+  yanındaki e-posta ise başkasını gösteriyordu. Aynı workspace'teki iki gerçek
+  operatör de bunu yaşardı; demo hesabı sadece yolu ilk tetikleyen veriydi.
+  Kayıt artık karar veren hesabın ADINI da basıyor (işaret o ekrana böyle
+  ulaşıyor).
 
 - **VİTRİN SEED HAZIR, KURULU DEĞİL.** `php bin/demo-seed.php --yes` 10 klip
   (ölçülmüş süre), 2 mock kanal (asla `connected`), 8 run (3 bitmiş+yayınlanmış,
@@ -111,26 +125,17 @@
 
 ## Sıradaki adım
 
-0. **Vitrin seed hazır; kurulum senin kararın** (yukarıdaki "ws2 için operatör
-   kararı"). Yakalama sırasında **bir demo run'ı gerçekten onayla** — teardown
-   onu korur (event pinler, `blockers()` önden söyler), böylece GERÇEK bir onay
-   kaydı fotoğraflanabilir; seed hiçbirini uydurmuyor.
-   Case study, visual fixture'ı OLMAYAN bir DB'den yakalanmalı (bkz. followups B5).
-1. **Kuyash'ta CC tarafında başka bekleyen iş YOK.** Faz 25 ve kapanış turu kapandı, hepsi
-   push'lu. Yeni iş yalnız `START PHASE N` token'ı ile başlar.
-1. **Operatör kararı bekleyenler (ürün değil, işletim):**
-   - `ZERNIO_MOCK=false` geri alındı → gerçek yayın yolu yeniden AÇIK. İlk kontrollü
-     gerçek yayın senin inisiyatifinde.
-   - ws2 `approval_mode=auto` — bu yüzden onay kuyruğu dürüstçe boş. Manuel kapı
-     isteniyorsa /settings'ten değiştir (ürün kararı, ben değiştirmedim).
-   - R2 → `bin/r2-smoke.php` PASS + PRIVATE teyidi sonra `STORAGE_DRIVER=r2`;
-     backup cron (`bin/backup.php`); `caddy validate` + canlı tunnel; prod `.env`
-     APP_DEBUG=false + gerçek key'ler.
-2. **Ertelenenler:** `.claude/docs/phase-25-followups.md` — en önemlisi **JS kapalıyken
-   Onayla hâlâ kaydedilmemiş metni sessizce atar** (sunucu kemeri ayrı iş), **hash
-   uyuşmazlığı kalıcı** (operatöre düzeltme yolu yok), ve panelin `error_log()`'u
-   uygulama log'una düşmüyor.
-3. Eski faz ertelenenleri: phase-24/12/11/10/5 followups dosyaları.
+0. **Case study'yi yakala.** Ekranlar dolu ve poster'lı. Yakalama sırasında
+   **bir demo run'ı gerçekten onayla** — teardown onu korur (event pinler),
+   böylece GERÇEK bir onay kaydı da fotoğraflanır.
+1. **Yakalama bitince, BU SIRAYLA:** `php bin/demo-teardown.php --yes` →
+   sonra `ZERNIO_MOCK=false` + ws2'yi `auto`'ya geri al.
+2. **Karar bekleyen tek ürün sorusu: /workflows.** `frontend.md` node graph için
+   "selection state + sağ ayar paneli" diyor; 99 PNG'nin hiçbirinde ikisi de yok.
+   Case study "görsel workflow builder" iddia edecekse önce bu çözülmeli.
+3. Ertelenenler: `.claude/docs/demo-showcase-followups.md` (en önemlisi: onay
+   önizlemesi 9:16 klibin yalnız %31.6'sını gösteriyor, ve `/library/upload`'da
+   rate limit yok — çok kiracılı UI'dan önce zorunlu).
 
 ## Açık konular / bekleyenler
 
@@ -177,6 +182,9 @@
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
 
+- 2026-08-26 — **CASE-STUDY CİLA + DOLDURMA (A→C) — `64a9286`'ya kadar push'lu, 1103 PASS/0 FAIL, vitrin ws2'ye KURULU.** (A) Poster mimarisi: içerik-adresli dosya (`sha256`), migration YOK; ingest+backfill+seed'de üretilir, sayfa sunan istekte ASLA; kendi `Ffmpeg`'i 15s ile. Live nokta artık **yalnız opacity** (box-shadow animasyonu her karede repaint'ti). `[SAMPLE]` kendi çipi → 768px takvim hücresinde artık hem çip hem başlık okunuyor (önce yalnız `[SAMPLE]…` kalıyordu). (B) Ön koşullar **sağlandı**: ws2 `manual`, `ZERNIO_MOCK=true`, worker restart. (C) **Üç gate, üçü de gerçek kusur buldu ve üçü de BENİMDİ.** **ux P0:** onay önizlemelerinin 5/6'sı **saf siyah** çıkıyordu — poster `<img>` ile `<video>` ikisi de `absolute inset:0`, video sonra geliyor, `preload=metadata` SİYAH boyuyor; şimdiye kadar doğru görünmesinin tek sebebi fixture'ın render dosyalarının 404 vermesiydi → poster artık `<video poster="">` üzerinde (422.065 siyah piksel → **0**). **security 2×HIGH:** `ensure()` "asla throw etmez" diyordu ama koruma metodun ortasını kapsıyordu ve çağrı `AssetIngest`'in **catch'inin İÇİNDEYDİ** — yazılamayan bir `storage/cache` yüklenen dosyayı SİLİP satırı bırakırdı, yani o catch'in önlemek için var olduğu yetim; ve thumbnail alma **900s assembly watchdog**'unu `POST /library/upload` içinde miras alıyordu (tek 200MB dosya bir worker'ı çeyrek saat tutar). **compliance HIGH:** "Approved by you" sabit kodluydu → okuyan herkese "sen onayladın" diyordu (ADR-026); demo onay kaydının kendisini truthful buldu, ekranı bulmadı. **2. turda gate iki iddiamı çürüttü:** commit mesajımda "TTL 86400→3600" yazıyordu ama edit **hiç uygulanmamıştı** (yanlış bloğa eşleşmiş), ve yeni `json_extract` alt sorgum **onay kuyruğunu sessizce kesebiliyordu** (SQLite malformed JSON'da raise eder, PDO `fetchAll()` önceki satırları throw ETMEDEN döner → bir bozuk satır kendisini ve sonrasındaki her işi gizler) → `json_valid()`. Ayrıca yükseklik tavanım 768'de **genişliği** daralttı (tarayıcı oranı korumak için width'i yeniden hesaplıyor) → `width:100%`. Ertelenenler followups'ta; en önemlisi onay önizlemesinin 9:16 klibin yalnız **%31.6**'sını göstermesi ve `/library/upload`'da rate limit olmaması.
+
+
 - 2026-08-26 — **VİTRİN SEED (case study) — commit `ef638ae` push'lu, 1093 PASS/0 FAIL, HİÇBİR WORKSPACE'E KURULU DEĞİL.** Manifest'li (`0018`), tek komutla geri alınabilir demo seed + `bin/demo-teardown.php`. **Üç gate turu; ilk ikisi NO-GO ve ikisi de haklıydı.** (1) `postTarget()` sağlayıcı kökenine bakıyordu ama `status`'a BAKMIYORDU — `connectedFor()` tam da ona bakar, yani mock ama CONNECTED olan `@smoke_tt` kazandı ve bugün tarihli demo post gerçek günlük cap'i yedi; testim kaçırdı çünkü fixture'da "mock ama connected" satırı yoktu (artık var). (2) Digest'i doldurmak için bugüne tarihlediğim `auto` onay kaydı canlı auto-approval cap'ini 2/2'den 3/2'ye çıkardı — o sayaç tetiklenince ürün `guardrail.daily_cap_reached`'i UYDURMA sayıyla append-only log'a yazar; seed'in kendi yazmadığı satırı ürüne yazdırmak aynı ihlal. (3) O düzeltmede YANLIŞ boynuzu tuttum: `auto` yerine `manual` yazdım, yani politika damgalı AJAN kaydını **uydurma KİŞİ kaydına** çevirdim — run sayfası "Approved by you · <gerçek e-posta>" basıyor. Reviewer kendi C3 argümanımı bana geri çevirdi: yalnız karar+kimlik+zaman basan yüzey işaret taşıyamaz, o hâlde DOLDURULMAZ → **hiç onay kaydı yazılmıyor**. Testim baştan beri geçiyordu çünkü ŞEMA şeklini doğruluyordu, ki uydurma kayıt onu kusursuz sağlar; artık YOKLUĞU doğruluyor. (4) Kredi defteri satırları ws2'de gösterilen ömür boyu bakiyenin **%72'siydi** — bakiye bir toplam, işaret taşıyamaz → hiç yazılmıyor. (5) Slop skorları literal'di (gerçek ölçümden 0.06'ya kadar sapıyordu) → artık ürünün kendi `SlopScorer`'ı ölçüyor; test `history_runs` dizisini (0..7) doğruluyor, çünkü skor sonradan yeniden ölçülemez ama geçmiş BOYUTU o anın parmak izi. **Compliance NO-GO'su ws2 için haklıydı:** slop penceresi %80 demo olmuş, operatörün gerçek 19–25 run'ları pencereden atılmıştı (slop maksimum alır → gerçek bir benzer TEMİZ skorlanır), üstelik `ZERNIO_MOCK=false`. **Seti ws2'den tamamen kaldırdım**; her sayım seed öncesine döndü, 0 FK ihlali. Seed artık auto-mode'u ve canlı yayın yolunu **ÖN KOŞUL olarak** reddediyor (`--auto-mode-ok` / `--live-publish-ok`). **Kendi harness'imde iki kusur:** dashboard KPI'ı 7 yerine 6 fotoğraflıyordu — `motion.js` 1000ms sayıyor, `shot.mjs` 450ms'de yakalıyor, `toFixed(0)` aşağı yuvarlıyor (ux gate kök-nedeni buldu; artık `prefers-reduced-motion`); ve visual gate her sağlayıcıyı mock'larken `ZERNIO_MOCK`'u `.env`'den MİRAS ALIYORDU — yeni ön koşul yakaladı. Teardown: rowid yeniden kullanımına karşı kimlik kontrolü, ve audit log bir run'ı pinlediğinde gerçekten KISMİ (pinli run bütün kalır, gerisi çıkar). Ertelenenler: `.claude/docs/demo-showcase-followups.md`.
 
 - 2026-08-26 — **KAPANIS TURU (A-E) — 1059 PASS/0 FAIL, 4 commit push'lu, urun defect'i YOK.** (A) Panelin **hesap karti** da plan satiri gibi korumasizdi -> ayni ucuncu-durum deseni: `null`, bos liste DEGIL (bos liste "hic hesabin yok" ifadesinin kaynagi; basarisiz okuma onu odunc alirsa canli kanali olan operatore hic kanali yokmus denir). Guard'i kaldirip testin gercek `PDOException`'i urettigini kanitladim. **Nerede DURDUGUMUZ da karar:** kpis/activeRuns/awaiting/nextPublish/business PANELIN KENDISI — `runs`/`jobs` okunamiyorsa durustce gosterilecek bir sey kalmaz, onlar sesli patlamali (ADR-024). (B) **Canli uctan uca smoke, yayin MOCK** (`ZERNIO_MOCK=true`, `PublishProvider::name()==='mock'` ile teyitli): 25 HTTP kontrolu pass; compliance 3sn klibi 15-45sn bandina karsi **blokladi** (durust gerekce + 2 denetim satiri); slop 0.6452 -> warn -> **otomatik onay reddetti**, insana birakti; onay kayitlari invaryanti tuttu (`auto/NULL/policy` ve `manual/2/NULL`); duzenlenen caption yayinlandi, `captions_ai` korundu; 1 kurusluk butce cap'i **run satiri bile yaratmadi**; yabanci workspace run'i 404, cross-tenant metin yazimi hicbir sey yazmadi. **Iki "hata" benim smoke'umun hatasiydi** (run 1'i baska workspace sandim — kendi workspace'imizdi; kill switch'e `state` gondermedim — o blind toggle degil), kayda gecirdim cunku bunlari gizleyen yesil matris daha az degerli. (C) B defect bulmadi -> **uydurma is yapmadim**. (D) `bin/demo-seed.php`: korumali (`--yes` + CLI), etiketli vitrin seed'i — gercek hesaba **asla** sayi yazmaz (`followers_count`'a dokunmaz -> kart "sample" isaretlemeye devam eder), job/post/approval **INSERT etmez** (run'lari BASLATIR, kart/verdict/onay kaydi gercek pipeline ciktisi olur). Ilk surumu her cagrida yeni run doguruyordu — iki kez calistirinca yakaladim: otomatik-onayli workspace'te kuyrugun bos olmasi DOGRU, o yuzden artik hicbir sey baslatmiyor. (E) 3 gate + ADR-024 + phase-plan + checkpoint. **ZERNIO_MOCK false'a geri alindi, teyit edildi.**
@@ -195,5 +203,3 @@
 - 2026-08-22 — **SALT-OKUMA SAĞLIK KONTROLÜ + İNCELEME + 2-FAZLIK PLAN (ONAYLI, kod YOK, FAZ TOKEN'I BEKLİYOR).** Sistem sağlıklı ayağa kalktı: 839 PASS/0 FAIL, 12 route 200 (0×500), migration güncel (0013 doğrulandı), worker healthy-idle (PID 14205), dev server 8082 (PID 13685); tek mutasyon = 2 process başlatma (repo/DB dokunulmadı, git temiz). **CANLI Zernio read-only probe (yayın/para YOK):** GET /accounts gerçek `followersCount=7` + `hasAnalyticsAccess=true`; GET /analytics HTTP 200 doğru şekilli (overview/posts/pagination) AMA per-post BOŞ (`posts:[]`, `total:0`, `externalPostCount:0`) → per-post metrik Zernio sync populate edene dek yok, follower bugün gerçek. GET /posts/{id} zengin metadata ama metrik alanı YOK. **Bulgular:** (1) accounts dedup BUG — `connect()` körlemesine INSERT, `(ws,platform,handle)` UNIQUE yok → id2 stale-disconnected dup (@ai.neeidy ×2, 06-13→id2 + 06-14→id3, sync ikisinin ref'ini çekti). (2) UI BUG — kayan-pill `transform … var(--spring)` (cubic-bezier 0.34,**1.56**,…) overshoot = "sekmelerde geri sekme"; fix app.css:873 --spring→--ease-out. (3) posts 3/4/5 GERÇEK IG reel (24-hex ext_id + instagram.com/reel URL; post5 bugün). Dangling/orphan YOK, demo verisi dürüstçe etiketli (crc32 account-card = salt sunum, "örnek" çipi). **Plan onaylandı** (`~/.claude/plans/daha-detayl...hopcroft.md`): Faz1 (analytics adapter+snapshot / follower wiring / dedup+temizlik / UI fix / demo seed / jargon) + Faz2 (haftalık slot scheduling). Kullanıcı kararları: dedup=fix+id2 temizle, Faz2=tam slot, metrik=gerçek follower+etiketli örnek engagement. **phase-discipline: `START PHASE N` token'ı gelene dek kod YAZILMAYACAK.** Bug: gerçek publish `400 Invalid accountId format [invalid_field_value]`. POST /posts `platforms[].accountId = accounts.external_ref`, ama connect bunu UYDURUYORDU (`AccountsController.connectCallback`: `zacct_`+random) — gerçek Zernio SocialAccount `_id`'si (24-hex, GET /accounts) yerine. openapi: accountId="The Zernio SocialAccount ID"; canlı `_id=6a2f250a5f7d1751abb4803a`. FIX (adapter/controller/data; engine/şema/node-graph DEĞİŞMEDİ): `accounts()` PublishProvider arayüzüne taşındı (Mock + test Spy impl); `AccountRepository::setExternalRef()`; `connectCallback` artık gerçek _id'yi `accounts()` ile çözüyor (platform+@/case-insensitive username; eşleşmezse fallback); yeni `AccountsController::sync()` + `POST /accounts/sync` + /accounts "Hesapları eşitle" butonu tüm hesapların external_ref'ini canlı _id'ye reconcile ediyor. UI vendor-neutral (jargon-gate gereği "Zernio" kelimesi UI metninden çıkarıldı). **839 PASS/0 FAIL (+7):** payload accountId=external_ref verbatim, 400 invalid_field_value→REJECTED, sync reconcile (match/no-match/normalize), setExternalRef, connectCallback gerçek _id, mock accounts() 24-hex. secret yok; 10 dosya. **CANLI UÇTAN UCA KANIT (yayın YOK):** gerçek provider GET /accounts `@ai.neeidy _id=6a2f250a5f7d1751abb4803a` → ws#2 #3 external_ref reconcile (WAL-safe yedek) → gerçek `postPayload` `platforms[0].accountId`=o _id (MATCH, 24-hex). ws#2 #3 data-fix UYGULANDI → panelden gerçek publish retry hazır.
 
 - 2026-06-15 — **ASSEMBLY R2-STAGING FIX (commit `62c76fe`, push'lu) + ws#2 ölü-asset temizliği (salt veri) + GERÇEK YAYIN AÇILDI.** Bug: STORAGE_DRIVER=r2'de ffmpeg girdisi (R2'ye taşınmış/evicted) yerelde yok → "No such file (exit 254)" tüm run'ları blokluyordu. FIX (asset-resolution katmanı; engine/şema/node-graph DEĞİŞMEDİ): `AssemblyEngine::localInput()` visual+audio için yerel-yoksa default durable disk'ten (R2) canonical'a stage, hiçbirinde yoksa dürüst `FfmpegException` (kriptik çökme yerine); `AssetCache::remember()` HIT artık yerel dosyayı doğruluyor → R2'den restore / kurtarılamazsa yerinde re-produce (opsiyonel `StorageManager`, nullable). **832 PASS/0 FAIL (+7)**: cache restore/re-produce/regresyon + R2-sim assembly E2E; secret yok. **Canlı retry #13/#18:** stale-kod worker (PID 3027) önce eski kodla tüketti → durdurdum, taze worker fix'li → hata ham ffmpeg'den "assembly input ... unrecoverable"a döndü → **ASIL neden VERİ KAYBI**: referans asset #3 "Smoke clip" `storage_disk=local` + yerel YOK + R2'de YOK (baytlar kayıp, canlı probe). **Temizlik (WAL-safe yedek `kuyash.pre-deadasset-cleanup.*`):** #13/#18 dead-lettered (terminal); ws#2 `avatar_asset_id`(=3)→NULL; asset #3 hard-delete → ws#2 0 ready asset. **#4 CANLI KANIT:** gerçek `AssetFetchExecutor` ws#2 faceless+face → `source=stock provider=pexels`, 5.3MB klip İNDİ (eski 'face'→ölü-avatar yolu elendi). **AÇIK:** worker PID 34294 (13:56 başladı, fix 13:59 commit) fix'i yüklememiş olabilir → kullanıcı `php bin/worker.php` RESTART etmeli; yoksa yeni R2-migration run'ları hâlâ patlar.
-
-- 2026-06-15 — **GENERATION STACK GERÇEĞE AÇILDI + TTS streaming-WAV BUG FIX (commit `6b0c56f`, push'lu).** `.env`: `OPENAI_MOCK=false` + `TTS_MOCK=false` + `STOCK_MOCK=false` (STORAGE_DRIVER=r2; ZERNIO_MOCK=true + VIDEO_MOCK=true KALDI). Her sağlayıcı küçük canlı çağrıyla doğrulandı: OpenAI text 200+usage (`OpenAiTextProvider`, gpt-4o-mini, gerçek fikir; tek minik çağrı sub-cent→cost 0); Pexels 720×1280 dikey klip indirdi+ffmpeg (`PexelsStockProvider`); R2 **6/6 PASS** bucket PRIVATE. **TTS bug bulundu+fix:** OpenAI WAV'ı *streaming* döndürüyor (data chunk size = `0xFFFFFFFF` placeholder, header hexdump kanıtı) → `WavWriter::durationOf` **89478s** ölçtü (gerçek ffprobe 2.35s). FIX: sentinel ise gerçek payload = `fstat(filesize)−payload_offset`; normal/trailing-chunk WAV DOKUNULMADI (declared size). +3 test → **825 PASS/0 FAIL** (regresyon yok). Gerçek TTS yeniden doğrulandı: adapter **4.45s = ffprobe 4.45s** → `TTS_MOCK=false` KALDI. İlk turda TTS bug yüzünden geçici mock'a alınmıştı; fix sonrası gerçek. `.env` yedeği `.env.bak.pre-gen-20260615T012753Z`. **DİKKAT: generation artık GERÇEK PARA harcar; bütçe cap'leri PreflightGate ile etkin.** Pipeline ÇALIŞTIRILMADI (kullanıcı panelden yapacak). Değişen kod sadece `src/Media/WavWriter.php`+`tests/run.php`; secret yok.

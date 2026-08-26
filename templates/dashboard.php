@@ -166,7 +166,7 @@ $biz = $cockpit['business'];
                      paints black until it plays */ ?>
             <?php $poster = $draftId !== null ? '/render/' . (int) $draftId . '/poster'
                   : (($job['has_poster'] ?? false) ? '/media/' . (int) $libId . '/poster' : null); ?>
-            <video class="inline-player__video" src="<?= $src ?>"<?= $poster !== null ? ' poster="' . $poster . '"' : '' ?> preload="metadata" playsinline></video>
+            <video class="inline-player__video" src="<?= View::e($src) ?>"<?= $poster !== null ? ' poster="' . View::e($poster) . '"' : '' ?> preload="metadata" playsinline></video>
             <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
