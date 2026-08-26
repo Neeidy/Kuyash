@@ -259,9 +259,24 @@ $hasRecord = isset($idea['hook']) || isset($idea['idea']) || isset($script['scri
           · <?= View::e(substr((string) $approval['decided_at'], 0, 10) . ' ' . Format::utcTime((string) $approval['decided_at'])) ?>
         </span>
         <?php else: ?>
+        <?php
+        /* "by you" ONLY when the viewer is the person who decided. The label was
+           hard-coded, so every manual record told whoever was looking that THEY
+           approved it — false for a second operator in the same workspace, and
+           false for any record made by another account. The email sat right
+           beside it saying otherwise, which makes it a contradiction rather than
+           a mere omission: the claim was in the chip, the truth was in the
+           metadata. */
+        $byMe = $viewerId !== null && (int) ($approval['decided_by'] ?? 0) === $viewerId;
+        $who = trim((string) ($approval['decided_by_name'] ?? '')) !== ''
+            ? (string) $approval['decided_by_name'] . ' · ' . (string) ($approval['decided_by_email'] ?? '?')
+            : (string) ($approval['decided_by_email'] ?? '?');
+        ?>
         <span class="chip chip--<?= $approval['decision'] === 'approved' ? 'ok' : 'err' ?> chip--record">
-          <?= $approval['decision'] === 'approved' ? View::t('runs.approved_by_you') : View::t('runs.rejected_by_you') ?>
-          · <?= View::e((string) ($approval['decided_by_email'] ?? '?')) ?>
+          <?= $approval['decision'] === 'approved'
+              ? View::t($byMe ? 'runs.approved_by_you' : 'runs.approved_by')
+              : View::t($byMe ? 'runs.rejected_by_you' : 'runs.rejected_by') ?>
+          · <?= View::e($who) ?>
           · <?= View::e(substr((string) $approval['decided_at'], 0, 10) . ' ' . Format::utcTime((string) $approval['decided_at'])) ?>
         </span>
         <?php endif; ?>

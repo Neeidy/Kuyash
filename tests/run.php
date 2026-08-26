@@ -4587,16 +4587,43 @@ while ($mbWorker->tick()) {
 $mbEngine->approve($mbCtx, $aeJobs->awaitingApproval($mbCtx)[0]['id'], $mbUser, 'mb@example.com');
 while ($mbWorker->tick()) {
 }
-$mbBody = $badgeView->render('runs/show', [
-    'title' => 'x', 'active' => 'queue', 'workspaceName' => 'MB', 'csrfField' => '',
-    'flashes' => [], 'run' => $badgeRuns->find($mbCtx, $mbRun),
-    'jobs' => $aeJobs->jobsForRun($mbCtx, $mbRun),
-    'timeline' => $aeEvents->timelineForRun($mbCtx, $mbRun),
-    'approvals' => $badgeRuns->approvalsForRun($mbCtx, $mbRun),
-], 'layout/app');
+$mbRender = static function (?int $viewerId) use ($badgeView, $badgeRuns, $aeJobs, $aeEvents, $mbCtx, $mbRun): string {
+    return $badgeView->render('runs/show', [
+        'title' => 'x', 'active' => 'queue', 'workspaceName' => 'MB', 'csrfField' => '',
+        'flashes' => [], 'run' => $badgeRuns->find($mbCtx, $mbRun),
+        'jobs' => $aeJobs->jobsForRun($mbCtx, $mbRun),
+        'timeline' => $aeEvents->timelineForRun($mbCtx, $mbRun),
+        'approvals' => $badgeRuns->approvalsForRun($mbCtx, $mbRun),
+        'viewerId' => $viewerId,
+    ], 'layout/app');
+};
+$mbBody = $mbRender($mbUser);
 check('badge: manual record renders "Approved by you · email", NEVER the agent', (static function () use ($mbBody): bool {
     return str_contains($mbBody, 'Approved by you') && str_contains($mbBody, 'mb@example.com')
         && !str_contains($mbBody, 'Auto-approved by compliance agent');
+})());
+
+check('badge: "by you" is said ONLY to the person who actually decided', (static function () use ($mbRender, $mbUser): bool {
+    // "you" is deictic — it resolves to whoever is reading. The label was
+    // hard-coded, so a second operator in the same workspace (and anyone looking
+    // at a record made by another account) was told THEY approved it, while the
+    // email beside it said otherwise. The claim was in the chip; the truth was in
+    // the metadata.
+    $other = $mbRender($mbUser + 1000);
+    $anon = $mbRender(null);
+
+    foreach ([$other, $anon] as $body) {
+        if (str_contains($body, 'Approved by you')
+            || !str_contains($body, 'Approved by')
+            || !str_contains($body, 'mb@example.com')
+            // and it is still a HUMAN record, never re-labelled as the agent
+            || str_contains($body, 'Auto-approved by compliance agent')
+        ) {
+            return false;
+        }
+    }
+
+    return true;
 })());
 
 echo "== Compliance: SettingsController + DigestController (unit) ==\n";
@@ -11074,6 +11101,121 @@ check('cockpit: the workflow join is workspace-scoped like the rest of the house
 
     return substr_count($c, 'JOIN workflows w ON w.id = r.workflow_id AND w.workspace_id = r.workspace_id') === 2
         && !preg_match('/JOIN workflows w ON w\.id = r\.workflow_id(?! AND w\.workspace_id)/', $c);
+})());
+
+echo "== poster: a still frame per video, and the route that serves it ==\n";
+
+/**
+ * The poster layer had NO coverage at all: both MediaController constructions in
+ * this file passed null for $posters, so the only branch the suite ever ran was
+ * the "no poster service" 404. Tenant isolation, the photo redirect, the
+ * content-addressed naming and the never-throws contract were all unexercised
+ * while the route was live.
+ */
+$posterRoot = tempDir('poster');
+foreach (['asset', 'cache', 'render', 'work'] as $posterStore) {
+    @mkdir($posterRoot . '/' . $posterStore, 0775, true);
+}
+$posterPaths = new MediaPaths([
+    'asset' => $posterRoot . '/asset', 'cache' => $posterRoot . '/cache',
+    'render' => $posterRoot . '/render', 'work' => $posterRoot . '/work',
+]);
+$posterFfmpeg = new \Kuyash\Media\Ffmpeg('/nonexistent/ffmpeg', '/nonexistent/ffprobe', 5);
+$poster = new \Kuyash\Media\AssetPoster($posterFfmpeg, $posterPaths);
+
+check('poster: the name is derived from the CONTENT, not the row id', (static function () use ($poster): bool {
+    $a = ['workspace_id' => 1, 'sha256' => str_repeat('a', 64)];
+    $b = ['workspace_id' => 1, 'sha256' => str_repeat('b', 64)];
+
+    // same bytes → same poster (a duplicate upload reuses it); different bytes →
+    // different poster; and the name is a valid media name, so it can never
+    // escape its store
+    return \Kuyash\Media\AssetPoster::nameFor($a) === \Kuyash\Media\AssetPoster::nameFor($a + ['id' => 99])
+        && \Kuyash\Media\AssetPoster::nameFor($a) !== \Kuyash\Media\AssetPoster::nameFor($b)
+        && preg_match('/^[0-9a-f]{32}\.jpg$/', \Kuyash\Media\AssetPoster::nameFor($a)) === 1;
+})());
+
+check('poster: ensure() returns null instead of throwing when ffmpeg is absent', (static function () use ($poster): bool {
+    // a poster is decoration — it must never be able to fail an upload
+    return $poster->ensure([
+        'id' => 1, 'workspace_id' => 1, 'kind' => 'video',
+        'stored_name' => str_repeat('c', 32) . '.mp4', 'sha256' => str_repeat('a', 64),
+    ]) === null;
+})());
+
+check('poster: a poster-layer fault degrades to "no poster", it does not throw', (static function () use ($posterFfmpeg): bool {
+    // MediaPaths::pathFor() CREATES the store dir and throws when it cannot —
+    // an unwritable storage/cache, a full disk, a read-only mount. pathFor() and
+    // exists() sat OUTSIDE ensure()'s guard, so that fault reached a grid render
+    // and, worse, the ingest catch that deletes the just-stored asset file.
+    $broken = new MediaPaths([
+        'asset' => '/proc/nonexistent/asset', 'cache' => '/proc/nonexistent/cache',
+        'render' => '/proc/nonexistent/render', 'work' => '/proc/nonexistent/work',
+    ]);
+    $p = new \Kuyash\Media\AssetPoster($posterFfmpeg, $broken);
+    $asset = ['id' => 1, 'workspace_id' => 1, 'kind' => 'video',
+        'stored_name' => str_repeat('c', 32) . '.mp4', 'sha256' => str_repeat('a', 64)];
+
+    return $p->pathFor($asset) === null && $p->exists($asset) === false && $p->ensure($asset) === null;
+})());
+
+check('poster route: another tenant\'s asset is a 404, never a file', (static function () use ($basePath, $posterPaths, $posterFfmpeg): bool {
+    $db = migratedDb($basePath);
+    $now = gmdate(NOW_ISO);
+    [, $wsA] = seedUser($db, 'pa@x.com', 'h', 'A');
+    [, $wsB] = seedUser($db, 'pb@x.com', 'h', 'B');
+    $sha = str_repeat('d', 64);
+    $db->run(
+        "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime,
+                             size_bytes, sha256, tags, status, created_at, updated_at)
+         VALUES (?, 'video', 'own', 'A clip', 'a.mp4', ?, 'video/mp4', 1, ?, '[]', 'ready', ?, ?)",
+        [$wsA, str_repeat('e', 32) . '.mp4', $sha, $now, $now],
+    );
+    $assetId = $db->lastInsertId();
+
+    // a real poster on disk for workspace A
+    $p = new \Kuyash\Media\AssetPoster($posterFfmpeg, $posterPaths);
+    $path = $p->pathFor(['workspace_id' => $wsA, 'sha256' => $sha]);
+    @mkdir(dirname((string) $path), 0775, true);
+    file_put_contents((string) $path, 'jpegbytes');
+
+    $repo = new AssetRepository($db);
+    $ctx = new WorkspaceContext($db);
+    // the asset store is irrelevant here — poster() never touches it
+    $ctl = new MediaController($repo, new AssetStorage(sys_get_temp_dir()), localStorageManager(sys_get_temp_dir()), $ctx, $p, 300);
+
+    $ctx->set($wsA);
+    $mine = $ctl->poster(['id' => (string) $assetId])->status();
+    $ctx->set($wsB);
+    $theirs = $ctl->poster(['id' => (string) $assetId])->status();
+
+    return $mine === 200 && $theirs === 404;
+})());
+
+check('poster route: a missing poster is a 404, and a photo is its own poster', (static function () use ($basePath, $posterPaths, $posterFfmpeg): bool {
+    $db = migratedDb($basePath);
+    $now = gmdate(NOW_ISO);
+    [, $ws] = seedUser($db, 'pc@x.com', 'h', 'C');
+    foreach ([['video', str_repeat('1', 32) . '.mp4', str_repeat('7', 64)],
+              ['photo', str_repeat('2', 32) . '.jpg', str_repeat('8', 64)]] as [$kind, $name, $sha]) {
+        $db->run(
+            "INSERT INTO assets (workspace_id, kind, type, title, original_filename, stored_name, mime,
+                                 size_bytes, sha256, tags, status, created_at, updated_at)
+             VALUES (?, ?, 'own', 'x', 'x', ?, 'video/mp4', 1, ?, '[]', 'ready', ?, ?)",
+            [$ws, $kind, $name, $sha, $now, $now],
+        );
+    }
+    $p = new \Kuyash\Media\AssetPoster($posterFfmpeg, $posterPaths);
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $ctl = new MediaController(new AssetRepository($db), new AssetStorage(sys_get_temp_dir()), localStorageManager(sys_get_temp_dir()), $ctx, $p, 300);
+
+    $videoMiss = $ctl->poster(['id' => '1']);
+    $photo = $ctl->poster(['id' => '2']);
+
+    return $videoMiss->status() === 404
+        && $photo->status() === 302
+        && ($photo->headers()['Location'] ?? '') === '/media/2';
 })());
 
 echo "== demo/showcase: the seed is reversible, inert and marked ==\n";

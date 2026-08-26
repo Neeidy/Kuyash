@@ -579,7 +579,12 @@ final class ShowcaseSeed
                 published: false,
                 accountId: $accountId,
                 render: null,
-                edited: $k === 1 ? $ownerId : null,
+                // the DEMO account, never the operator. `edit.by` is not rendered
+                // today (the text editor asks for `by_email`, which nothing
+                // populates), so this was invisible — and would have started
+                // showing the real operator as the editor of demo text the day
+                // that got wired up. Same class as the fabricated approval.
+                edited: $k === 1 ? $this->demoUserId($now) : null,
             );
         }
 

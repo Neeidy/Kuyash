@@ -157,7 +157,12 @@ if (!$manifest->isEmpty()) {
 $seed = new ShowcaseSeed(
     $db,
     $container->get(MediaPaths::class),
-    new FfmpegMediaFactory(dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4', new MediaProbe()),
+    new FfmpegMediaFactory(
+        dirname(__DIR__) . '/tools/visual/fixtures/preview.mp4',
+        new MediaProbe(),
+        // the configured binary with a wall-clock timeout, not bare 'ffmpeg' off $PATH
+        $container->get(Kuyash\Media\Ffmpeg::class),
+    ),
     // the same poster service the product uses at ingest, so a demo clip
     // previews exactly the way an uploaded one does
     $container->get(AssetPoster::class),

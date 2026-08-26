@@ -45,6 +45,7 @@ final class QueueController
         private readonly OccurrenceRepository $occurrences,
         private readonly Database $db,
         private readonly \Kuyash\Content\TextEditorView $editor,
+        private readonly ?\Kuyash\Media\AssetPoster $posters = null,
     ) {
     }
 
@@ -57,7 +58,7 @@ final class QueueController
             'workspaceName' => $this->workspace->currentName(),
             'csrfField' => $this->csrf->field(),
             'flashes' => Messages::resolveFlashes($this->flash),
-            'awaiting' => $this->withText($this->withPlannedDay($this->jobs->awaitingApproval($this->workspace))),
+            'awaiting' => $this->withPoster($this->withText($this->withPlannedDay($this->jobs->awaitingApproval($this->workspace)))),
             'jobs' => $this->jobs->listFor($this->workspace),
             'runs' => $this->runs->listFor($this->workspace, 20),
             'workerAlive' => $this->heartbeat->isAlive(gmdate('Y-m-d\TH:i:s\Z')),
@@ -177,6 +178,23 @@ final class QueueController
      *
      * @return list<array<string, mixed>>
      */
+    /**
+     * Flag whether each card's source clip actually has a still frame, so the
+     * template can fall back instead of requesting a poster that is not there.
+     *
+     * @param list<array<string, mixed>> $jobs
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function withPoster(array $jobs): array
+    {
+        return array_map(function (array $job): array {
+            $job['has_poster'] = $this->posters !== null && $this->posters->existsForJob($job);
+
+            return $job;
+        }, $jobs);
+    }
+
     private function withText(array $jobs): array
     {
         foreach ($jobs as $i => $job) {

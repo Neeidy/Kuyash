@@ -97,12 +97,15 @@ use Kuyash\Core\View;
             <?php $src = $draftId !== null ? '/render/' . (int) $draftId : '/media/' . (int) $libId; ?>
             <div class="inline-player approve-card__player" data-inline-player>
               <?php /* A distribution run has no ASSEMBLE node and therefore no draft
-                       render — its preview IS the library clip that will go out. It
-                       used to play with no poster at all, so the most visual moment
-                       in the approval flow was a grey box. */ ?>
-              <?php if ($draftId !== null): ?><img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy">
-              <?php else: ?><img class="inline-player__poster" src="/media/<?= (int) $libId ?>/poster" alt="" loading="lazy"><?php endif; ?>
-              <video class="inline-player__video" src="<?= $src ?>" preload="metadata" playsinline></video>
+                       render — its preview IS the library clip that will go out.
+                       The poster goes on the VIDEO, not in a sibling <img>: both
+                       were absolutely positioned at inset:0 and the video stacks
+                       last, so a <video preload="metadata"> painted BLACK over the
+                       image. That only looked right while the fixture's render
+                       files 404'd and the video element stayed empty. */ ?>
+              <?php $poster = $draftId !== null ? '/render/' . (int) $draftId . '/poster'
+                    : (($job['has_poster'] ?? false) ? '/media/' . (int) $libId . '/poster' : null); ?>
+              <video class="inline-player__video" src="<?= $src ?>"<?= $poster !== null ? ' poster="' . $poster . '"' : '' ?> preload="metadata" playsinline></video>
               <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
                 <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
               </button>
@@ -111,6 +114,7 @@ use Kuyash\Core\View;
             </div>
             <?php else: ?>
             <div class="inline-player inline-player--pending approve-card__player">
+              <span class="inline-player__ph-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" width="24" height="24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg></span>
               <span class="inline-player__ph-type"><?= View::e(Messages::jobType('render_review')) ?></span>
               <span class="inline-player__ph-note"><?= View::t('player.preview_pending') ?></span>
             </div>

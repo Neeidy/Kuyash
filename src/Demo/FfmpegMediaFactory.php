@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Kuyash\Demo;
 
 use Kuyash\Library\MediaProbe;
+use Kuyash\Media\Ffmpeg;
+use Kuyash\Media\FfmpegException;
+use Throwable;
 
 /**
  * The real {@see MediaFactory}: builds demo media with ffmpeg from a committed
@@ -21,13 +24,19 @@ final class FfmpegMediaFactory implements MediaFactory
     public function __construct(
         private readonly string $fixture,
         private readonly MediaProbe $probe,
-        private readonly string $ffmpeg = 'ffmpeg',
+        // The SERVICE, not a shell string. exec() with escapeshellcmd had no
+        // timeout at all (a hung ffmpeg hung the seed forever), quoted the binary
+        // wrongly so a path with a space word-split, and defaulted to bare
+        // 'ffmpeg' from $PATH instead of the configured FFMPEG_BIN the rest of
+        // the system uses. Ffmpeg gives the arg array, the wall-clock kill and
+        // the configured binary for free.
+        private readonly Ffmpeg $ffmpeg,
     ) {
     }
 
     public function available(): bool
     {
-        return is_file($this->fixture) && $this->binaryExists();
+        return is_file($this->fixture) && $this->ffmpeg->available();
     }
 
     public function clip(string $target, int $seconds, int $variant = 0): ?array
@@ -44,14 +53,14 @@ final class FfmpegMediaFactory implements MediaFactory
         // different clips indistinguishable in the grid. It shifts the LOOK of
         // synthetic test footage; it does not pretend the footage is something
         // else, and every title using it still leads with the [SAMPLE] marker.
-        $ok = $this->exec(sprintf(
-            '%s -y -stream_loop -1 -i %s -t %d -vf %s -c:v libx264 -preset veryfast -pix_fmt yuv420p -an %s',
-            escapeshellcmd($this->ffmpeg),
-            escapeshellarg($this->fixture),
-            $seconds,
-            escapeshellarg(sprintf('hue=h=%d:s=%s', ($variant * 41) % 360, $variant % 2 === 0 ? '1.05' : '0.85')),
-            escapeshellarg($target),
-        ));
+        $ok = $this->run([
+            '-stream_loop', '-1',
+            '-i', $this->fixture,
+            '-t', (string) $seconds,
+            '-vf', sprintf('hue=h=%d:s=%s', ($variant * 41) % 360, $variant % 2 === 0 ? '1.05' : '0.85'),
+            '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-an',
+            $target,
+        ]);
 
         return $ok ? $this->measure($target, 'video', 'video/mp4') : null;
     }
@@ -65,13 +74,12 @@ final class FfmpegMediaFactory implements MediaFactory
         // -ss before -i seeks: a different offset per call means a different
         // frame, so two stills are never the same bytes under two names. The
         // fixture is short, so the offset stays inside it.
-        $ok = $this->exec(sprintf(
-            '%s -y -ss %s -i %s -frames:v 1 -q:v 3 %s',
-            escapeshellcmd($this->ffmpeg),
-            escapeshellarg(number_format(max(0, $index) % 3 * 0.7, 2, '.', '')),
-            escapeshellarg($this->fixture),
-            escapeshellarg($target),
-        ));
+        $ok = $this->run([
+            '-ss', number_format(max(0, $index) % 3 * 0.7, 2, '.', ''),
+            '-i', $this->fixture,
+            '-frames:v', '1', '-q:v', '3',
+            $target,
+        ]);
 
         return $ok ? $this->measure($target, 'photo', 'image/jpeg') : null;
     }
@@ -96,17 +104,20 @@ final class FfmpegMediaFactory implements MediaFactory
         ];
     }
 
-    private function exec(string $command): bool
+    /** @param list<string> $args */
+    private function run(array $args): bool
     {
-        exec($command . ' 2>/dev/null', $out, $code);
+        try {
+            $this->ffmpeg->run($args);
 
-        return $code === 0;
+            return true;
+        } catch (FfmpegException|Throwable $e) {
+            // a demo clip that will not build is a skipped item, not a crash
+            fwrite(STDERR, '  ffmpeg: ' . $e->getMessage() . "
+");
+
+            return false;
+        }
     }
 
-    private function binaryExists(): bool
-    {
-        exec(escapeshellcmd($this->ffmpeg) . ' -version 2>/dev/null', $out, $code);
-
-        return $code === 0;
-    }
 }

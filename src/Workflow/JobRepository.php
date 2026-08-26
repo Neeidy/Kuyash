@@ -53,7 +53,16 @@ final class JobRepository
     public function awaitingApproval(WorkspaceContext $ctx): array
     {
         return array_map(self::shape(...), $this->db->all(
-            "SELECT * FROM jobs WHERE workspace_id = ? AND status = 'awaiting_approval' ORDER BY id ASC",
+            // library_poster: whether the source clip HAS a still frame on disk,
+            // resolved here rather than by the template emitting an <img> that
+            // 404s for every run whose clip has none. Correlated on the asset the
+            // render_review result names, which is the same clip the card plays.
+            "SELECT j.*, (
+                 SELECT a.sha256 FROM assets a
+                 WHERE a.workspace_id = j.workspace_id
+                   AND a.id = CAST(json_extract(j.result_json, '$.library_asset_id') AS INTEGER)
+             ) AS library_sha256
+             FROM jobs j WHERE j.workspace_id = ? AND j.status = 'awaiting_approval' ORDER BY j.id ASC",
             [$ctx->id()],
         ));
     }

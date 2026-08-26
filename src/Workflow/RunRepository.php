@@ -64,7 +64,10 @@ final class RunRepository
     public function approvalsForRun(WorkspaceContext $ctx, int $runId): array
     {
         return $this->db->all(
-            'SELECT a.*, u.email AS decided_by_email
+            // the NAME too: it is where a marked account says what it is, and
+            // the run page rendered only the email — so a [SAMPLE] account
+            // reached the one screen that shows it with its marker stripped
+            'SELECT a.*, u.email AS decided_by_email, u.name AS decided_by_name
              FROM approvals a
              LEFT JOIN users u ON u.id = a.decided_by
              WHERE a.workspace_id = ? AND a.run_id = ?

@@ -136,6 +136,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(JobRepository::class),
         $c->get(\Kuyash\Publish\PlanBoard::class),
         $c->get(WorkspaceSettings::class),
+        $c->get(AssetPoster::class),
     ));
 
     $container->bind(DashboardController::class, static fn (Container $c): DashboardController => new DashboardController(
@@ -326,6 +327,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(\Kuyash\Publish\OccurrenceRepository::class),
         $c->get(Database::class),
         $c->get(\Kuyash\Content\TextEditorView::class),
+        $c->get(AssetPoster::class),
     ));
 
     $container->bind(SettingsController::class, static fn (Container $c): SettingsController => new SettingsController(

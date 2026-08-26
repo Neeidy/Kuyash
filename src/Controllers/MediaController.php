@@ -60,7 +60,7 @@ final class MediaController
         }
 
         $path = $this->posters->pathFor($asset);
-        $size = is_file($path) ? filesize($path) : false;
+        $size = $path !== null && is_file($path) ? filesize($path) : false;
         if ($size === false || $size === 0) {
             return self::missing();
         }

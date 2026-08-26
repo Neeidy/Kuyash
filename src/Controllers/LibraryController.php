@@ -176,6 +176,21 @@ final class LibraryController
             error_log("Kuyash: asset file missing or not deletable: {$asset['stored_name']}");
         }
 
+        // …and the still frame extracted from it. A poster is a frame of the
+        // operator's own content: leaving it behind means the thing they asked to
+        // delete survives in a private directory and gets swept into every
+        // backup, which is not what "delete" means (GDPR-minded deletion).
+        //
+        // Posters are content-addressed, so a duplicate upload SHARES this file —
+        // it is only removed when no other row holds the same bytes. The backfill
+        // regenerates it either way.
+        $poster = $this->posters?->pathFor($asset);
+        if ($poster !== null && $this->assets->countBySha256($this->workspace, (string) $asset['sha256']) === 0
+            && is_file($poster) && !@unlink($poster)
+        ) {
+            error_log("Kuyash: poster not deletable for asset #{$asset['id']}");
+        }
+
         return $this->backToLibrary('success', 'asset.deleted');
     }
 

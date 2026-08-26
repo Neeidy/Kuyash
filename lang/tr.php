@@ -398,6 +398,8 @@ return [
     'runs.targets_note' => 'Bağlı her hesap için bir satır. AI etiketleri, uyumluluk gerektirdiğinde platform bazında tam olarak uygulanır; başarısızlıklar tüm çalışmayı düşürmeden hedef bazında kaydedilir.',
     'runs.approval_records' => 'Onay kayıtları',
     'runs.quality_score_label' => 'kalite puanı',
+    'runs.approved_by' => 'Onaylayan',
+    'runs.rejected_by' => 'Reddeden',
     'runs.approved_by_you' => 'Sizin tarafınızdan onaylandı',
     'runs.rejected_by_you' => 'Sizin tarafınızdan reddedildi',
     'runs.records_note' => 'Kayıtlar gerçekte ne olduğunu yansıtır: manuel kararlar, karar veren hesabı taşır; otomatik onaylar, politika sürümüyle birlikte uyumluluk aracı olarak etiketlenir — asla bir insan olarak değil.',

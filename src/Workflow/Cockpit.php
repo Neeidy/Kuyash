@@ -41,6 +41,7 @@ final class Cockpit
         // simply means the plan line is not shown.
         private readonly ?PlanBoard $board = null,
         private readonly ?WorkspaceSettings $settings = null,
+        private readonly ?\Kuyash\Media\AssetPoster $posters = null,
     ) {
     }
 
@@ -66,7 +67,13 @@ final class Cockpit
             'business' => $this->business($ws, $now, $kpis['awaiting'], $kpis['renders']),
             'pipeline' => $this->pipeline($ws),
             'activeRuns' => $this->activeRuns($ws),
-            'awaiting' => array_slice($this->jobs->awaitingApproval($ctx), 0, 4),
+            'awaiting' => array_map(function (array $job): array {
+                // same flag the queue resolves: the card asks before requesting
+                // a poster, instead of emitting an <img> that 404s
+                $job['has_poster'] = $this->posters !== null && $this->posters->existsForJob($job);
+
+                return $job;
+            }, array_slice($this->jobs->awaitingApproval($ctx), 0, 4)),
             'accounts' => $this->accounts($ctx),
             // Phase 23: the soonest publish actually waiting in the queue. Read
             // from the real job gate, not from the slot plan — a slot is only a

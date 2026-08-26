@@ -402,6 +402,8 @@ return [
     'runs.targets_note' => 'One row per connected account. AI labels are applied per platform exactly when compliance required them; failures are recorded per target without failing the whole run.',
     'runs.approval_records' => 'Approval records',
     'runs.quality_score_label' => 'quality score',
+    'runs.approved_by' => 'Approved by',
+    'runs.rejected_by' => 'Rejected by',
     'runs.approved_by_you' => 'Approved by you',
     'runs.rejected_by_you' => 'Rejected by you',
     'runs.records_note' => 'Records reflect what actually happened: manual decisions carry the deciding account; auto-approvals are labelled as the compliance agent with their policy version — never as a human.',

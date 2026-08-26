@@ -149,6 +149,20 @@ final class AssetRepository
     }
 
     /** Returns true when a row was actually deleted (scoped — cross-tenant is a no-op). */
+    /**
+     * How many rows in this workspace still hold these exact bytes.
+     *
+     * Posters are content-addressed, so a shared file must outlive the first of
+     * its owners to be deleted.
+     */
+    public function countBySha256(WorkspaceContext $ctx, string $sha256): int
+    {
+        return (int) ($this->db->one(
+            'SELECT COUNT(*) AS n FROM assets WHERE workspace_id = ? AND sha256 = ?',
+            [$ctx->id(), $sha256],
+        )['n'] ?? 0);
+    }
+
     public function delete(WorkspaceContext $ctx, int $id): bool
     {
         $stmt = $this->db->run(

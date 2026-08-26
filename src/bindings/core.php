@@ -429,12 +429,19 @@ return static function (Container $container, string $basePath): void {
 
     // Poster extraction for library videos. Nullable StorageManager is passed so
     // an R2-migrated asset can be staged down; see AssetPoster.
-    $container->bind(Kuyash\Media\AssetPoster::class, static fn (Container $c): Kuyash\Media\AssetPoster
-        => new Kuyash\Media\AssetPoster(
-            $c->get(Ffmpeg::class),
+    $container->bind(Kuyash\Media\AssetPoster::class, static function (Container $c): Kuyash\Media\AssetPoster {
+        $cfg = (array) $c->get(Config::class)->get('media');
+
+        // Its OWN Ffmpeg, with a short timeout. A poster grab runs inside the
+        // upload request; the shared instance carries the 900s assembly
+        // watchdog, which on that path is a denial-of-service budget, not a
+        // safety net.
+        return new Kuyash\Media\AssetPoster(
+            new Ffmpeg((string) $cfg['ffmpeg'], (string) $cfg['ffprobe'], (int) ($cfg['poster_timeout'] ?? 15)),
             $c->get(MediaPaths::class),
             $c->get(Kuyash\Storage\StorageManager::class),
-        ));
+        );
+    });
 
     $container->bind(Ffmpeg::class, static function (Container $c): Ffmpeg {
         $cfg = (array) $c->get(Config::class)->get('media');

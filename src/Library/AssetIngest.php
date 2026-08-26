@@ -87,21 +87,6 @@ final class AssetIngest
                 'aspect' => $probed['aspect'],
                 'tags' => $this->parseTags($rawTags),
             ], $disk);
-
-            // A still frame for every preview in the product. Deliberately AFTER
-            // the row exists and deliberately unable to fail the upload: a poster
-            // is decoration, and AssetPoster::ensure() returns null rather than
-            // throwing. Extracting here (not while serving a page) is what keeps
-            // a video decode out of the request path.
-            $this->posters?->ensure([
-                'id' => $assetId,
-                'workspace_id' => $ctx->id(),
-                'kind' => $meta['kind'],
-                'stored_name' => $storedName,
-                'sha256' => $sha256,
-            ]);
-
-            return $assetId;
         } catch (Throwable $e) {
             // no orphan on failure: the row is the source of truth, so a failed
             // put/insert must take the just-stored local file with it. A failed
@@ -110,6 +95,30 @@ final class AssetIngest
             $this->storage->delete($ctx->id(), $storedName);
             throw $e;
         }
+
+        // OUTSIDE the try above, and that placement is the point. Inside it, a
+        // poster fault would run the catch — which DELETES the just-stored file
+        // and rethrows, while the row it belongs to is already committed. That is
+        // exactly the orphan the comment above says must never exist: a library
+        // entry whose bytes are gone. A thumbnail must never be able to cause it.
+        //
+        // ensure() returns null rather than throwing, so this cannot fail the
+        // upload either way; the try/catch is belt and braces around a decorative
+        // step that runs after the asset is safely recorded.
+        try {
+            $this->posters?->ensure([
+                'id' => $assetId,
+                'workspace_id' => $ctx->id(),
+                'kind' => $meta['kind'],
+                'stored_name' => $storedName,
+                'sha256' => $sha256,
+                'storage_disk' => $disk,
+            ]);
+        } catch (Throwable $e) {
+            error_log('Kuyash: poster extraction failed after ingest — ' . $e->getMessage());
+        }
+
+        return $assetId;
     }
 
     /** @return list<string> normalized, deduplicated, capped tag list */

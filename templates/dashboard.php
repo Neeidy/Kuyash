@@ -161,15 +161,12 @@ $biz = $cockpit['business'];
           <?php if ($draftId !== null || $libId !== null): ?>
           <?php $src = $draftId !== null ? '/render/' . (int) $draftId : '/media/' . (int) $libId; ?>
           <div class="inline-player" data-inline-player>
-            <?php /* a distribution run has no draft render — its preview IS the
-                     library clip, and that clip's poster is what makes this a
-                     picture instead of a grey box */ ?>
-            <?php if ($draftId !== null): ?>
-            <img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy">
-            <?php else: ?>
-            <img class="inline-player__poster" src="/media/<?= (int) $libId ?>/poster" alt="" loading="lazy">
-            <?php endif; ?>
-            <video class="inline-player__video" src="<?= $src ?>" preload="metadata" playsinline></video>
+            <?php /* poster on the VIDEO, not a sibling <img> — see the queue card:
+                     the image sat underneath an absolutely-positioned video that
+                     paints black until it plays */ ?>
+            <?php $poster = $draftId !== null ? '/render/' . (int) $draftId . '/poster'
+                  : (($job['has_poster'] ?? false) ? '/media/' . (int) $libId . '/poster' : null); ?>
+            <video class="inline-player__video" src="<?= $src ?>"<?= $poster !== null ? ' poster="' . $poster . '"' : '' ?> preload="metadata" playsinline></video>
             <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             </button>
@@ -181,6 +178,7 @@ $biz = $cockpit['business'];
           </div>
           <?php else: ?>
           <div class="inline-player inline-player--pending">
+              <span class="inline-player__ph-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" width="24" height="24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg></span>
             <span class="inline-player__ph-type"><?= View::e(Messages::jobType((string) $job['type'])) ?></span>
             <span class="inline-player__ph-note"><?= View::t('player.preview_pending') ?></span>
           </div>

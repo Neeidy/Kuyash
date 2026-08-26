@@ -1035,7 +1035,12 @@ html:not(.js) .cmdk-trigger { display: none; }
 }
 .appr-card:hover { border-color: var(--border-strong); }
 
-.inline-player { position: relative; aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+/* 16/9 keeps the card compact, but the height follows the WIDTH — in a
+   single-column layout at 768 that grew into a 700x394 black band, and the
+   "preview pending" placeholder into a ~400px void. Capped so the box stays a
+   preview at every width. The clips are 9:16, so `cover` crops them; a portrait
+   box is the better long-term answer and is filed as a follow-up. */
+.inline-player { position: relative; aspect-ratio: 16 / 9; max-height: 320px; background: #000; overflow: hidden; }
 .inline-player__poster, .inline-player__video {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
 }
@@ -1064,10 +1069,18 @@ html:not(.js) .cmdk-trigger { display: none; }
   position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; z-index: 2;
   transform: scaleX(0); transform-origin: left; background: var(--accent);
 }
+/* An honest "nothing to preview yet" tile — NOT a void. Two lines of grey text
+   floating in an empty rectangle read as an image that failed to load, which is
+   exactly the wrong signal next to cards that do have a picture. Same gradient +
+   border language the library's icon tile uses. */
 .inline-player--pending {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   background: linear-gradient(160deg, var(--surface-2), var(--surface-3)); color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  min-height: 132px;
 }
+.inline-player--pending .inline-player__ph-type { font-size: 12px; color: var(--text-2); }
+.inline-player--pending .inline-player__ph-icon { opacity: 0.5; margin-bottom: 2px; }
 .inline-player__ph-type { font-size: 11px; color: var(--text-2); }
 .inline-player__ph-note { font-size: 11px; color: var(--text-3); }
 

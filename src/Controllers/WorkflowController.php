@@ -135,6 +135,9 @@ final class WorkflowController
             'jobs' => $this->jobs->jobsForRun($this->workspace, $run['id']),
             'timeline' => $this->events->timelineForRun($this->workspace, $run['id']),
             'approvals' => $this->runs->approvalsForRun($this->workspace, $run['id']),
+            // who is LOOKING — so an approval chip can say "by you" only when it
+            // actually was, instead of saying it to everyone
+            'viewerId' => $this->auth->user()['id'] ?? null,
             'posts' => $this->posts->forRun($this->workspace, $run['id']),
             // Phase 25 — the same editor the approval card shows, so the counts
             // and the AI notice cannot differ between the two screens

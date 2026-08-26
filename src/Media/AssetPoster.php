@@ -58,18 +58,52 @@ final class AssetPoster
         return substr(hash('sha256', 'poster|v1|' . (string) ($asset['sha256'] ?? '')), 0, 32) . '.jpg';
     }
 
-    /** Absolute local path the poster would live at. No I/O beyond path building. */
-    public function pathFor(array $asset): string
+    /**
+     * Absolute local path the poster would live at, or NULL when it cannot be
+     * worked out.
+     *
+     * NULLABLE ON PURPOSE. MediaPaths::pathFor() creates the store directory and
+     * THROWS when it cannot — an unwritable storage/cache, a full disk, a
+     * read-only mount after a deploy. Every caller of this is decorative (a grid
+     * thumbnail, an <img> route), so a poster-layer fault must degrade to "no
+     * poster", not take a page — or an upload — down with it.
+     */
+    public function pathFor(array $asset): ?string
     {
-        return $this->paths->pathFor('cache', (int) $asset['workspace_id'], self::nameFor($asset));
+        try {
+            return $this->paths->pathFor('cache', (int) $asset['workspace_id'], self::nameFor($asset));
+        } catch (Throwable $e) {
+            error_log('Kuyash: poster path unavailable — ' . $e->getMessage());
+
+            return null;
+        }
     }
 
-    /** Is a usable poster already on disk? */
+    /**
+     * Does the clip named by an awaiting-approval job have a poster?
+     *
+     * Takes the sha256 the job row already carries (JobRepository correlates it),
+     * so a queue of eight costs eight stats and no extra queries — and the
+     * template never emits an <img> that is guaranteed to 404.
+     *
+     * @param array<string, mixed> $job
+     */
+    public function existsForJob(array $job): bool
+    {
+        $sha = (string) ($job['library_sha256'] ?? '');
+
+        return $sha !== '' && $this->exists([
+            'workspace_id' => (int) ($job['workspace_id'] ?? 0),
+            'sha256' => $sha,
+        ]);
+    }
+
+    /** Is a usable poster already on disk? Never throws (see pathFor). */
     public function exists(array $asset): bool
     {
         $path = $this->pathFor($asset);
 
-        return is_file($path) && filesize($path) > 0;
+        return $path !== null && is_file($path) && filesize($path) > 0;
     }
 
     /**
@@ -87,28 +121,38 @@ final class AssetPoster
         if ((string) ($asset['kind'] ?? '') !== 'video' || (string) ($asset['sha256'] ?? '') === '') {
             return null;
         }
-        if ($this->exists($asset)) {
-            return $this->pathFor($asset);
-        }
         if (!$this->ffmpeg->available()) {
             return null;
         }
 
-        $target = $this->pathFor($asset);
         $tmp = null;
+        $work = null;
         try {
-            $source = $this->localSource($asset);
+            // INSIDE the guard, all of it. These reach MediaPaths, which creates
+            // the store directory and throws when it cannot — so the "never
+            // throws" contract above was only true for the middle of this method.
+            $target = $this->pathFor($asset);
+            if ($target === null) {
+                return null;
+            }
+            if (is_file($target) && filesize($target) > 0) {
+                return $target;
+            }
+
+            [$source, $work] = $this->localSource($asset);
             if ($source === null) {
                 return null;
             }
 
             $dir = dirname($target);
-            if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
+            if (!is_dir($dir) && !mkdir($dir, 0750, true) && !is_dir($dir)) {
                 return null;
             }
 
             // Written under a temp name, then moved: a timeout or a crash cannot
-            // leave a truncated file that exists() would call a poster.
+            // leave a truncated file that exists() would call a poster. The name
+            // shape also cannot match MediaPaths::NAME_RE, so a stray temp is
+            // unservable even if an abnormal exit skips the cleanup below.
             $tmp = $dir . '/.poster-' . bin2hex(random_bytes(8)) . '.jpg';
             $this->ffmpeg->run([
                 // -ss BEFORE -i seeks without decoding the whole clip
@@ -134,6 +178,8 @@ final class AssetPoster
                 return null;
             }
             $tmp = null;
+            // match AssetStorage's 0640 rather than inheriting ffmpeg's umask
+            @chmod($target, 0640);
 
             return $target;
         } catch (Throwable $e) {
@@ -147,47 +193,58 @@ final class AssetPoster
             if ($tmp !== null && is_file($tmp)) {
                 @unlink($tmp);
             }
+            // a staged R2 copy is scratch, not a restored asset — see localSource
+            if ($work !== null) {
+                $this->paths->cleanupWorkDir($work);
+            }
         }
     }
 
     /**
-     * A local path ffmpeg can read. An asset living on R2 is staged down first —
-     * the same thing AssemblyEngine does for its inputs, and the reason a
-     * migrated library still gets posters.
+     * A local path ffmpeg can read, plus the scratch dir to clean up afterwards.
+     *
+     * An asset already on local disk is used in place and needs no scratch. One
+     * living on R2 is staged into a WORK DIRECTORY — deliberately not into the
+     * canonical asset path. Writing it there would silently re-materialise the
+     * object the storage migration just moved off local disk, and the backfill
+     * script sweeps every video in every workspace: on an R2-primary deployment
+     * that is the whole library downloaded, uncapped, as a side effect of making
+     * thumbnails. Disk exhaustion there takes SQLite's WAL with it.
      *
      * @param array<string, mixed> $asset
+     *
+     * @return array{0: string|null, 1: string|null} [readable path, scratch dir to remove]
      */
-    private function localSource(array $asset): ?string
+    private function localSource(array $asset): array
     {
         $ws = (int) $asset['workspace_id'];
         $name = (string) $asset['stored_name'];
         $local = $this->paths->pathFor('asset', $ws, $name);
         if (is_file($local)) {
-            return $local;
+            return [$local, null];
         }
         if ($this->storage === null) {
-            return null;
+            return [null, null];
         }
 
         // The asset row names its own disk; StorageManager is only the registry,
         // so the provider is resolved before exists()/getToLocal() are called.
         $key = StorageKey::make('asset', $ws, $name);
+        $work = null;
         try {
             $disk = $this->storage->disk((string) ($asset['storage_disk'] ?? 'local'));
             if (!$disk->exists($key)) {
-                return null;
+                return [null, null];
             }
-            $dir = dirname($local);
-            if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
-                return null;
-            }
-            $disk->getToLocal($key, $local);
+            $work = $this->paths->newWorkDir();
+            $staged = $work . '/' . $name;
+            $disk->getToLocal($key, $staged);
+
+            return is_file($staged) ? [$staged, $work] : [null, $work];
         } catch (Throwable $e) {
             error_log('Kuyash: poster source staging failed — ' . $e->getMessage());
 
-            return null;
+            return [null, $work];
         }
-
-        return is_file($local) ? $local : null;
     }
 }

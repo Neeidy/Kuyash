@@ -10,6 +10,12 @@ return [
     'ffmpeg' => (string) Config::env('FFMPEG_BIN', '/opt/homebrew/bin/ffmpeg'),
     'ffprobe' => (string) Config::env('FFPROBE_BIN', '/opt/homebrew/bin/ffprobe'),
     'ffmpeg_timeout' => (int) Config::env('FFMPEG_TIMEOUT', 900), // matches the assembly job watchdog
+    // A single -frames:v 1 grab, NOT a render. It shares the upload request with
+    // the user who triggered it, so it must not inherit the 900s assembly
+    // watchdog: one crafted 200 MB upload would otherwise hold a worker for
+    // fifteen minutes, and PHP's max_execution_time does not reclaim time spent
+    // waiting on proc_open.
+    'poster_timeout' => (int) Config::env('POSTER_TIMEOUT', 15),
 
     // storage roots for produced media (private; served only via authed routes)
     'render_root' => Config::env('RENDER_STORAGE_ROOT', dirname(__DIR__) . '/storage/renders'),
