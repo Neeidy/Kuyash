@@ -1430,6 +1430,17 @@ html:not(.js) .topbar__live { display: none; }
 }
 .asset-thumb:has(.asset-thumb__poster) .asset-card__play { opacity: 0.92; }
 /* the poster fills the tile: cover, never letterboxed, never stretched */
+/* deliberate placeholder, never mistakable for a poster */
+.asset-thumb__none {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  position: absolute; inset: var(--s1);
+  border: 1px dashed var(--border-strong); border-radius: var(--r1);
+  color: var(--text-3);
+}
+.asset-thumb__none-note { font-size: 11px; }
+/* a tile with no poster shows no play affordance — there is nothing to play yet */
+.asset-thumb:has(.asset-thumb__none) .asset-card__play { display: none; }
+
 .asset-thumb__poster {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; display: block;

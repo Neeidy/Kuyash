@@ -156,3 +156,33 @@ rewrite yok"tu.
   etkisi; 0750 + NAME_RE ile zararsız).
 - Eklenmeyen testler: silme poster'ı kaldırıyor mu + paylaşılan-sha koruması,
   ve R2 staging sonrası work-dir temizliği.
+
+---
+
+# Poster turu (gerçek medya) — ertelenenler (HEAD sonrası)
+
+Kullanıcı bağımsız olarak "poster'lar görsel olarak çalışmıyor" dedi ve haklıydı.
+Kök-neden ikiliydi: demo klipleri sentetik gradient'ti (doğru çıkarılan kare de
+gradient oluyordu) ve görsel gate aynı gradient fixture'ı kullandığı için
+render edilen poster ile eksik poster'ı ayırt edemiyordu. İkisi de düzeltildi.
+
+## Ertelenenler (ürün tarafı)
+
+- **Hesap kartı gradient'i dashboard'un en büyük görsel bloğu** (~920px, std 19).
+  `account-card.php` bunu bilerek yapıyor ("gerçek oynatılabilir video iddiası
+  değil") ve dürüst — ama artık ekrandaki TEK wash o, dolayısıyla "yüklenememiş"
+  gibi okunuyor. Doğru çözüm: kartın arkasına gönderinin kendi karesini koymak
+  ya da kartı küçültmek.
+- **"Seni bekleyen" için hâlâ üç farklı sayı** (dashboard KPI 7 / bant 4 /
+  rozet 4 / queue 8) ve **"Sıradaki yayın: kuyrukta bir şey yok"** dört bekleyen
+  slot gösteren takvimin üstünde duruyor. Tanım/kapsam açıklaması gerekiyor.
+- **/queue 8 onayda ~15.600px** — kartlar varsayılan katlanmalı.
+- **/plan hücresinde 9:16 kaynak yatay kutuya cover-crop ediliyor**, özne başı
+  kesiliyor; chip/başlık bazı hücrelerde satır içi, bazılarında alt alta.
+
+## Bilinen sınır (kanıt değeri)
+
+- Gate artık lazy görselleri zorla yükleyip `naturalWidth`'e bakıyor, ama
+  `<video poster>` kontrolü hâlâ yan-kanal `Image()` probe'u: URL'in
+  getirilebildiğini kanıtlar, video elementinin onu BOYADIĞINI değil. Poster'ın
+  gerçekten boyandığını doğrulamak render-piksel örneklemesi gerektirir.

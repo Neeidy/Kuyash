@@ -11123,6 +11123,23 @@ $posterPaths = new MediaPaths([
 $posterFfmpeg = new \Kuyash\Media\Ffmpeg('/nonexistent/ffmpeg', '/nonexistent/ffprobe', 5);
 $poster = new \Kuyash\Media\AssetPoster($posterFfmpeg, $posterPaths);
 
+check('gate: the media check cannot be blinded by a lazy image', (static function () use ($basePath): bool {
+    // The first version filtered on `i.complete && i.naturalWidth === 0`. A lazy
+    // <img> that never BEGAN loading has complete === false, so it was excluded —
+    // and that is the only case that matters: at 375 a tall grid put eight real
+    // posters below the lazy threshold, they never painted, and the gate called
+    // the blank tiles green. The screenshot was not evidence.
+    $h = (string) file_get_contents($basePath . '/tools/visual/shot.mjs');
+
+    // the FILTER, not any mention: the comment above it quotes the old
+    // expression on purpose, so a naive substring check trips on the prose
+    return str_contains($h, "i.loading = 'eager'")                        // forces them in
+        && str_contains($h, 'imgs.filter(i => i.naturalWidth === 0)')     // judges on paint
+        && !str_contains($h, 'imgs.filter(i => i.complete')
+        // and the forcing happens BEFORE the capture, so the PNG shows what loaded
+        && strpos($h, 'brokenMediaExpr') < strpos($h, 'Page.captureScreenshot');
+})());
+
 check('poster: the name is derived from the CONTENT, not the row id', (static function () use ($poster): bool {
     $a = ['workspace_id' => 1, 'sha256' => str_repeat('a', 64)];
     $b = ['workspace_id' => 1, 'sha256' => str_repeat('b', 64)];

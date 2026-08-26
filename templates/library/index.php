@@ -111,7 +111,13 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
       <?php if ($item['has_poster'] ?? false): ?>
       <img class="asset-thumb__poster" src="/media/<?= (int) $item['id'] ?>/poster" alt="" loading="lazy">
       <?php else: ?>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" width="26" height="26"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>
+      <?php /* the SAME placeholder language /queue and /dashboard use: an icon,
+               a word, and a dashed edge. A bare field with a play glyph reads as
+               an image that failed to load — which is what a reviewer called it. */ ?>
+      <span class="asset-thumb__none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" width="24" height="24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>
+        <span class="asset-thumb__none-note"><?= View::t('library.no_preview') ?></span>
+      </span>
       <?php endif; ?>
       <span class="asset-card__play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
       <?php endif; ?>

@@ -579,6 +579,7 @@ return [
     'library.search_placeholder' => 'Search title or tags…',
     'library.search_aria' => 'Search assets by title or tags',
     'library.empty_filtered' => 'No assets match',
+    'library.no_preview' => 'No preview yet',
     'library.empty' => 'The library is empty',
     'library.empty_filtered_hint' => 'Try a different search or clear the type filter.',
     'library.empty_hint' => 'Upload your first clip or photo above — it becomes available for your videos to build on.',

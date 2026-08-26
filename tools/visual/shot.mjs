@@ -258,13 +258,33 @@ try {
    * whose poster URL does not load. Reported per page like overflow is.
    */
   const brokenMediaExpr = `(async () => {
+    /* FORCE EVERY LAZY IMAGE TO LOAD FIRST.
+       This is the whole check. The previous version filtered on
+       \`i.complete && i.naturalWidth === 0\`, but a lazy <img> that never began
+       loading has complete === false — so it was excluded, and exactly the case
+       that matters was invisible. The page is captured with
+       captureBeyondViewport, so at 375 a tall grid put eight real posters below
+       the lazy threshold: they never loaded, never painted, and the gate called
+       the blank tiles green. Flipping loading to 'eager' starts the fetch, which
+       fixes the CHECK and the SCREENSHOT in the same move. */
     const imgs = Array.from(document.images).filter(i => i.getAttribute('src'));
-    const broken = imgs.filter(i => i.complete && i.naturalWidth === 0).map(i => i.getAttribute('src'));
+    imgs.forEach(i => { if (i.loading === 'lazy') { i.loading = 'eager'; } });
+    await Promise.all(imgs.map(i => i.complete ? Promise.resolve() : new Promise(res => {
+      i.addEventListener('load', res, { once: true });
+      i.addEventListener('error', res, { once: true });
+      setTimeout(res, 4000);
+    })));
+
+    /* naturalWidth alone now: after the await, an image that still has no
+       intrinsic size either failed or never arrived. Both are "not on screen". */
+    const broken = imgs.filter(i => i.naturalWidth === 0).map(i => i.getAttribute('src'));
+
     const posters = Array.from(document.querySelectorAll('video[poster]')).map(v => v.getAttribute('poster'));
     const results = await Promise.all(posters.map(src => new Promise(res => {
       const probe = new Image();
-      probe.onload = () => res(null);
+      probe.onload = () => res(probe.naturalWidth === 0 ? src : null);
       probe.onerror = () => res(src);
+      setTimeout(() => res(src), 4000);
       probe.src = src;
     })));
     return broken.concat(results.filter(Boolean));
@@ -274,6 +294,9 @@ try {
     errors = [];
     await go(screenPath(name));
     const overflow = Number(await evaluate('Math.max(0, document.documentElement.scrollWidth - window.innerWidth)')) || 0;
+    // before the capture: the same call that checks also forces lazy images in,
+    // so the PNG is evidence of what actually renders rather than of what
+    // happened to be above the fold
     const brokenMedia = (await evaluateAsync(brokenMediaExpr)) || [];
     const png = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, sessionId);
     const file = join(OUT_DIR, `${name}__${width}__${locale}.png`);

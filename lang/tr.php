@@ -575,6 +575,7 @@ return [
     'library.search_placeholder' => 'Başlık veya etiket ara…',
     'library.search_aria' => 'Varlıkları başlığa veya etikete göre ara',
     'library.empty_filtered' => 'Eşleşen varlık yok',
+    'library.no_preview' => 'Önizleme yok',
     'library.empty' => 'Kütüphane boş',
     'library.empty_filtered_hint' => 'Farklı bir arama deneyin veya tür filtresini temizleyin.',
     'library.empty_hint' => 'İlk klibinizi veya fotoğrafınızı yukarıdan yükleyin — videolarınızın üzerine kurulması için hazır olur.',
