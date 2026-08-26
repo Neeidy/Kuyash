@@ -53,14 +53,24 @@ final class JobRepository
     public function awaitingApproval(WorkspaceContext $ctx): array
     {
         return array_map(self::shape(...), $this->db->all(
-            // library_poster: whether the source clip HAS a still frame on disk,
-            // resolved here rather than by the template emitting an <img> that
-            // 404s for every run whose clip has none. Correlated on the asset the
-            // render_review result names, which is the same clip the card plays.
+            // library_sha256: the source clip's content hash, so a caller can
+            // tell whether that clip HAS a still frame on disk without the
+            // template emitting an <img> that 404s for every run without one.
+            //
+            // json_valid() is NOT decoration. SQLite's json_extract RAISES on
+            // non-NULL, non-JSON text, and PDO-sqlite's fetchAll() returns the
+            // rows read BEFORE the error without throwing — so a single row with
+            // a malformed result_json would hide itself AND every job after it
+            // from the approval queue, from the dashboard card and from their
+            // counts, silently. This read is on the must-fail-loudly side of
+            // ADR-024; failing quietly and SHORT is the one outcome it may not
+            // have. shape() already tolerates non-JSON in PHP — this matches it
+            // in SQL.
             "SELECT j.*, (
                  SELECT a.sha256 FROM assets a
                  WHERE a.workspace_id = j.workspace_id
-                   AND a.id = CAST(json_extract(j.result_json, '$.library_asset_id') AS INTEGER)
+                   AND a.id = CASE WHEN json_valid(j.result_json)
+                        THEN CAST(json_extract(j.result_json, '$.library_asset_id') AS INTEGER) END
              ) AS library_sha256
              FROM jobs j WHERE j.workspace_id = ? AND j.status = 'awaiting_approval' ORDER BY j.id ASC",
             [$ctx->id()],

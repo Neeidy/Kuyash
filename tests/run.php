@@ -11218,6 +11218,87 @@ check('poster route: a missing poster is a 404, and a photo is its own poster', 
         && ($photo->headers()['Location'] ?? '') === '/media/2';
 })());
 
+check('poster route: the cache TTL matches its peers, because the URL is id-keyed', (static function () use ($basePath): bool {
+    // The FILE is content-addressed; the URL is not — assets.id has no
+    // AUTOINCREMENT, so SQLite reuses a freed rowid. A day-long cache would paint
+    // a DELETED clip's frame as a new asset's preview and quietly undo the
+    // poster unlink on delete.
+    $src = (string) file_get_contents($basePath . '/src/Controllers/MediaController.php');
+
+    return !str_contains($src, 'max-age=86400')
+        && substr_count($src, "'Cache-Control' => 'private, max-age=3600'") === 2;
+})());
+
+check('queue: ONE malformed result_json cannot hide the jobs after it', (static function () use ($basePath): bool {
+    // SQLite's json_extract raises on non-JSON text, and PDO-sqlite's fetchAll()
+    // returns the rows read BEFORE the error WITHOUT throwing — so the approval
+    // queue would silently end at the bad row. Failing short and quiet is the one
+    // outcome this read may not have.
+    $db = migratedDb($basePath);
+    $now = gmdate(NOW_ISO);
+    [$user, $ws] = seedUser($db, 'jq@x.com', 'h', 'JQ');
+    $db->run("INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at)
+              VALUES (?, 'W', 'distribution', '[]', ?, ?)", [$ws, $now, $now]);
+    $wf = $db->lastInsertId();
+    $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, created_by, created_at, updated_at)
+              VALUES (?, ?, 'library', '[]', 'awaiting_approval', ?, ?, ?)", [$ws, $wf, $user, $now, $now]);
+    $run = $db->lastInsertId();
+
+    // good, MALFORMED, good — in that order, so a truncation is visible
+    foreach (['{"library_asset_id":1}', 'not json at all', '{"library_asset_id":2}'] as $i => $json) {
+        $db->run(
+            "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, result_json, run_after, created_at)
+             VALUES (?, ?, 'PUBLISH', ?, 'render_review', 'awaiting_approval', '{}', ?, ?, ?)",
+            [$ws, $run, $i + 1, $json, $now, $now],
+        );
+    }
+
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+
+    return count((new JobRepository($db))->awaitingApproval($ctx)) === 3;
+})());
+
+check('ingest: a poster failure NEVER costs the upload its file', (static function () use ($basePath): bool {
+    // The blast radius of the fix: ensure() used to sit inside the catch that
+    // deletes the just-stored file and rethrows, while the row was already
+    // committed — producing exactly the orphan that catch exists to prevent. A
+    // refactor can silently undo this by moving the call back inside, so the
+    // invariant is pinned here rather than left to the comment.
+    $db = migratedDb($basePath);
+    [, $ws] = seedUser($db, 'ing@x.com', 'h', 'ING');
+    $root = tempDir('ingest-poster');
+    // rename(), not move_uploaded_file(): there is no real upload here
+    $storage = new AssetStorage($root, static fn (string $f, string $t): bool => rename($f, $t));
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+
+    // a poster service whose store cannot be created — ensure() must degrade
+    $broken = new \Kuyash\Media\AssetPoster(
+        new \Kuyash\Media\Ffmpeg('/nonexistent/ffmpeg', '/nonexistent/ffprobe', 5),
+        new MediaPaths(['asset' => '/proc/no/a', 'cache' => '/proc/no/c', 'render' => '/proc/no/r', 'work' => '/proc/no/w']),
+    );
+    $ingest = new AssetIngest(
+        new AssetValidator((array) (require $basePath . '/config/library.php')['allowed'], 200_000_000, 20_000_000),
+        new MediaProbe(),
+        $storage,
+        new AssetRepository($db),
+        localStorageManager($root),
+        10,
+        32,
+        $broken,
+    );
+
+    $tmp = $root . '/upload.mp4';
+    file_put_contents($tmp, file_get_contents($basePath . '/tools/visual/fixtures/preview.mp4'));
+    $id = $ingest->ingest($ctx, new UploadedFile('clip.mp4', $tmp, filesize($tmp), UPLOAD_ERR_OK), 'own', 'Clip', '');
+
+    $row = $db->one('SELECT stored_name FROM assets WHERE id = ?', [$id]);
+
+    // the row exists AND its bytes are still on disk
+    return $row !== null && is_file($storage->path($ws, (string) $row['stored_name']));
+})());
+
 echo "== demo/showcase: the seed is reversible, inert and marked ==\n";
 
 /**

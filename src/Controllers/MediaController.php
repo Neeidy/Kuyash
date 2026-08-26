@@ -68,9 +68,16 @@ final class MediaController
         return Response::file($path, 200, [
             'Content-Type' => 'image/jpeg',
             'X-Content-Type-Options' => 'nosniff',
-            // content-addressed by the asset's sha256: the bytes behind this URL
-            // can never change, so it is safe to hold on to
-            'Cache-Control' => 'private, max-age=86400',
+            // One hour, matching /media/{id} and /render/{id}/poster.
+            //
+            // The FILE is content-addressed; this URL is NOT — it is keyed on
+            // assets.id, and `assets.id INTEGER PRIMARY KEY` has no AUTOINCREMENT,
+            // so SQLite reuses a freed rowid. Delete the newest asset, upload
+            // another, and it takes the same id: a day-long cache would then paint
+            // the DELETED clip's frame as the new asset's preview, with nothing
+            // able to bust it — and would quietly undo the poster unlink in
+            // LibraryController::delete().
+            'Cache-Control' => 'private, max-age=3600',
             'Content-Security-Policy' => "default-src 'none'; sandbox",
             'Content-Length' => (string) $size,
         ]);

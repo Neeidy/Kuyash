@@ -138,5 +138,32 @@ No product defect was found by the smoke. Deferred work stays in
 `.claude/docs/phase-25-followups.md` — the largest being that with scripting off
 nothing yet stops Approve from discarding unsaved text.
 
+## Case-study rounds — 2026-08-26 (no new phase)
+
+Two rounds after the closing round, both dev-tooling and presentation. No engine,
+node-graph or schema-core change; one additive migration (0018) and one additive
+route.
+
+**Showcase seed + teardown.** `demo_seed_manifest` records every row and file the
+seed writes, so `bin/demo-teardown.php` removes exactly that set — proved live on
+the dev database (every count back to its pre-seed value, 0 FK violations) and in
+tests. The seed only INSERTs; workspace settings are read, never written. It is
+inert to the worker (no claimable job, no open automatic calendar day, no charge
+in the enforced budget month, no post on a connected channel) and refuses an
+auto-approving workspace or a live publish path unless told otherwise in as many
+words. Three gate rounds; the first two were NO-GO and both were right — see the
+checkpoint for what they caught.
+
+**Visual polish.** Real video posters (**ADR-025**), an opacity-only live pulse,
+and a tag chip that cannot be truncated out of a calendar cell. The approval
+chip's "Approved by you" now branches on the viewer (**ADR-026**) — a
+pre-existing bug that two real operators in one workspace would hit, which the
+seed's marked account was the first data to expose.
+
+Deferred: `.claude/docs/demo-showcase-followups.md`. The open decision there is
+**/workflows** — `frontend.md` promises a node graph with selection state and a
+settings panel, and neither exists; the case study should not claim a visual
+builder until that is settled.
+
 ## V2 / SaaS-ification Parking Lot (documented, NOT planned)
 Stripe billing & plans, multi-tenant UI, customer onboarding, team roles, AI avatars (HeyGen-class), ElevenLabs premium voice/music, additional AI-video providers, lip-sync/dubbing, multi-language; **boost suggestion (detect high-engagement posts → "Promote in Ads Manager" deep link — recommendation + link ONLY, never an ads platform)**; **workspace→account branching graph visualization (read-only view; engine stays linear)**; **revenue/MRR panel (meaningful only after Stripe)**.

@@ -1040,7 +1040,20 @@ html:not(.js) .cmdk-trigger { display: none; }
    "preview pending" placeholder into a ~400px void. Capped so the box stays a
    preview at every width. The clips are 9:16, so `cover` crops them; a portrait
    box is the better long-term answer and is filed as a follow-up. */
-.inline-player { position: relative; aspect-ratio: 16 / 9; max-height: 320px; background: #000; overflow: hidden; }
+.inline-player {
+  position: relative;
+  /* `width: 100%` is LOAD-BEARING with the cap below. With only aspect-ratio and
+     max-height, the browser honours the ratio by recomputing the WIDTH once the
+     height clamps: at 768 a 701px card became a 569px tile flush left, stopping
+     132px short of the card's right edge with the play button off-centre — it
+     read as a half-loaded image. Fixing the height overflow created it. An
+     explicit width makes width the input, so the cap only ever clamps height. */
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 320px;
+  background: #000;
+  overflow: hidden;
+}
 .inline-player__poster, .inline-player__video {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
 }

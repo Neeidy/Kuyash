@@ -711,3 +711,72 @@ end-to-end over real HTTP — edit
 saved, `captions_ai` preserved, `compliance_check` untouched, empty caption
 blocked, stale hash refused, restore returned the AI original. Deferred:
 `.claude/docs/phase-25-followups.md`.
+
+## ADR-025 — Video posters are content-addressed files, not a schema column
+
+**Date:** 2026-08-26 · **Status:** accepted
+
+**Context.** Every video preview in the product — library tiles, the approval
+cards on /queue and the dashboard — rendered a grey box with a play glyph. The
+product is about vertical video and showed none of it.
+
+**Decision.** A poster is one extracted frame stored under the `cache` store,
+named `substr(sha256('poster|v1|' . assets.sha256), 0, 32) . '.jpg'`.
+
+*Why content-addressed and not a column.* The file IS the index: existence is a
+stat, two rows holding the same bytes share one poster, and re-running the
+backfill is free. `assets` gains no column, so there is no migration and no state
+to keep in sync — a poster can be deleted or regenerated at any time without the
+database knowing.
+
+*Why never in a request path that serves a page.* Extraction runs at ingest, in
+`bin/backfill-posters.php`, and in the demo seed. The dev server is
+single-threaded, so a library of ten would otherwise mean ten sequential decodes
+blocking the page that asked for them. `GET /media/{id}/poster` serves what
+exists and 404s otherwise; callers resolve `has_poster` server-side so a miss is
+a fallback tile, not a failed request.
+
+*Why its own ffmpeg instance.* Ingest IS a web request, so a thumbnail grab
+shared the upload with the user who triggered it. Inheriting the 900s assembly
+watchdog made one crafted 200 MB upload a fifteen-minute worker hold. The poster
+gets `media.poster_timeout` (15s); the assembly path keeps 900s.
+
+*Why the poster lives on `<video poster="">`.* The sibling `<img>` and the
+`<video>` were both `position:absolute; inset:0`, and a `<video
+preload="metadata">` paints black over whatever is beneath it. That was invisible
+only while the fixture's render files 404'd and the video element stayed empty.
+
+**Consequences.** A migrated (R2) asset is staged to a work dir and cleaned up,
+never into the canonical asset path — otherwise the backfill would re-materialise
+a whole migrated library onto local disk. The route caches for one hour, not a
+day: the FILE is content-addressed but the URL is keyed on `assets.id`, and
+SQLite reuses freed rowids, so a longer cache could show a deleted video's frame
+as a new asset's preview. Deleting an asset deletes its poster unless another row
+still holds the same bytes.
+
+## ADR-026 — "Approved by you" is said only to the person who decided
+
+**Date:** 2026-08-26 · **Status:** accepted
+
+**Context.** `templates/runs/show.php` hard-coded the label `runs.approved_by_you`
+for every `mode='manual'` approval, with no reference to `decided_by`. "you" is
+deictic — it resolves to whoever is reading — so the chip told any viewer that
+THEY approved the run, while the email rendered beside it named someone else. Two
+real operators in one workspace hit this identically; the demo seed's marked
+account was simply the first data to exercise the path.
+
+**Decision.** The label branches on whether the deciding account is the session
+account: "Approved by you" when it is, "Approved by" otherwise. The record also
+renders the deciding account's NAME before its email, because that is where a
+marked account (`[SAMPLE] Demo operator`) says what it is — rendering the email
+alone stripped the marker at the one screen that shows the record.
+
+**Consequences.** `runs/show` needs `viewerId`; `RunRepository::approvalsForRun`
+selects `u.name`. The human-vs-agent distinction the compliance rule protects is
+untouched — an `auto` record still renders as the agent with its policy version
+and never names a person. What changed is only whether a human record claims the
+*reader* is that human.
+
+**Related.** The demo seed writes approvals attributed to a marked, unloginable
+demo account rather than to the operator; the record is truthful about who
+decided, and this ADR is what makes the screen truthful about it too.
