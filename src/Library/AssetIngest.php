@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kuyash\Library;
 
+use Kuyash\Media\AssetPoster;
 use Kuyash\Storage\StorageKey;
 use Kuyash\Storage\StorageManager;
 use Kuyash\Workspace\WorkspaceContext;
@@ -30,6 +31,7 @@ final class AssetIngest
         private readonly StorageManager $durable,
         private readonly int $maxTags,
         private readonly int $maxTagLength,
+        private readonly ?AssetPoster $posters = null,
     ) {
     }
 
@@ -70,7 +72,7 @@ final class AssetIngest
                 $meta['mime'],
             );
 
-            return $this->assets->create($ctx, [
+            $assetId = $this->assets->create($ctx, [
                 'kind' => $meta['kind'],
                 'type' => $type,
                 'title' => $title,
@@ -85,6 +87,21 @@ final class AssetIngest
                 'aspect' => $probed['aspect'],
                 'tags' => $this->parseTags($rawTags),
             ], $disk);
+
+            // A still frame for every preview in the product. Deliberately AFTER
+            // the row exists and deliberately unable to fail the upload: a poster
+            // is decoration, and AssetPoster::ensure() returns null rather than
+            // throwing. Extracting here (not while serving a page) is what keeps
+            // a video decode out of the request path.
+            $this->posters?->ensure([
+                'id' => $assetId,
+                'workspace_id' => $ctx->id(),
+                'kind' => $meta['kind'],
+                'stored_name' => $storedName,
+                'sha256' => $sha256,
+            ]);
+
+            return $assetId;
         } catch (Throwable $e) {
             // no orphan on failure: the row is the source of truth, so a failed
             // put/insert must take the just-stored local file with it. A failed

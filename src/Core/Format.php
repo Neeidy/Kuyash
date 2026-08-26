@@ -59,6 +59,33 @@ final class Format
     }
 
     /** '2026-06-12T09:33:11Z' → '09:33:11' (UTC); null/garbage → '—'. */
+    /**
+     * Split a leading bracket tag off a title: "[SAMPLE] Kitchen" → ['SAMPLE', 'Kitchen'].
+     *
+     * WHY THIS EXISTS: a title is rendered in cells narrow enough to truncate —
+     * a calendar day at 768px gives about 68px — and an ellipsis eats the END of
+     * a string. A tag kept inside the title therefore survives truncation while
+     * the words it qualifies do not: every occupied day read "[SAMPLE]…" and four
+     * different videos looked identical. Rendering the tag as its own chip lets
+     * it stay whole at every width AND gives the title back the space it needs.
+     *
+     * Generic on purpose — it knows about a bracketed prefix, not about any one
+     * tag's meaning.
+     *
+     * @return array{0: string|null, 1: string} [tag without brackets, remaining title]
+     */
+    public static function splitTag(string $title): array
+    {
+        if (preg_match('/^\s*\[([^\]]{1,24})\]\s*(.*)$/u', $title, $m) !== 1) {
+            return [null, $title];
+        }
+        $rest = trim($m[2]);
+
+        // A title that is ONLY a tag keeps it as the title — stripping it would
+        // leave an empty line where a name should be.
+        return $rest === '' ? [null, $title] : [trim($m[1]), $rest];
+    }
+
     public static function utcTime(?string $iso): string
     {
         if ($iso === null || strlen($iso) < 19) {

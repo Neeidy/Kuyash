@@ -96,7 +96,12 @@ use Kuyash\Core\View;
             <?php if ($draftId !== null || $libId !== null): ?>
             <?php $src = $draftId !== null ? '/render/' . (int) $draftId : '/media/' . (int) $libId; ?>
             <div class="inline-player approve-card__player" data-inline-player>
-              <?php if ($draftId !== null): ?><img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy"><?php endif; ?>
+              <?php /* A distribution run has no ASSEMBLE node and therefore no draft
+                       render — its preview IS the library clip that will go out. It
+                       used to play with no poster at all, so the most visual moment
+                       in the approval flow was a grey box. */ ?>
+              <?php if ($draftId !== null): ?><img class="inline-player__poster" src="/render/<?= (int) $draftId ?>/poster" alt="" loading="lazy">
+              <?php else: ?><img class="inline-player__poster" src="/media/<?= (int) $libId ?>/poster" alt="" loading="lazy"><?php endif; ?>
               <video class="inline-player__video" src="<?= $src ?>" preload="metadata" playsinline></video>
               <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
                 <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>

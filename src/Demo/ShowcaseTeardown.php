@@ -65,6 +65,9 @@ final class ShowcaseTeardown
         'trends',
         'trend_config',
         'workflows',
+        // last: approvals and runs both point at a user, so the demo account can
+        // only go once nothing names it any more
+        'users',
     ];
 
     /**
@@ -97,6 +100,7 @@ final class ShowcaseTeardown
         'trends' => 'created_at',
         'trend_config' => 'updated_at',
         'workflows' => 'created_at',
+        'users' => 'created_at',
     ];
 
     /** Which column ties a row to its run, for the pinned-run skip in run(). */
@@ -136,6 +140,12 @@ final class ShowcaseTeardown
             "NOT EXISTS (SELECT 1 FROM runs r WHERE r.entity_type = 'library' AND r.entity_id = assets.id)",
         ],
         'workflows' => ['NOT EXISTS (SELECT 1 FROM runs r WHERE r.workflow_id = workflows.id)'],
+        'users' => [
+            'NOT EXISTS (SELECT 1 FROM approvals a WHERE a.decided_by = users.id)',
+            'NOT EXISTS (SELECT 1 FROM runs r WHERE r.created_by = users.id)',
+            'NOT EXISTS (SELECT 1 FROM workspace_users wu WHERE wu.user_id = users.id)',
+            'NOT EXISTS (SELECT 1 FROM jobs j WHERE j.user_id = users.id)',
+        ],
     ];
 
     private SeedManifest $manifest;

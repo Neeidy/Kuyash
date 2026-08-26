@@ -176,7 +176,13 @@ $cellLabel = static fn (string $state): string => View::t(match ($state) {
           <?php endif; ?>
 
           <?php if ($cell['asset_title'] !== null): ?>
-          <p class="cell__title"><?= View::e((string) $cell['asset_title']) ?></p>
+          <?php /* the tag renders as its own chip so it survives a 68px cell at
+                   768px, and the title gets the rest of the width back */ ?>
+          <?php [$cellTag, $cellTitle] = Format::splitTag((string) $cell['asset_title']); ?>
+          <p class="cell__title">
+            <?php if ($cellTag !== null): ?><span class="chip chip--faint cell__tag"><?= View::e($cellTag) ?></span><?php endif; ?>
+            <span class="cell__title-text"><?= View::e($cellTitle) ?></span>
+          </p>
           <?php endif; ?>
 
           <?php if (in_array($cell['state'], [PlanBoard::MISSED, PlanBoard::BLOCKED, PlanBoard::STOPPED], true) && $cell['reason'] !== null): ?>

@@ -48,6 +48,7 @@ use Kuyash\Library\AssetStorage;
 use Kuyash\Library\AssetValidator;
 use Kuyash\Library\MediaProbe;
 use Kuyash\Media\AssetCache;
+use Kuyash\Media\AssetPoster;
 use Kuyash\Media\MediaPaths;
 use Kuyash\Media\RenderRepository;
 use Kuyash\Publish\AccountRepository;
@@ -180,6 +181,7 @@ return static function (Container $container, string $basePath): void {
             $c->get(StorageManager::class),
             (int) $config->get('library.max_tags'),
             (int) $config->get('library.max_tag_length'),
+            $c->get(AssetPoster::class),
         );
     });
 
@@ -194,6 +196,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(WorkspaceSettings::class),
         (array) $c->get(Config::class)->get('library'),
         $c->get(\Kuyash\Publish\OccurrenceRepository::class),
+        $c->get(AssetPoster::class),
     ));
 
     $container->bind(MediaController::class, static fn (Container $c): MediaController => new MediaController(
@@ -201,6 +204,7 @@ return static function (Container $container, string $basePath): void {
         $c->get(AssetStorage::class),
         $c->get(StorageManager::class),
         $c->get(WorkspaceContext::class),
+        $c->get(AssetPoster::class),
         (int) $c->get(Config::class)->get('storage.r2.presign_ttl', 300),
     ));
 

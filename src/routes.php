@@ -73,6 +73,7 @@ return static function (Router $router, Config $config, Container $container): v
     $router->post('/library/asset/{id}/avatar', $protected([LibraryController::class, 'setAvatar']));
     $router->post('/library/avatar/clear', $protected([LibraryController::class, 'clearAvatar']));
     $router->get('/media/{id}', $protected([MediaController::class, 'serve']));
+    $router->get('/media/{id}/poster', $protected([MediaController::class, 'poster']));
     $router->get('/render/{id}', $protected([RenderController::class, 'serve']));
     $router->get('/render/{id}/poster', $protected([RenderController::class, 'poster']));
 

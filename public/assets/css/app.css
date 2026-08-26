@@ -1197,9 +1197,9 @@ html:not(.js) .cmdk-trigger { display: none; }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   Phase 19 — live layer indicator (topbar). Phase 21 rev §3: the dot is a TEAL
-   heartbeat — an opacity pulse PLUS a glow (box-shadow) ring, ~2s ease-in-out,
-   GPU-light (opacity + box-shadow only). The connecting state is a calm dim
+   Phase 19 — live layer indicator (topbar). Phase 26 rev: the dot is a TEAL
+   heartbeat — an OPACITY pulse over a STATIC glow ring, ~2s ease-in-out. Opacity
+   is the only animated property, so the pulse composites instead of repainting. The connecting state is a calm dim
    teal (never dull gray); .is-live (set by live-client.js on a real SSE
    snapshot) is the bright pulsing state. A base glow is always present so even
    a single captured frame shows a teal halo. reduced-motion → static (no pulse),
@@ -1218,17 +1218,24 @@ html:not(.js) .topbar__live { display: none; }
   box-shadow: 0 0 4px 0 var(--glow);
 }
 .topbar__live.is-live { color: var(--text-2); }
-/* live: bright teal + heartbeat pulse + breathing glow */
+/* live: bright teal + heartbeat pulse.
+   OPACITY ONLY. The pulse used to animate box-shadow too, which is a blur radius
+   changing 30 times a second — a repaint on every frame, on every screen, for
+   the whole session. The glow is now a STATIC ring and only opacity moves, which
+   the compositor can do on its own. Same heartbeat, none of the paint cost. */
 .topbar__live.is-live .topbar__live-dot {
   opacity: 1;
+  box-shadow: 0 0 7px 1px var(--glow);
   animation: live-beat 2s ease-in-out infinite;
+  will-change: opacity;
 }
 @keyframes live-beat {
-  0%, 100% { opacity: 1;    box-shadow: 0 0 4px 0 var(--glow); }
-  50%      { opacity: 0.5;  box-shadow: 0 0 11px 3px var(--glow); }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .topbar__live.is-live .topbar__live-dot { animation: none; opacity: 1; box-shadow: 0 0 7px 2px var(--glow); }
+  /* static, not dimmed: the dot still says "live", it just stops moving */
+  .topbar__live.is-live .topbar__live-dot { animation: none; opacity: 1; will-change: auto; }
 }
 @media (max-width: 640px) { .topbar__live-text { display: none; } }
 @media (max-width: 460px) { .topbar__live { display: none; } }
@@ -1497,9 +1504,21 @@ html:not(.js) .topbar__live { display: none; }
 .cell--published .cell__state { color: var(--accent); }
 .cell--missed .cell__state,
 .cell--stopped .cell__state { color: var(--err); }
+/* The tag chip must NEVER truncate; the title may. `nowrap` + ellipsis on the
+   whole line meant the chip was the only survivor in a narrow cell, so the line
+   is now a flex row: the chip keeps its intrinsic width (flex:none) and the
+   title takes the remainder and ellipses on its own. */
 .cell__title {
   margin: var(--s1) 0 0;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.cell__tag { flex: none; font-size: 9px; padding: 1px 4px; letter-spacing: 0.02em; }
+.cell__title-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

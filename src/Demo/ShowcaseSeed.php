@@ -71,7 +71,14 @@ final class ShowcaseSeed
      */
     private const PUBLISHED_OFFSET = 480;
 
+    /**
+     * Who demo approvals are attributed to. `.invalid` is reserved by RFC 2606
+     * and can never be a real mailbox — the address itself says what it is.
+     */
+    private const DEMO_EMAIL = 'sample.operator@kuyash.invalid';
+
     private SeedManifest $manifest;
+    private ?int $demoUserId = null;
 
     public function __construct(
         private readonly Database $db,
@@ -696,7 +703,25 @@ final class ShowcaseSeed
             'ai_label_required' => false,
         ], $at(320), $now);
 
-        $reviewResult = ['ai_label_required' => false, 'compliance' => ['status' => 'pass']];
+        // The exact shape MockExecutor emits for this gate. `library_asset_id` is
+        // what lets the approval card play a real preview: a DISTRIBUTION run has
+        // no ASSEMBLE node and therefore no draft render, so the reviewable video
+        // IS the library clip — which is also exactly what will be published.
+        // Without it every showcase approval card was a grey "preview pending"
+        // box, on the most visual screen in the product.
+        $reviewResult = [
+            'summary' => 'Render review: compliance pass (policy kuyash-v1)',
+            'draft_render_id' => null,
+            'poster_ref' => null,
+            'library_asset_id' => $assetId,
+            'duration_s' => $duration,
+            'compliance' => [
+                'status' => 'pass',
+                'policy' => 'kuyash-v1',
+                'slop_score' => $slop['score'],
+            ],
+            'ai_label_required' => false,
+        ];
         $renderId = null;
         if ($render !== null) {
             $renderId = $this->insert('renders', [
@@ -716,7 +741,7 @@ final class ShowcaseSeed
             ], $now);
         }
 
-        $this->job(
+        $reviewJobId = $this->job(
             $workspaceId,
             $runId,
             'PUBLISH',
@@ -732,22 +757,38 @@ final class ShowcaseSeed
             return $runId;
         }
 
-        // NO APPROVAL RECORD IS WRITTEN. NOT `auto`, NOT `manual`.
+        // A REAL approval record, attributed to a DEMO ACCOUNT.
         //
-        // The rule is the same one that keeps this seed out of the daily digest:
-        // a surface that renders only a decision, an identity and a timestamp has
-        // nowhere to put the [SAMPLE] marker, so it must not be filled at all.
-        // The run page renders a manual record as a green chip reading
-        // "Approved by you · <the operator's real email> · <timestamp>". Nobody
-        // approved these. `.claude/rules/compliance.md` is explicit: no fake
-        // "human approved" stamps, in UI, API, logs or marketing copy — and a
-        // fabricated personal stamp is worse than the auto record it replaced,
-        // not better.
+        // The distinction is the whole point. Writing `decided_by` = the
+        // operator's own user id makes the run page render "Approved by you ·
+        // <their real email>" for a decision they never made — that is
+        // fabrication, and `.claude/rules/compliance.md` forbids it by name. A
+        // record naming a demo account fabricates nothing: that account really
+        // did approve this run, in the sense that the demo dataset is what it is,
+        // and the email says so on its face (a reserved .invalid domain that can
+        // never belong to a person).
         //
-        // The absence is honest. A demo run shows no approval chip, which says
-        // "this record is not here"; the alternative said "a named person decided
-        // this", which is false. A truthful approval record belongs on a run the
-        // operator actually approves during the capture.
+        // It also restores a state the engine can actually reach. `render_review`
+        // = ready is only produced by Engine::approve()/finalizeAutoApproved(),
+        // and both write an approval row — so a published run with NO record was
+        // a state the product cannot produce, and the run page hides the whole
+        // card when the list is empty, which reads as "this publish had no
+        // approval gate" on a compliance-first product.
+        //
+        // `manual` + a real user + no policy stamp is exactly what the 0007 CHECK
+        // demands of a human record, and this one is human: a demo human.
+        $this->insert('approvals', [
+            'workspace_id' => $workspaceId,
+            'run_id' => $runId,
+            'job_id' => $reviewJobId,
+            'node' => 'PUBLISH',
+            'decision' => 'approved',
+            'mode' => 'manual',
+            'decided_by' => $this->demoUserId($now),
+            'decided_at' => $at(380),
+            'policy_version' => null,
+            'score_json' => null,
+        ], $now);
 
         $this->job($workspaceId, $runId, 'PUBLISH', ++$step, 'final_render', 'ready', [
             'render_id' => $renderId,
@@ -827,6 +868,37 @@ final class ShowcaseSeed
             'created_at' => $createdAt,
             'started_at' => $createdAt,
             'finished_at' => $finishedAt ?? ($status === 'awaiting_approval' ? null : $createdAt),
+        ], $now);
+    }
+
+    /**
+     * The account demo approvals are attributed to — created once per seed run
+     * and recorded in the manifest like everything else.
+     *
+     * NOT LOGINABLE. The password hash is taken over 32 random bytes that are
+     * discarded immediately, so no password matches it; the address sits on the
+     * reserved `.invalid` TLD, which by RFC 2606 can never resolve to a real
+     * mailbox. The name carries the marker, because the run page prints the
+     * address and the digest prints nothing at all.
+     */
+    private function demoUserId(string $now): int
+    {
+        if ($this->demoUserId !== null) {
+            return $this->demoUserId;
+        }
+        $existing = $this->db->one('SELECT id FROM users WHERE email = ?', [self::DEMO_EMAIL]);
+        if ($existing !== null) {
+            // an earlier seed's account that teardown could not remove (a pinned
+            // run still points at it) — reuse rather than collide on the UNIQUE
+            return $this->demoUserId = (int) $existing['id'];
+        }
+
+        return $this->demoUserId = $this->insert('users', [
+            'email' => self::DEMO_EMAIL,
+            'password_hash' => password_hash(bin2hex(random_bytes(32)), PASSWORD_ARGON2ID),
+            'name' => self::MARK . ' Demo operator',
+            'created_at' => $now,
+            'updated_at' => $now,
         ], $now);
     }
 

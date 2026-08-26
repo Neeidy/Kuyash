@@ -104,7 +104,15 @@ $chipClassFor = static fn (string $t): string => $t === 'ai' ? 'chip chip--ai' :
       <?php if ($item['kind'] === 'photo'): ?>
       <img src="/media/<?= (int) $item['id'] ?>" alt="" loading="lazy">
       <?php else: ?>
+      <?php /* A real frame of the video when one has been extracted (at upload,
+               or by bin/backfill-posters.php). `has_poster` is resolved in the
+               controller so a missing poster never becomes a 404 request — the
+               tile falls back to the icon, which is what it always was. */ ?>
+      <?php if ($item['has_poster'] ?? false): ?>
+      <img class="asset-thumb__poster" src="/media/<?= (int) $item['id'] ?>/poster" alt="" loading="lazy">
+      <?php else: ?>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" width="26" height="26"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>
+      <?php endif; ?>
       <span class="asset-card__play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
       <?php endif; ?>
       <?php if ($item['duration_s'] !== null): ?>

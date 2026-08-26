@@ -801,7 +801,7 @@ $libCtl = new LibraryController(
     new Kuyash\Workspace\WorkspaceSettings($cdb), $libConfig,
     new OccurrenceRepository($cdb),
 );
-$mediaCtl = new MediaController($crepo, $cstorage, $cdisks, $cctx, 300);
+$mediaCtl = new MediaController($crepo, $cstorage, $cdisks, $cctx, null, 300);
 
 $cctx->set($cWs);
 check('library ctl: empty state renders', str_contains($libCtl->index()->body(), 'The library is empty'));
@@ -3619,7 +3619,7 @@ $srvDb->run(
 );
 $localAssetId = $srvDb->lastInsertId();
 
-$srvMedia = new MediaController($srvRepo, $srvStorage, $srvDisks, $srvCtx, 300);
+$srvMedia = new MediaController($srvRepo, $srvStorage, $srvDisks, $srvCtx, null, 300);
 $srvCtx->set($srvWs);
 $r2Resp = $srvMedia->serve(['id' => (string) $r2AssetId]);
 check('serve: R2 asset → 302 to a presigned GET', $r2Resp->status() === 302 && str_contains((string) ($r2Resp->headers()['Location'] ?? ''), 'X-Amz-Signature='));
@@ -11158,6 +11158,14 @@ $demoFingerprint = static function (Database $db): string {
     $out = [];
     foreach ($tables as $t) {
         foreach ($db->all("SELECT * FROM {$t}") as $row) {
+            // The demo account's password hash is Argon2id over fresh random
+            // bytes, so its SALT differs every run BY DESIGN — that is what makes
+            // the account unloginable. Comparing it would assert that a random
+            // value is stable. Its presence is still compared; only the digest
+            // is redacted.
+            if (array_key_exists('password_hash', $row)) {
+                $row['password_hash'] = $row['password_hash'] === null ? null : '<hash>';
+            }
             $out[] = $t . ':' . json_encode($row, JSON_THROW_ON_ERROR);
         }
     }
@@ -11578,9 +11586,10 @@ check('demo/r2: no auto-approval record is written, so the auto cap is never tou
 
     (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
 
-    // Neither mode. The `auto` row spent a live cap; the `manual` row that first
-    // replaced it fabricated a named person's decision. Both are absent.
-    return (int) $db->one('SELECT COUNT(*) n FROM approvals')['n'] === 0;
+    // No `auto` row: that is the one that consumes the cap. The `manual` rows the
+    // seed DOES write name a demo account, never the operator — covered by
+    // demo/r3 below, and irrelevant to this counter either way.
+    return (int) $db->one("SELECT COUNT(*) n FROM approvals WHERE mode = 'auto'")['n'] === 0;
 })());
 
 check('demo/r2: not one charge lands in the month the budget cap is enforced against', (static function () use (
@@ -11845,26 +11854,61 @@ check('demo/r3: a finished publish reports counts the digest can actually read',
     return true;
 })());
 
-check('demo/r3: no approval record is fabricated, in either mode', (static function () use (
+check('demo/r3: the approval record names a DEMO account, never the operator', (static function () use (
     $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
 ): bool {
-    // A surface that renders only a decision, an identity and a timestamp has
-    // nowhere to put the [SAMPLE] marker — so it must not be filled at all. The
-    // run page renders a manual record as "Approved by you · <real email> ·
-    // <time>", and nobody approved these runs. Writing `manual` instead of
-    // `auto` was the WRONG fix: it turned a policy-stamped agent record into a
-    // fabricated personal one, which compliance rules forbid by name.
-    //
-    // Deliberately NOT a shape assertion. The 0007 CHECK already guarantees the
-    // shape, and a fabricated record satisfies it perfectly — which is exactly
-    // why the earlier version of this test passed while the defect was live.
-    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    // Writing `decided_by` = the real operator makes the run page render
+    // "Approved by you · <their real email>" for a decision they never made —
+    // fabrication, forbidden by name. A demo account fabricates nothing and
+    // restores a state the engine can actually reach (render_review = ready is
+    // only produced by a path that writes an approval).
+    [$db, $wsId, $ownerId] = $demoWorld($basePath, $demoNow);
     $root = tempDir('demo-r3-appr');
 
     (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
 
-    return (int) $db->one('SELECT COUNT(*) n FROM approvals')['n'] === 0
-        && !str_contains((string) file_get_contents($basePath . '/src/Demo/ShowcaseSeed.php'), "insert('approvals'");
+    $rows = $db->all(
+        "SELECT a.mode, a.decided_by, a.policy_version, u.email, u.name
+         FROM approvals a JOIN users u ON u.id = a.decided_by
+         JOIN demo_seed_manifest m ON m.table_name = 'approvals' AND m.row_id = a.id",
+    );
+    if (count($rows) !== 3) {
+        return false;
+    }
+    foreach ($rows as $row) {
+        if ((int) $row['decided_by'] === $ownerId) {
+            return false;   // the operator never approved these
+        }
+        if ((string) $row['mode'] !== 'manual' || $row['policy_version'] !== null) {
+            return false;   // the 0007 truthfulness invariant for a human record
+        }
+        // the address says what it is: .invalid can never be a real mailbox
+        if (!str_ends_with((string) $row['email'], '@kuyash.invalid')
+            || !str_starts_with((string) $row['name'], \Kuyash\Demo\ShowcaseSeed::MARK)
+        ) {
+            return false;
+        }
+    }
+
+    // …and that account cannot be logged into
+    $hash = (string) $db->one('SELECT password_hash FROM users WHERE email = ?', ['sample.operator@kuyash.invalid'])['password_hash'];
+
+    return !password_verify('', $hash) && !password_verify('password', $hash);
+})());
+
+check('demo/r1: teardown takes the demo account with it', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r1-user');
+    $before = (int) $db->one('SELECT COUNT(*) n FROM users')['n'];
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $demoPaths($root), $demoMedia))->run($wsId, $demoNow);
+    $seeded = (int) $db->one('SELECT COUNT(*) n FROM users')['n'] === $before + 1;
+
+    (new \Kuyash\Demo\ShowcaseTeardown($db))->run();
+
+    return $seeded && (int) $db->one('SELECT COUNT(*) n FROM users')['n'] === $before;
 })());
 
 check('demo/r3: no ledger row is written, because a balance cannot carry a marker', (static function () use (

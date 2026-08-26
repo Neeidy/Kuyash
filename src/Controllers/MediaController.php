@@ -7,6 +7,7 @@ namespace Kuyash\Controllers;
 use Kuyash\Core\Response;
 use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
+use Kuyash\Media\AssetPoster;
 use Kuyash\Storage\StorageException;
 use Kuyash\Storage\StorageKey;
 use Kuyash\Storage\StorageManager;
@@ -27,8 +28,57 @@ final class MediaController
         private readonly AssetStorage $storage,
         private readonly StorageManager $disks,
         private readonly WorkspaceContext $workspace,
+        private readonly ?AssetPoster $posters = null,
         private readonly int $presignTtl = 300,
     ) {
+    }
+
+    /**
+     * The still frame for a library video.
+     *
+     * SERVES ONLY WHAT EXISTS — it never extracts. Posters are made at ingest, by
+     * bin/backfill-posters.php, and by the demo seed; running ffmpeg here would
+     * put a video decode inside a page load, and on a single-threaded dev server
+     * a library of ten would block on itself. A miss is a 404 and the template
+     * falls back to its gradient, which is why this is safe to be lazy about.
+     *
+     * A photo is its own poster, so it redirects to the asset itself rather than
+     * duplicating the bytes.
+     *
+     * @param array<string, string> $params
+     */
+    public function poster(array $params = []): Response
+    {
+        $id = $params['id'] ?? '';
+        // tenant-scoped find, exactly like serve() — a poster is content too
+        $asset = ctype_digit($id) ? $this->assets->find($this->workspace, (int) $id) : null;
+        if ($asset === null || $this->posters === null) {
+            return self::missing();
+        }
+        if ((string) $asset['kind'] === 'photo') {
+            return Response::redirect('/media/' . (int) $asset['id']);
+        }
+
+        $path = $this->posters->pathFor($asset);
+        $size = is_file($path) ? filesize($path) : false;
+        if ($size === false || $size === 0) {
+            return self::missing();
+        }
+
+        return Response::file($path, 200, [
+            'Content-Type' => 'image/jpeg',
+            'X-Content-Type-Options' => 'nosniff',
+            // content-addressed by the asset's sha256: the bytes behind this URL
+            // can never change, so it is safe to hold on to
+            'Cache-Control' => 'private, max-age=86400',
+            'Content-Security-Policy' => "default-src 'none'; sandbox",
+            'Content-Length' => (string) $size,
+        ]);
+    }
+
+    private static function missing(): Response
+    {
+        return new Response('Not found', 404, ['Content-Type' => 'text/plain; charset=utf-8']);
     }
 
     /** @param array<string, string> $params */

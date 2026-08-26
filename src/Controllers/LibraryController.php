@@ -13,6 +13,7 @@ use Kuyash\Core\View;
 use Kuyash\Library\AssetIngest;
 use Kuyash\Library\AssetRepository;
 use Kuyash\Library\AssetStorage;
+use Kuyash\Media\AssetPoster;
 use Kuyash\Library\InvalidUploadException;
 use Kuyash\Library\UploadedFile;
 use Kuyash\Publish\OccurrenceRepository;
@@ -36,6 +37,7 @@ final class LibraryController
         /** @var array<string, mixed> */
         private readonly array $libraryConfig,
         private readonly OccurrenceRepository $occurrences,
+        private readonly ?AssetPoster $posters = null,
     ) {
     }
 
@@ -49,6 +51,14 @@ final class LibraryController
         }
 
         $items = $this->assets->listFor($this->workspace, $q !== '' ? $q : null, $type !== '' ? $type : null);
+        // Decided HERE, not in the template with a broken <img>: the poster route
+        // serves only what exists, so the grid asks first and falls back to its
+        // gradient rather than emitting a request that 404s.
+        $items = array_map(function (array $item): array {
+            $item['has_poster'] = $this->posters !== null && $this->posters->exists($item);
+
+            return $item;
+        }, $items);
 
         return Response::html($this->view->render('library/index', [
             'title' => 'Library — Kuyash',
