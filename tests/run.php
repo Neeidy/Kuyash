@@ -10781,6 +10781,45 @@ check('fix/dashboard: the health harness reads the BODY, not just the status cod
         && str_contains($harness, "getenv('HEALTH_PASSWORD')");
 })());
 
+
+echo "== demo-seed: the showcase top-up cannot lie or run by accident ==\n";
+
+check('demo-seed: it refuses to write without an explicit confirmation', (static function () use ($basePath): bool {
+    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+
+    return str_contains($seed, "in_array('--yes', array_slice(\$argv, 1), true)")
+        && str_contains($seed, "PHP_SAPI !== 'cli'");
+})());
+
+check('demo-seed: it never writes a figure for a REAL account, and never fakes an outcome', (static function () use ($basePath): bool {
+    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+
+    return
+        // the only account it touches is the mock one, matched by handle
+        str_contains($seed, "handle = '@smoke_tt'")
+        // …and it never assigns a follower count, which is what keeps the card
+        // marking that account's figures as a sample rather than as measured
+        && !str_contains($seed, 'followers_count =')
+        // runs are STARTED, so the queue card, the verdict and the approval
+        // record are the pipeline's real output — never inserted job rows
+        && str_contains($seed, 'startRunFor')
+        && !str_contains($seed, 'INSERT INTO jobs')
+        && !str_contains($seed, 'INSERT INTO posts')
+        && !str_contains($seed, 'INSERT INTO approvals')
+        // library clips say what they are, in the title, on every screen
+        && str_contains($seed, '[SAMPLE] Demo clip');
+})());
+
+check('demo-seed: an auto-approving workspace keeps its honestly empty queue', (static function () use ($basePath): bool {
+    // Starting runs to fill the approval screen would misrepresent the
+    // workspace's own configuration — and, as the first version proved by
+    // spawning a run per invocation, it is not idempotent either.
+    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+
+    return str_contains($seed, "\$mode !== 'manual'")
+        && str_contains($seed, 'nothing started');
+})());
+
 // clean up the per-run temp media root (no rm -rf; explicit unlink/rmdir)
 if (is_dir($TEST_MEDIA_ROOT)) {
     $it = new RecursiveIteratorIterator(
