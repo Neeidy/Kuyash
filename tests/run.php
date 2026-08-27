@@ -6567,6 +6567,101 @@ check('p17: tenant isolation — a sibling workspace sees an empty cockpit', (st
     $snap = $p17Cockpit->snapshot($other, $p17Now);
     return $snap['awaiting'] === [] && $snap['accounts'] === [] && $snap['business']['balance_cents'] === 0;
 })());
+
+// ── K1: one definition of "waiting on you" ─────────────────────────────────
+// The dashboard used to print three different answers in one frame: the KPI
+// (runs awaiting), the approval card's badge (the SLICE the card was cut down
+// to — so eight open gates read "4" for ever) and the plan band (this week's
+// cells). The badge now prints the KPI's own number and the card says how many
+// runs it is NOT showing. These checks pin that: the badge's source, the live
+// tick's source and the KPI's source must be the same count, and the "and N
+// more" arithmetic must be measured in runs — not in cards, which is the unit
+// that made the two disagree in the first place.
+check('k1: the card is sliced but the count is not — badge number = KPI number = live tick', (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+    $db = migratedDb($basePath);
+    [$user, $ws] = seedUser($db, 'k1@example.com', $argonHash, 'K1 WS');
+    $now = gmdate('Y-m-d\TH:i:s\Z');
+    $db->run('INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [$ws, 'Full', 'full', '[]', $now, $now]);
+    $wf = (int) $db->lastInsertId();
+
+    // six runs awaiting a human, and the FIRST one holds two open gates — so
+    // the number of cards (7) and the number of runs (6) genuinely differ, the
+    // way the visual fixture does.
+    $runIds = [];
+    for ($i = 0; $i < 6; $i++) {
+        $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, current_node, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'awaiting_approval', 'PREVIEW', ?, ?, ?)", [$ws, $wf, $user, $now, $now]);
+        $runIds[] = (int) $db->lastInsertId();
+    }
+    // run #1's second gate goes EARLY, so the four cards the dashboard shows
+    // really do cover fewer than four runs — that is the case the "and N more"
+    // arithmetic has to get right.
+    $gates = [$runIds[0], $runIds[0], $runIds[1], $runIds[2], $runIds[3], $runIds[4], $runIds[5]];
+    foreach ($gates as $n => $runId) {
+        $db->run(
+            "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, result_json, max_retries, priority, run_after, created_at)
+             VALUES (?, ?, 'PREVIEW', ?, 'render_review', 'awaiting_approval', '{}', '{}', 3, 0, ?, ?)",
+            [$ws, $runId, 8 + $n, $now, $now],
+        );
+    }
+
+    $ctx = new WorkspaceContext($db);
+    $ctx->set($ws);
+    $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+    $cockpit = new \Kuyash\Workflow\Cockpit(
+        $db,
+        new AssetCache($db, $paths),
+        new CreditLedger($db),
+        new UsageRepository($db),
+        new AccountRepository($db),
+        new \Kuyash\Workflow\JobRepository($db),
+    );
+    $snap = $cockpit->snapshot($ctx, $now);
+
+    // the window is four RUNS — run #1 brings both of its open gates with it,
+    // so five cards render. Cutting at four CARDS instead would show one of
+    // run #1's gates and hide the other, and then "cards shown + and N more"
+    // would add up to the queue's card count rather than to the badge.
+    if (count($snap['awaiting']) !== 5 || $snap['awaitingShownRuns'] !== 4) {
+        return false;
+    }
+    // no run is half-shown: every gate of a shown run is on the page
+    $shown = [];
+    foreach ($snap['awaiting'] as $j) {
+        $shown[(int) $j['run_id']] = ($shown[(int) $j['run_id']] ?? 0) + 1;
+    }
+    if (($shown[$runIds[0]] ?? 0) !== 2) {
+        return false;
+    }
+    // the badge is the KPI, not the window
+    if ($snap['business']['awaiting'] !== 6 || $snap['kpis']['awaiting'] !== 6) {
+        return false;
+    }
+    // and the live tick that overwrites that badge every few seconds agrees
+    if ($cockpit->liveSnapshot($ws)['awaiting'] !== 6) {
+        return false;
+    }
+    // 4 runs shown + "and 2 more" = 6 = the badge. The arithmetic a reader
+    // does on the card has to land on the number above it.
+    return ($snap['business']['awaiting'] - $snap['awaitingShownRuns']) === 2;
+})());
+check('k1: /queue prints the same unit as the dashboard badge — runs, not gates', (static function () use ($basePath): bool {
+    $tpl = (string) file_get_contents($basePath . '/templates/queue/index.php');
+
+    // the chip must be fed a de-duplicated run count; count($awaiting) is the
+    // gate count, which is what made the two screens disagree one click apart
+    return str_contains($tpl, "'n' => $awaitingRuns")
+        && str_contains($tpl, 'array_unique(array_map(static fn (array $j): int => (int) ($j[\'run_id\'] ?? 0), $awaiting))')
+        && !str_contains($tpl, "'n' => count($awaiting)");
+})());
+check('k1: both places that print the count carry the live hook, so they cannot drift apart on screen', (static function () use ($basePath): bool {
+    $tpl = (string) file_get_contents($basePath . '/templates/dashboard.php');
+    $js = (string) file_get_contents($basePath . '/public/assets/js/live-client.js');
+
+    // two nodes in the markup, and a client that updates ALL of them (a
+    // querySelector here would refresh the KPI and leave the badge stale)
+    return substr_count($tpl, 'data-live-awaiting') === 2
+        && str_contains($js, "querySelectorAll('[data-live-awaiting]')");
+})());
 $p17En = require $basePath . '/lang/en.php';
 $p17Tr = require $basePath . '/lang/tr.php';
 $p17Keys = ['dash.kpi_balance', 'dash.kpi_spent', 'dash.kpi_cost_per', 'dash.added_week', 'dash.charges_mtd', 'dash.no_data_yet', 'dash.accounts_title', 'dash.accounts_none', 'player.play', 'player.playing', 'player.preview_pending'];

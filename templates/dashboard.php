@@ -148,7 +148,14 @@ $biz = $cockpit['business'];
   <div class="card card--primary">
     <div class="card__head">
       <h2><?= View::t('dash.awaiting_approval') ?></h2>
-      <span class="card__action"><span class="chip chip--<?= $cockpit['awaiting'] === [] ? 'ok' : 'warn' ?> num"><?= count($cockpit['awaiting']) ?></span></span>
+      <?php /* ONE definition of "waiting on you" on this page. This badge used
+               to count the four cards the card was sliced down to, so a
+               workspace with eight open gates read "4" here for ever, next to a
+               KPI saying 7 and an ACTIVE RUNS list printing seven awaiting rows.
+               It now prints the KPI's own number — runs awaiting your approval —
+               and carries the same live hook, so the two can never drift apart
+               again while the page is open. */ ?>
+      <span class="card__action"><span class="chip chip--<?= (int) $biz['awaiting'] === 0 ? 'ok' : 'warn' ?> num" data-live-awaiting><?= (int) $biz['awaiting'] ?></span></span>
     </div>
     <div class="card__body">
       <?php if ($cockpit['awaiting'] === []): ?>
@@ -231,6 +238,12 @@ $biz = $cockpit['business'];
         </article>
         <?php endforeach; ?>
       </div>
+      <?php /* the card is a window, and it now says so out loud instead of
+               letting the badge imply the queue is only this deep */ ?>
+      <?php $moreRuns = max(0, (int) $biz['awaiting'] - (int) ($cockpit['awaitingShownRuns'] ?? 0)); ?>
+      <?php if ($moreRuns > 0): ?>
+      <p class="note"><a href="/queue"><?= View::t('dash.awaiting_more', ['n' => $moreRuns]) ?></a></p>
+      <?php endif; ?>
       <p class="note"><?= View::t('queue.approval_note') ?></p>
       <?php endif; ?>
     </div>

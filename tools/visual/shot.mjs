@@ -8,6 +8,8 @@
 //   - navigates and waits for load,
 //   - records console errors (JS exceptions, console.error, network failures),
 //   - measures horizontal overflow (scrollWidth - innerWidth),
+//   - counts the preview images that actually PAINTED and fails a screen that
+//     falls under the floor declared in routes.json (minMediaDemo),
 //   - captures a full-page PNG.
 // Writes summary.json and exits NON-ZERO if any page had a console error or
 // horizontal overflow — so the visual gate can genuinely FAIL, not rubber-stamp.
@@ -287,7 +289,18 @@ try {
       setTimeout(() => res(src), 4000);
       probe.src = src;
     })));
-    return broken.concat(results.filter(Boolean));
+    const badPosters = results.filter(Boolean);
+
+    /* COUNT what actually painted, not just what failed.
+       The broken-media check above can only fail on an element the page ASKED
+       for. A screen that emits no <img> and no poster at all — the poster
+       pipeline off, a template branch that stopped rendering previews, a seed
+       that produced no media — has nothing to break, so it stayed green while
+       showing empty tiles. This is the number routes.json asserts a floor on. */
+    return {
+      broken: broken.concat(badPosters),
+      rendered: imgs.filter(i => i.naturalWidth > 0).length + (posters.length - badPosters.length),
+    };
   })()`;
 
   async function shoot(name, width, locale) {
@@ -297,22 +310,34 @@ try {
     // before the capture: the same call that checks also forces lazy images in,
     // so the PNG is evidence of what actually renders rather than of what
     // happened to be above the fold
-    const brokenMedia = (await evaluateAsync(brokenMediaExpr)) || [];
+    const media = (await evaluateAsync(brokenMediaExpr)) || { broken: [], rendered: 0 };
+    const brokenMedia = media.broken || [];
     const png = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, sessionId);
     const file = join(OUT_DIR, `${name}__${width}__${locale}.png`);
     writeFileSync(file, Buffer.from(png.data, 'base64'));
     const pageErrors = [...errors];
-    const ok = pageErrors.length === 0 && overflow === 0 && brokenMedia.length === 0;
+    /* The floor this screen must clear. Declared per screen in routes.json and
+       only meaningful once the showcase seed has run, because the plain fixture
+       does not guarantee a preview on every screen — so it is asserted under
+       VISUAL_DEMO only, where the dataset is known. */
+    const minMedia = (WITH_DEMO && byScreen[name]?.minMediaDemo) || 0;
+    const shortfall = minMedia > 0 && media.rendered < minMedia ? { want: minMedia, got: media.rendered } : null;
+    const ok = pageErrors.length === 0 && overflow === 0 && brokenMedia.length === 0 && shortfall === null;
     if (!ok) exitCode = 1; // a real visual-gate failure (vs setup failure = 2)
-    results.push({ name, width, locale, overflow, errors: pageErrors, brokenMedia, ok, file });
+    results.push({ name, width, locale, overflow, errors: pageErrors, brokenMedia, rendered: media.rendered, shortfall, ok, file });
     process.stdout.write(ok ? '.' : 'x');
     if (brokenMedia.length > 0) {
       console.log(`\n[harness] ${name}@${width}/${locale}: ${brokenMedia.length} image(s) did not load — ${brokenMedia.slice(0, 3).join(', ')}`);
+    }
+    if (shortfall) {
+      console.log(`\n[harness] ${name}@${width}/${locale}: ${shortfall.got} preview image(s) painted, expected at least ${shortfall.want}`);
     }
   }
 
   // map screen name -> path (for the --only/self-test and the loops below)
   const byName = Object.fromEntries(screens.map((s) => [s.name, s.path]));
+  // the whole screen entry, so shoot() can read its media floor
+  const byScreen = Object.fromEntries(screens.map((s) => [s.name, s]));
   function screenPath(name) {
     return byName[name];
   }
@@ -387,12 +412,14 @@ try {
       const why = [
         r.overflow ? `overflow ${r.overflow}px` : null,
         r.brokenMedia?.length ? `${r.brokenMedia.length} image(s) did not load: ${r.brokenMedia.slice(0, 3).join(', ')}` : null,
+        r.shortfall ? `only ${r.shortfall.got} preview image(s) painted, expected ≥ ${r.shortfall.want}` : null,
         ...r.errors,
       ].filter(Boolean).join('; ');
       console.log(`  ✗ ${r.name} @ ${r.width}px/${r.locale} — ${why}`);
     }
   } else {
-    console.log('[harness] all pages: 0 console errors, 0 horizontal overflow, 0 broken images.');
+    const floors = results.filter((r) => (WITH_DEMO && byScreen[r.name]?.minMediaDemo) > 0).length;
+    console.log(`[harness] all pages: 0 console errors, 0 horizontal overflow, 0 broken images, ${floors} page(s) met their preview-image floor.`);
   }
 
   await cdp.send('Target.closeTarget', { targetId });

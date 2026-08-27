@@ -278,6 +278,7 @@ return [
     'dash.at' => 'şu adımda:',
     'dash.timeline' => 'Zaman çizelgesi',
     'dash.awaiting_approval' => 'Onay bekleyen',
+    'dash.awaiting_more' => 've seni bekleyen {n} tane daha — kuyruğu aç',
     'dash.nothing_waiting' => 'Kararınızı bekleyen bir şey yok.',
     'dash.thumbs_note_1' => 'Her önizleme videonun gerçek bir karesidir. Nihai, tam kaliteli videoyu üretmek için',
     'dash.queue_word' => 'kuyruktan',

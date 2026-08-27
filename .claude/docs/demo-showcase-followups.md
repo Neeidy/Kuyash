@@ -199,3 +199,50 @@ render edilen poster ile eksik poster'ı ayırt edemiyordu. İkisi de düzeltild
   `<video poster>` kontrolü hâlâ yan-kanal `Image()` probe'u: URL'in
   getirilebildiğini kanıtlar, video elementinin onu BOYADIĞINI değil. Poster'ın
   gerçekten boyandığını doğrulamak render-piksel örneklemesi gerektirir.
+
+
+---
+
+# Son cila turu — ertelenenler (2026-08-27)
+
+Üç iş kapandı (gerçek stok fixture'lı gate, önizleme-tabanı kontrolü, K1 tek
+tanım). ux gate'in aynı turda bulduğu ve **bilinçli olarak kapsam dışı
+bırakılan** kusurlar — hepsi gerçek render'dan doğrulandı:
+
+- **P0 — önizlemesi olmayan kapıda "Onayla ve yayınla" aktif.** `run #4`
+  kartında tile "Preview pending" derken birincil buton yayınlıyor
+  (`dashboard__1280__en.png` ~y1010, `queue__1280__en.png` ~y1780). Operatörden
+  göremediği bir videoyu yayınlamaya yetki vermesi isteniyor ve kayda ADI
+  yazılıyor. Panelde 4 karttan 2'si bu durumda.
+- **P0 — run-detail ekranlarının HİÇBİRİ medya basmıyor** (`rendered: 0`,
+  dördü de). Vitrinin amiral gemisi `run-detail-demo-published` dahil: "bunu
+  yayınladık" diyen sayfada tek kare yok. `routes.json`'da bu rotalar için
+  `minMediaDemo` YOK — yani yeni taban orada **eksiklikten dolayı kör**.
+  (Taban koyulamaz: bugün 0 basıyorlar; önce önizleme eklenmeli.)
+- **P1 — gerçek hesabın kartında sentetik gradient tile.** `@visual.real`
+  (`accounts__1280__en.png`, `dashboard__1280__en.png`). Bu turda yalnız
+  `aria-label`/`role` düzeltildi (artık o kanala ait olmayan bir videoyu
+  DUYURMUYOR); tile'ın kendisi hâlâ gradient ve gerçek karelerin yanında
+  "yüklenemedi" gibi okunuyor. Dürüst boş-durum gerekiyor.
+- **P1 — plan bandı "seni bekliyor"u KPI'ın birebir sözcükleriyle tekrar
+  ediyor** (`plan.summary*`). Sayı doğru (haftanın AWAITING hücreleri) ama
+  KPI'ın 20px altında ve bu veri setinde 7/4 sayıları çakışıyor → okuyan
+  bandı KPI'ın dökümü sanıyor. İsim verilerek çözülmeli ("4 gün onayını
+  bekliyor"), sayı değiştirilerek değil.
+- **P1 — canlı tick "ve N tane daha" satırını ve rozetin ton sınıfını
+  güncellemiyor.** Sayı 6'ya düşünce rozet 6 der, satır hâlâ "3 tane daha"
+  der; kuyruk boşalınca rozet turuncu "0" olur. Oturum ortasında yeniden
+  tutarsızlaşabilir.
+- **P1 — önizleme tabanı sayfa-toplamı, yüzey-başına değil.** Panelde taban 5;
+  bugün onu geçiren 3 hesap karesi + 2 onay poster'ı. Hesap karesi sayısı
+  artarsa dört onay önizlemesi birden kararabilir ve taban yine geçer.
+  Ayrıca `naturalWidth > 0` NİCELİK ölçer, içerik değil: gradient bir poster da
+  decode olur. Önizlemeleri fotoğrafik tutan şey bu assert değil, GERÇEK STOK
+  FIXTURE. (Bu iki sınır `routes.json` yorumunda açıkça yazıyor.)
+- **P1 — /plan'da başlıksız "seni bekliyor" hücresi** (Cuma 28.08, Salı 01.09):
+  ne poster ne başlık; operatör o gün ne çıkacağını göremiyor.
+- **P2** — TR'de sen/siz karışımı (`ve seni bekleyen …` ↔ `Sizin tarafınızdan
+  onaylandı`); PRODUCTION STEPS'te PUBLISH düğümü kırpılıyor, kaydırma
+  göstergesi yok; bitmiş run'da adımlar "done" derken job listesi "ready";
+  "ve N tane daha" 375px'te ~17px dokunma hedefi; kütüphanenin önizlemesiz
+  3 klibi operatörün KENDİ dosyaları ve ızgaranın ilk üç kutusu.

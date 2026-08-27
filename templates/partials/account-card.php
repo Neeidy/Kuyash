@@ -140,7 +140,12 @@ $statusTone = ['connected' => 'ok', 'reauth_needed' => 'err'][$status] ?? 'neutr
       ? '/media/' . (int) $samplePosters[$seed % count($samplePosters)] . '/poster'
       : null;
   ?>
-  <div class="acc-card__media" role="img" aria-label="<?= View::t('acct.video_aria', ['handle' => $handle]) ?>">
+  <?php /* The image role belongs to the tile only when there IS an image. On a
+           provider-backed card the tile is a decorative gradient, and labelling
+           it "video from @handle" told a screen-reader user about a post that
+           account never published — the same claim the sample frame is withheld
+           to avoid, made in the accessibility layer instead of in pixels. */ ?>
+  <div class="acc-card__media"<?= $sampleFrame !== null ? ' role="img" aria-label="' . View::e(View::t('acct.video_aria', ['handle' => $handle])) . '"' : '' ?>>
     <?php if ($sampleFrame !== null): ?>
     <img class="acc-card__frame" src="<?= View::e($sampleFrame) ?>" alt="" loading="lazy">
     <?php else: ?>

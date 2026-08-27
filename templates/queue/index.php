@@ -26,7 +26,14 @@ use Kuyash\Core\View;
     <p class="screen-sub"><?= View::t('queue.subtitle') ?></p>
   </div>
   <div class="screen-head__actions">
-    <span class="chip chip--<?= $awaiting === [] ? 'ok' : 'warn' ?> num"><?= View::t('queue.waiting_for_you', ['n' => count($awaiting)]) ?></span>
+    <?php /* RUNS, not cards. This chip and the dashboard's badge print the same
+             phrase; while this one counted approval gates and that one counted
+             runs, the two screens answered "how much is waiting on you?" with
+             different numbers one click apart — and the dashboard's "and N more"
+             points here. One run can hold more than one open gate, so the list
+             below can be longer than this number. */ ?>
+    <?php $awaitingRuns = count(array_unique(array_map(static fn (array $j): int => (int) ($j['run_id'] ?? 0), $awaiting))); ?>
+    <span class="chip chip--<?= $awaitingRuns === 0 ? 'ok' : 'warn' ?> num"><?= View::t('queue.waiting_for_you', ['n' => $awaitingRuns]) ?></span>
   </div>
 </div>
 

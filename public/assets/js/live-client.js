@@ -12,7 +12,11 @@
 
   var live = document.querySelector('[data-live]');
   var liveText = live ? live.querySelector('[data-live-text]') : null;
-  var awaiting = document.querySelector('[data-live-awaiting]');
+  /* ALL of them, not the first. The dashboard now shows this same count in
+     two places (the KPI and the approval card's badge) precisely so they
+     agree; updating only the first would have re-created the disagreement
+     a few seconds after the page loaded. */
+  var awaiting = document.querySelectorAll('[data-live-awaiting]');
   var es;
 
   function onSnapshot(e) {
@@ -20,7 +24,10 @@
     try { data = JSON.parse(e.data); } catch (_) { return; }
     if (live) live.classList.add('is-live');
     if (liveText) liveText.textContent = liveText.getAttribute('data-live-updated') || liveText.textContent;
-    if (awaiting && typeof data.awaiting === 'number') awaiting.textContent = String(data.awaiting);
+    if (awaiting.length && typeof data.awaiting === 'number') {
+      var n = String(data.awaiting);
+      for (var i = 0; i < awaiting.length; i++) awaiting[i].textContent = n;
+    }
   }
 
   function connect() {

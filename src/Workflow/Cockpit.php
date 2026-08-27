@@ -29,6 +29,9 @@ use Throwable;
  */
 final class Cockpit
 {
+    /** How many awaiting RUNS the dashboard shows before deferring to /queue. */
+    private const AWAITING_RUNS = 4;
+
     public function __construct(
         private readonly Database $db,
         private readonly AssetCache $cache,
@@ -52,6 +55,7 @@ final class Cockpit
      *   pipeline: array{run_id: int, template: string, nodes: list<array{name: string, state: string}>}|null,
      *   activeRuns: list<array<string, mixed>>,
      *   awaiting: list<array<string, mixed>>,
+     *   awaitingShownRuns: int,
      *   planWeek: array{unavailable: true}|array<string, int>|null,
      *   accounts: list<array<string, mixed>>|null,
      *   nextPublish: array{run_id: int, run_after: string}|null
@@ -62,18 +66,39 @@ final class Cockpit
         $ws = $ctx->id();
         $kpis = $this->kpis($ws);
 
+        /* Slice by RUN, not by card.
+           The badge, the KPI and the /live tick all count runs awaiting your
+           approval, so the card's "and N more" has to be measured in runs too —
+           and it can only be read correctly if what the card SHOWS is a whole
+           number of runs. Cutting at four cards instead let one run's second
+           open gate land inside the window and its first outside it, so four
+           cards + "and four more" added up to the queue's card count and not to
+           the badge. Whole runs in, whole runs out. */
+        $awaitingRuns = [];
+        $awaitingCards = [];
+        foreach ($this->jobs->awaitingApproval($ctx) as $job) {
+            $runId = (int) ($job['run_id'] ?? 0);
+            if (!isset($awaitingRuns[$runId])) {
+                if (count($awaitingRuns) >= self::AWAITING_RUNS) {
+                    break;
+                }
+                $awaitingRuns[$runId] = true;
+            }
+            // same flag the queue resolves: the card asks before requesting
+            // a poster, instead of emitting an <img> that 404s
+            $job['has_poster'] = $this->posters !== null && $this->posters->existsForJob($job);
+            $awaitingCards[] = $job;
+        }
+
         return [
             'kpis' => $kpis,
             'business' => $this->business($ws, $now, $kpis['awaiting'], $kpis['renders']),
             'pipeline' => $this->pipeline($ws),
             'activeRuns' => $this->activeRuns($ws),
-            'awaiting' => array_map(function (array $job): array {
-                // same flag the queue resolves: the card asks before requesting
-                // a poster, instead of emitting an <img> that 404s
-                $job['has_poster'] = $this->posters !== null && $this->posters->existsForJob($job);
-
-                return $job;
-            }, array_slice($this->jobs->awaitingApproval($ctx), 0, 4)),
+            'awaiting' => $awaitingCards,
+            // how many runs the cards above account for — the subtrahend of the
+            // card's "and N more", in the badge's own unit
+            'awaitingShownRuns' => count($awaitingRuns),
             'accounts' => $this->accounts($ctx),
             // frames a SAMPLE account card may show; empty when there is no demo
             // content, which is why a real card can never accidentally get one

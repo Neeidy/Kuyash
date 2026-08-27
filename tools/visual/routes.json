@@ -1,4 +1,5 @@
 {
+  "_comment2": "minMediaDemo = the number of preview images this screen must actually PAINT once bin/demo-seed.php has run. Asserted only under VISUAL_DEMO=1, because only then is the dataset known. It exists because every other check here can only fail on an element the page asked for: a screen that stops emitting posters altogether has nothing to break, so '0 console errors, 0 broken images' stayed green over empty tiles. The numbers are what the seeded dataset actually renders today (library 10 clips, queue 6 approval cards, dashboard 4 cards + 1 sample account frame, plan 4 filled days) — a floor, not an equality, so adding content never fails the gate. TWO LIMITS, stated so nobody reads more into a green run than it earned: (1) it asserts QUANTITY, not content — a poster of a flat gradient decodes fine and would pass, so what actually keeps the previews photographic is the committed real-stock fixture, not this number; (2) it is a page-level sum, so it cannot tell four painted account frames from four painted approval posters, and a screen with no floor declared is not checked at all — the four run-detail routes render zero preview images today and are therefore unguarded here.",
   "_comment": "Phase 15.9 visual-test screen inventory. shot.mjs renders each page at every width x locale. 'auth' false = reachable without login (skipped during the authenticated pass). Detail routes mostly stay out — they need a stable seeded id. The exceptions are /runs/2 and /runs/3, added in Phase 25 because the post-text editor lives there and on /queue, and a screen nobody photographs is a screen nobody checks: run 2 is still editable, run 3 has finished so it shows the read-only state, and run 4 was edited by a person so it carries the edit chip and the compliance chip derived from that edit. bin/visual-seed.php creates all three deterministically.",
   "screens": [
     {
@@ -9,7 +10,8 @@
     {
       "path": "/dashboard",
       "name": "dashboard",
-      "auth": true
+      "auth": true,
+      "minMediaDemo": 5
     },
     {
       "path": "/quick",
@@ -24,7 +26,8 @@
     {
       "path": "/library",
       "name": "library",
-      "auth": true
+      "auth": true,
+      "minMediaDemo": 10
     },
     {
       "path": "/workflows",
@@ -34,7 +37,8 @@
     {
       "path": "/queue",
       "name": "queue",
-      "auth": true
+      "auth": true,
+      "minMediaDemo": 6
     },
     {
       "path": "/runs/2",
@@ -54,7 +58,8 @@
     {
       "path": "/plan",
       "name": "plan",
-      "auth": true
+      "auth": true,
+      "minMediaDemo": 4
     },
     {
       "path": "/accounts",

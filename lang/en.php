@@ -282,6 +282,7 @@ return [
     'dash.at' => 'at',
     'dash.timeline' => 'Timeline',
     'dash.awaiting_approval' => 'Awaiting approval',
+    'dash.awaiting_more' => 'and {n} more waiting for you — open the queue',
     'dash.nothing_waiting' => 'Nothing is waiting for your decision.',
     'dash.thumbs_note_1' => 'Each preview is a real frame from your video. Approve in the',
     'dash.queue_word' => 'queue',
