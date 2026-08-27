@@ -35,13 +35,11 @@ export OPENAI_MOCK="true"
 # Caught by bin/demo-seed.php's live-publish precondition refusing to seed here.
 export ZERNIO_MOCK="true"
 export STORAGE_DRIVER="local"
-# The demo seed's media path. bin/demo-seed.php already documented fixtures as
-# "what the visual gate uses" — it wasn't: the gate never exported this, so every
-# run went to the LIVE Pexels API. That made the gate non-deterministic (a
-# different clip per run means a screenshot diff means nothing), dependent on a
-# network and a key, and it spent real quota on a throwaway database. The
-# committed fixtures are real portrait stock footage, so nothing about "posters
-# must show real frames" is given up by using them.
+# The demo seed's media path. This is now the seed's own default, so the export
+# is belt-and-braces: it pins the gate to the committed fixtures even if the
+# default ever moves back. Fixtures are real portrait stock, so nothing about
+# "posters must show real frames" is given up — what is gained is that the gate,
+# the operator's install and the case study all look at the same ten tiles.
 export DEMO_MEDIA="fixture"
 export APP_URL="http://127.0.0.1:${PORT}"
 export VISUAL_TEST_EMAIL="${VISUAL_TEST_EMAIL:-visual@kuyash.local}"

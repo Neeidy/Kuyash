@@ -128,6 +128,23 @@ final class StockMediaFactory implements MediaFactory
         return is_file($scratch) && filesize($scratch) > 0 ? $scratch : null;
     }
 
+
+    public function stillFrom(string $source, string $target): bool
+    {
+        if (!$this->ffmpeg->available() || !is_file($source)) {
+            return false;
+        }
+        try {
+            $this->ffmpeg->run(['-ss', '0.5', '-i', $source, '-frames:v', '1', '-q:v', '3', $target]);
+        } catch (Throwable $e) {
+            error_log('Kuyash: demo render poster failed — ' . $e->getMessage());
+
+            return false;
+        }
+
+        return is_file($target) && filesize($target) > 0;
+    }
+
     /** @return array<string, mixed>|null */
     private function measure(string $path, string $kind, string $mime): ?array
     {

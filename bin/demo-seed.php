@@ -160,16 +160,22 @@ if (!$manifest->isEmpty()) {
 // product rendered as a flat wash and the poster work was invisible. The clips
 // are labelled, tracked and removed by teardown like everything else.
 //
-// DEMO_MEDIA=fixture forces the committed fixtures instead — that is what the
-// visual gate uses, so the gate stays deterministic and offline while still
-// exercising real footage.
+// THE COMMITTED FIXTURES ARE THE DEFAULT, and the live provider is now the
+// opt-in (DEMO_MEDIA=live). Both paths use real portrait stock — the difference
+// is who chooses the footage. The live one asks Pexels a search term per item
+// and takes what comes back, which is how the showcase ended up with a black
+// glitch frame under "Still — profile" and a clip that was not 9:16 under
+// "Kitchen" (its format chip read `other`, on a screen whose whole subject is
+// the 9:16 format rule). A demo dataset has to be the same every time it is
+// installed — the operator, the case study and the visual gate are all looking
+// at the same tiles — and a network call cannot promise that.
 $mediaProbe = new MediaProbe();
 $ffmpegBin = $container->get(Kuyash\Media\Ffmpeg::class);
-$useFixtures = getenv('DEMO_MEDIA') === 'fixture';
+$useFixtures = getenv('DEMO_MEDIA') !== 'live';
 
 if ($useFixtures) {
     $mediaFactory = new FixtureMediaFactory(dirname(__DIR__) . '/tools/visual/fixtures/stock', $mediaProbe, $ffmpegBin);
-    fwrite(STDOUT, "  media: committed stock fixtures (DEMO_MEDIA=fixture)\n");
+    fwrite(STDOUT, "  media: committed stock fixtures (deterministic; DEMO_MEDIA=live to fetch instead)\n");
 } else {
     $scratch = dirname(__DIR__) . '/storage/work';
     @mkdir($scratch, 0750, true);
@@ -180,7 +186,7 @@ if ($useFixtures) {
         $scratch,
         ShowcaseSeed::stockQueries(),
     );
-    fwrite(STDOUT, '  media: live stock provider (' . $container->get(Kuyash\Media\StockProvider::class)->name() . ")\n");
+    fwrite(STDOUT, '  media: LIVE stock provider (' . $container->get(Kuyash\Media\StockProvider::class)->name() . ") — DEMO_MEDIA=live; this install will not match the next one\n");
 }
 
 // ── seed ────────────────────────────────────────────────────────────────────

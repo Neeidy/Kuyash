@@ -42,4 +42,18 @@ interface MediaFactory
      * @return array<string, mixed>|null
      */
     public function still(string $target, int $index = 0): ?array;
+
+    /**
+     * Cut a still from THIS file, not from the fixture pool.
+     *
+     * `still()` picks its own source, which is right for a library photo and
+     * wrong for a render's thumbnail: the seed used it for both, so a finished
+     * run's poster showed a frame of a different clip than the video under it.
+     * Nobody saw that while the run page had no player. It is a small lie in the
+     * one place — a published run — that the page exists to be believed about.
+     *
+     * Returns false when no frame could be cut; the caller then stores no poster
+     * rather than a name pointing at nothing.
+     */
+    public function stillFrom(string $source, string $target): bool;
 }

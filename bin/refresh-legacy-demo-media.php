@@ -102,7 +102,25 @@ foreach ($candidates as $asset) {
     $rebuilt = sys_get_temp_dir() . '/legacy-out-' . bin2hex(random_bytes(6)) . '.mp4';
 
     try {
-        $container->get(StockProvider::class)->fetchClip('vertical lifestyle', $seconds, $scratch);
+        /* Same source the showcase seed uses, and for the same reason: a demo
+           library has to look the same every time it is installed. Asking the
+           provider for "vertical lifestyle" returned whatever was trending that
+           minute — which is how the seeded library ended up with a black glitch
+           frame and a clip that was not 9:16. DEMO_MEDIA=live keeps the old
+           behaviour for anyone who wants fresh footage. */
+        if (getenv('DEMO_MEDIA') === 'live') {
+            $container->get(StockProvider::class)->fetchClip('vertical lifestyle', $seconds, $scratch);
+        } else {
+            $fixtures = glob(dirname(__DIR__) . '/tools/visual/fixtures/stock/[0-9][0-9].mp4') ?: [];
+            if ($fixtures === []) {
+                throw new RuntimeException('no committed stock fixtures to rebuild from');
+            }
+            sort($fixtures);
+            // deterministic per asset, so re-running this changes nothing
+            if (!copy($fixtures[$id % count($fixtures)], $scratch)) {
+                throw new RuntimeException('could not stage the fixture clip');
+            }
+        }
         $ffmpeg->run([
             '-stream_loop', '-1', '-i', $scratch, '-t', (string) $seconds,
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-an', $rebuilt,

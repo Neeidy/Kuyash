@@ -299,10 +299,14 @@ final class ShowcaseSeed
             ) {
                 continue;
             }
-            $poster = $this->media->still($posterPath, $i + 1);
+            // FROM THIS FILE. still() cuts from the fixture pool, so the render's
+            // thumbnail used to show a frame of a different clip than the video
+            // it sat on — invisible until the run page grew a player, and a lie
+            // exactly where a published run is meant to be believed.
+            $poster = $this->media->stillFrom($videoPath, $posterPath) ? $posterPath : null;
             $renderFiles[] = [
                 'video' => $videoPath,
-                'poster' => $poster === null ? '' : $posterPath,
+                'poster' => $poster ?? '',
                 'stored_name' => $videoName,
                 'poster_name' => $poster === null ? null : $posterName,
                 'duration_s' => $library[$i]['duration_s'],

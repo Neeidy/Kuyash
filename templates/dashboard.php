@@ -224,10 +224,22 @@ $biz = $cockpit['business'];
               <?php endif; ?>
             </div>
             <div class="appr-card__actions">
+              <?php /* same rule as /queue: a render gate with nothing to watch
+                       does not offer "Approve & publish". The record this button
+                       writes carries the operator's name and says they approved
+                       a video; over a "Preview pending" placeholder that record
+                       would be indistinguishable from one where they had seen
+                       it. Reject stays — refusing what you cannot see is safe. */ ?>
+              <?php $noPreview = (string) ($job['type'] ?? '') === 'render_review'
+                    && ($job['result']['draft_render_id'] ?? $job['result']['library_asset_id'] ?? null) === null; ?>
+              <?php if ($noPreview): ?>
+              <p class="field__hint appr-card__blocked"><?= View::t('queue.approve_needs_preview') ?></p>
+              <?php else: ?>
               <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve">
                 <?= $csrfField ?>
                 <button type="submit" class="btn btn--primary btn--sm"><?= $job['type'] === 'render_review' ? View::t('queue.approve_publish') : View::t('queue.approve') ?></button>
               </form>
+              <?php endif; ?>
               <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/reject" data-confirm="<?= View::t('queue.reject_confirm') ?>">
                 <?= $csrfField ?>
                 <button type="submit" class="btn btn--danger-ghost btn--sm"><?= View::t('queue.reject') ?></button>

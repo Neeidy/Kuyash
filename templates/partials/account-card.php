@@ -62,30 +62,42 @@ $metric = static fn (string $key): ?int => ($account[$key] ?? null) === null ? n
 $realFollowers = $metric('followers_count');
 
 // A mock provider fabricates its own figures, so a snapshot it produced is NOT a
-// measurement — treat such a card as demo data, or the stand-ins would render
-// unmarked (worse than chipping them). Real providers tag their own name.
+// measurement and none of its numbers may be shown. Real providers tag their own
+// name.
 $mockSourced = ($account['metric_provider'] ?? null) === 'mock';
 
-// Any real signal counts, not just followers: the provider fills followersCount
-// asynchronously, so engagement can land first. Keying only on followers would
-// drop such an account into the demo branch and paint fabricated engagement OVER
-// real measured data — the exact inversion of this rule.
-$providerBacked = !$mockSourced && (
-    $realFollowers !== null
-    || ($account['metric_date'] ?? null) !== null
+// A MOCK SNAPSHOT IS ABSENT DATA, NOT A LICENCE TO FABRICATE.
+//
+// This used to read `!$mockSourced && (...)`, so one mock-provider snapshot flipped
+// the whole card into the demo branch — and the demo branch INVENTS. On a real,
+// connected Instagram account with a provider-measured 7 followers stored, the
+// dashboard printed "7.2K followers", "+67 today", 9.5K likes and a still from a
+// clip that account never published, all under its real handle. Chipping those
+// figures "sample" does not cure it: the chip qualifies the number, nothing
+// qualifies the CHANNEL, and the product was holding the true value while
+// printing a different one three orders of magnitude out.
+//
+// `accounts.followers_count` is the sound signal, because DailySnapshot refuses to
+// write it from a mock provider for exactly this reason. So a stored follower
+// count means "a real provider has read this account" no matter what the newest
+// snapshot happens to be, and the mock snapshot only suppresses ITS OWN metrics.
+$measured = static fn (string $key): ?int => $mockSourced ? null : $metric($key);
+
+$providerBacked = $realFollowers !== null || (!$mockSourced && (
+    ($account['metric_date'] ?? null) !== null
     || $metric('metric_likes') !== null
     || $metric('metric_comments') !== null
     || $metric('metric_shares') !== null
     || $metric('metric_views') !== null
-);
+));
 $followersAreReal = $providerBacked && $realFollowers !== null;
 
 // On a provider-backed card a missing follower count is a dash, NOT a stand-in:
 // once an account is known to be real, nothing on it may be invented.
 $followers = $providerBacked ? $realFollowers : $pick(1, 1_200, 96_000);
-$likes = $providerBacked ? $metric('metric_likes') : $pick(3, 350, 12_000);
-$comments = $providerBacked ? $metric('metric_comments') : $pick(5, 6, 480);
-$shares = $providerBacked ? $metric('metric_shares') : $pick(7, 18, 3_200);
+$likes = $providerBacked ? $measured('metric_likes') : $pick(3, 350, 12_000);
+$comments = $providerBacked ? $measured('metric_comments') : $pick(5, 6, 480);
+$shares = $providerBacked ? $measured('metric_shares') : $pick(7, 18, 3_200);
 $growth = $pick(9, 4, 90);
 // engagement is "reported" only when the provider actually returned a number
 $engagementReported = $providerBacked && ($likes !== null || $comments !== null || $shares !== null);

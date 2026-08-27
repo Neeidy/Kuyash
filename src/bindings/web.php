@@ -247,6 +247,9 @@ return static function (Container $container, string $basePath): void {
         $c->get(Csrf::class),
         $c->get(Flash::class),
         $c->get(\Kuyash\Content\TextEditorView::class),
+        $c->get(AssetPoster::class),
+        $c->get(\Kuyash\Media\RenderRepository::class),
+        $c->get(\Kuyash\Media\MediaPaths::class),
     ));
 
     $container->bind(AccountsController::class, static fn (Container $c): AccountsController => new AccountsController(

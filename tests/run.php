@@ -2110,9 +2110,14 @@ while ($p4worker->tick()) {
 $p4auth = new Auth($p4db, new LoginThrottle($p4db), $p4ctx);
 $deadHeartbeat = new WorkerHeartbeat(tempDir('hb') . '/none.heartbeat'); // never beaten → "not running"
 $queueCtl = new QueueController($view, $p4jobs, $p4runs, $p4engine, $p4ctx, $p4auth, new Csrf(), new Flash(), $deadHeartbeat, new SlotRepository($p4db), new SlotResolver(), new WorkspaceSettings($p4db), new OccurrenceRepository($p4db), $p4db, makeTextEditorView($p4db));
+// wired with the render repo + media paths on purpose: without them the run
+// page cannot tell a row from a file, and it withholds the player rather than
+// emitting a <video> that 404s (that is what the fixture DB taught it)
+$wfPaths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/assets", 'cache' => "$TEST_MEDIA_ROOT/cache", 'render' => "$TEST_MEDIA_ROOT/renders", 'work' => "$TEST_MEDIA_ROOT/work"]);
 $wfCtl = new WorkflowController(
     $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
-    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(), makeTextEditorView($p4db));
+    new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(), makeTextEditorView($p4db),
+    null, new \Kuyash\Media\RenderRepository($p4db), $wfPaths);
 $logsCtl = new LogsController($view, $p4events, $p4ctx, new Csrf(), new Flash());
 
 check('workflows ctl: index lists both defaults', (static function () use ($wfCtl): bool {
@@ -2158,6 +2163,111 @@ check('queue ctl: renders awaiting approvals + jobs + runs', (static function ()
         && str_contains($body, 'inline-player') && !str_contains($body, 'approve-card__video')
         && str_contains($body, 'never faked');
 })());
+// ── P0a: a render gate with nothing to watch cannot be approved ────────────
+// "Approve & publish" writes a record with the operator's name on it saying
+// they approved a video. Over a "Preview pending" placeholder that record is
+// indistinguishable from one where they had actually watched it, which is the
+// exact misrepresentation .claude/rules/compliance.md forbids. Both halves are
+// checked: the screens withhold the button, and the POST refuses — a hidden
+// button is a suggestion, not a rule.
+check('p0a: approving a render gate with no preview is refused, and nothing is decided', (static function () use ($queueCtl, $p4jobs, $p4ctx, $p4db): bool {
+    $gate = null;
+    foreach ($p4jobs->awaitingApproval($p4ctx) as $job) {
+        if ((string) $job['type'] === 'render_review') {
+            $gate = $job;
+            break;
+        }
+    }
+    if ($gate === null) {
+        return false;
+    }
+    $id = (int) $gate['id'];
+    $keep = (string) $p4db->one('SELECT result_json FROM jobs WHERE id = ?', [$id])['result_json'];
+
+    // strip the preview, leaving a gate that names nothing to play
+    $p4db->run("UPDATE jobs SET result_json = '{}' WHERE id = ?", [$id]);
+    $blocked = $queueCtl->approve(['id' => (string) $id]);
+    $stillOpen = (string) $p4db->one('SELECT status FROM jobs WHERE id = ?', [$id])['status'];
+    $body = $queueCtl->index()->body();
+    $p4db->run('UPDATE jobs SET result_json = ? WHERE id = ?', [$keep, $id]);
+
+    return $blocked->status() === 303                      // sent back, not through
+        && $stillOpen === 'awaiting_approval'              // and nothing was decided
+        && str_contains($body, 'approve_needs_preview') === false  // (key resolved, not printed raw)
+        && str_contains($body, 'still being made')         // the screen says why
+        && !str_contains($body, '/approve"');              // and offers no approve form at all
+})());
+check('p0a: the guard is narrow — a script gate is still approved by reading it', (static function () use ($basePath): bool {
+    $ctl = (string) file_get_contents($basePath . '/src/Controllers/QueueController.php');
+
+    // the SQL that decides must pin type AND open status: a broader read would
+    // block script drafts (text, legitimately previewless) and already-decided
+    // jobs, which are the engine's business
+    return str_contains($ctl, "type = 'render_review' AND status = 'awaiting_approval'")
+        && str_contains($ctl, 'previewMissing((int) $id)');
+})());
+
+// ── P0b: the run page shows the video it is about ──────────────────────────
+check('p0b: run detail plays the run\'s own video (final render first, library clip otherwise)', (static function () use ($wfCtl, $p4jobs, $p4ctx): bool {
+    $gate = null;
+    foreach ($p4jobs->awaitingApproval($p4ctx) as $job) {
+        if ((string) $job['type'] === 'render_review') {
+            $gate = $job;
+            break;
+        }
+    }
+    if ($gate === null) {
+        return false;
+    }
+    $body = $wfCtl->showRun(['id' => (string) $gate['run_id']])->body();
+    $assetId = (int) ($gate['result']['library_asset_id'] ?? 0);
+
+    // a distribution run has no render of its own — its video IS the clip, and
+    // the poster is withheld (this controller was built without the poster
+    // service) rather than emitted as a URL that would 404
+    return $assetId > 0
+        && str_contains($body, 'run-player')
+        && str_contains($body, 'src="/media/' . $assetId . '"')
+        && !str_contains($body, 'poster="');
+})());
+check('p0b: a render row whose file was never written gets no player', (static function () use (
+    $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine, $p4db, $p4ctx, $p4auth
+): bool {
+    // the exact shape the visual fixture carries: rows, no bytes. The page used
+    // to emit a <video> for one and paint a broken red block over the run's own
+    // footage, with a 404 in the console the gate then caught.
+    $blind = new WorkflowController(
+        $view, $p4workflows, $p4runs, $p4jobs, $p4events, $p4engine,
+        new AssetRepository($p4db), new \Kuyash\Publish\PostRepository($p4db), $p4ctx, $p4auth, new Csrf(), new Flash(), makeTextEditorView($p4db),
+        null, new \Kuyash\Media\RenderRepository($p4db), new MediaPaths(['asset' => '/nowhere/a', 'cache' => '/nowhere/c', 'render' => '/nowhere/r', 'work' => '/nowhere/w']),
+    );
+    foreach ($p4runs->listFor($p4ctx, 100) as $run) {
+        if (str_contains($blind->showRun(['id' => (string) $run['id']])->body(), 'run-player')) {
+            return false;
+        }
+    }
+
+    return true;
+})());
+check('p0b: a run with no video yet reserves no frame', (static function () use ($wfCtl, $p4runs, $p4ctx): bool {
+    // the seeded workspace's earliest run is still upstream of any render
+    foreach ($p4runs->listFor($p4ctx, 100) as $run) {
+        $body = $wfCtl->showRun(['id' => (string) $run['id']])->body();
+        if (!str_contains($body, 'run-player')) {
+            return true;  // honest absence, not an empty tile
+        }
+    }
+
+    return false;
+})());
+check('p0b/demo: the showcase seed installs committed fixtures by default, live stock only on request', (static function () use ($basePath): bool {
+    $seed = (string) file_get_contents($basePath . '/bin/demo-seed.php');
+
+    // the default must be the deterministic path: the operator's install, the
+    // case study and the visual gate all have to be looking at the same tiles
+    return str_contains($seed, "getenv('DEMO_MEDIA') !== 'live'");
+})());
+
 check('queue ctl: warns when the worker is not running', (static function () use ($queueCtl): bool {
     // $deadHeartbeat was never beaten → isAlive false → band shown (Phase 21: the
     // band copy is de-jargoned — no "worker"/command — but still surfaces a pause)
@@ -7440,12 +7550,35 @@ check('p22/compliance: a demo (non-provider) account KEEPS its chipped stand-ins
 // replaced, and it is the DEFAULT state of a fresh install (ZERNIO_MOCK=true).
 check('p22/compliance: a mock-sourced snapshot is treated as demo data, never as a measurement',
     (static function () use ($p22RealCard): bool {
+        // the state a mock chore can actually produce: a snapshot row, and no
+        // follower count, because DailySnapshot refuses to write one (asserted
+        // directly by the next check)
         $html = $p22RealCard(['metric_provider' => 'mock', 'metric_date' => '2026-08-23',
-            'metric_likes' => 4242, 'followers_count' => 31337]);
+            'metric_likes' => 4242, 'followers_count' => null]);
 
         return str_contains($html, 'acc-card__sample chip')      // chipped as a stand-in
             && !str_contains($html, '>4242</span>')              // the invented number is not shown as fact
             && !str_contains($html, View::t('acct.no_metrics'));
+    })());
+// The live defect this pins: ws2 ran with ZERNIO_MOCK=true, so the newest
+// snapshot for a REAL connected Instagram account was mock-written — and the
+// card demoted the whole account to the demo branch. The dashboard printed
+// "7.2K followers", "+67 today", 9.5K likes and a still from a clip that
+// account never published, under its real handle, while the provider-measured
+// 7 sat unshown in the row it was reading.
+check('p22/compliance: a mock snapshot is ABSENT DATA — it never licenses fabrication over a real channel',
+    (static function () use ($p22RealCard): bool {
+        $html = $p22RealCard(['metric_provider' => 'mock', 'metric_date' => '2026-08-27',
+            'metric_likes' => 4242, 'followers_count' => 7]);
+
+        return str_contains($html, '>7</span>')                   // the measured audience, bare
+            && !str_contains($html, 'acc-card__sample chip')      // nothing on this card is invented
+            && !str_contains($html, '>4242</span>')               // and the mock's own metric is not shown
+            && substr_count($html, '>—</span>') === 3             // unreported engagement is a dash
+            && str_contains($html, View::t('acct.no_metrics'))
+            && !str_contains($html, 'acc-card__frame')            // no borrowed still on a real handle
+            && !str_contains($html, 'acct.growth_today')
+            && !str_contains($html, View::t('acct.growth_today', ['n' => 67]));
     })());
 check('p22/compliance: a mock provider never writes the audience field the UI renders unmarked',
     (static function () use ($basePath, $argonHash): bool {
@@ -11523,6 +11656,18 @@ $demoMedia = new class implements \Kuyash\Demo\MediaFactory {
         return $this->write($target, 'image/jpeg', null, 1080, 1920, (string) $index);
     }
 
+    public function stillFrom(string $source, string $target): bool
+    {
+        // derived from THE SOURCE's bytes, so a test can tell a poster cut from
+        // the render apart from one cut from somewhere else — which is the whole
+        // point of this method existing
+        if (!is_file($source)) {
+            return false;
+        }
+
+        return file_put_contents($target, 'still-of:' . hash_file('sha256', $source)) !== false;
+    }
+
     /** @return array<string, mixed>|null */
     private function write(string $target, string $mime, ?float $duration, int $w, int $h, string $salt = ''): ?array
     {
@@ -12048,6 +12193,40 @@ check('demo/r3: a demo channel is never connected, and never carries a follower 
     return (string) $real['status'] === 'connected' && (int) $real['followers_count'] === 7;
 })());
 
+check('demo/r3: a finished run\'s poster is a frame of THAT run\'s video, not of another clip', (static function () use (
+    $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
+): bool {
+    [$db, $wsId] = $demoWorld($basePath, $demoNow);
+    $root = tempDir('demo-r3-poster');
+    $paths = $demoPaths($root);
+
+    (new \Kuyash\Demo\ShowcaseSeed($db, $paths, $demoMedia))->run($wsId, $demoNow);
+
+    $renders = $db->all(
+        "SELECT r.workspace_id, r.stored_name, r.poster_name FROM renders r
+         JOIN demo_seed_manifest m ON m.table_name = 'renders' AND m.row_id = r.id",
+    );
+    if ($renders === []) {
+        return false;
+    }
+    foreach ($renders as $render) {
+        if ($render['poster_name'] === null) {
+            continue;   // no poster is honest; a poster of the WRONG clip is not
+        }
+        $video = $paths->pathFor('render', (int) $render['workspace_id'], (string) $render['stored_name']);
+        $poster = $paths->pathFor('render', (int) $render['workspace_id'], (string) $render['poster_name']);
+        // the stub writes the SOURCE's hash into the still, so this reads as
+        // "was this frame cut from the file it sits on?"
+        if (!is_file($video) || !is_file($poster)) {
+            return false;
+        }
+        if ((string) file_get_contents($poster) !== 'still-of:' . hash_file('sha256', $video)) {
+            return false;
+        }
+    }
+
+    return true;
+})());
 check('demo/r3: a stored duration is what the factory measured, never what was asked for', (static function () use (
     $basePath, $demoWorld, $demoMedia, $demoPaths, $demoNow
 ): bool {

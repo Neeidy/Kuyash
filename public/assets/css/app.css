@@ -1399,6 +1399,24 @@ html:not(.js) .topbar__live { display: none; }
   border: 1px solid var(--border); border-radius: var(--r-ctl);
 }
 
+/* the run page's own copy of that tile. Wider than the approval card's, because
+   here the video is the subject of the page rather than one input to a decision —
+   but the same 9:16 frame, so a vertical clip is never letterboxed into a
+   landscape box the way the approval preview once was. */
+.run-player {
+  width: 100%; max-width: 280px; aspect-ratio: 9 / 16;
+  /* .inline-player caps height at 320px, which beat the ratio and cropped ~36%
+     out of the middle of a 9:16 clip — 280x320 is 7:8, and this card exists so
+     the operator can see what actually went out. The ratio decides the box here;
+     280 wide x 498 tall is the whole frame. */
+  max-height: none;
+  border: 1px solid var(--border); border-radius: var(--r-ctl);
+}
+
+/* a withheld approval: the reason takes the space the button had, so the card
+   never reads as "the action is missing" */
+.approve-card__blocked, .appr-card__blocked { margin: 0; max-width: 42ch; }
+
 /* ── Phase 21-B — per-screen v3 treatments (quick / library / trends / digest /
    settings). Brings the dashboard's signature flourishes to the inner screens:
    a glowing primary CTA, hover-lift + gradient score on trend cards (with a

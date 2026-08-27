@@ -246,3 +246,76 @@ bırakılan** kusurlar — hepsi gerçek render'dan doğrulandı:
   göstergesi yok; bitmiş run'da adımlar "done" derken job listesi "ready";
   "ve N tane daha" 375px'te ~17px dokunma hedefi; kütüphanenin önizlemesiz
   3 klibi operatörün KENDİ dosyaları ve ızgaranın ilk üç kutusu.
+
+
+---
+
+# Bitiş turu — ertelenenler (2026-08-27, iki gate raporundan)
+
+Dört iş kapandı (fixture varsayılan seed, K1 tek sayı, önizlemesiz kapıda onay
+yok, run-detail'de "THE VIDEO"). Gate'lerin bulduğu ve bu turda **kapatılan**
+ekstralar: gerçek kanalda uydurma kitle (C1), final render'ın baytları yokken
+kaynak klibe düşme (H1), `.run-player`'ın 9:16 olmaması. Aşağıdakiler AÇIK.
+
+## Yüksek
+
+- **M1 (compliance) — `previewMissing()` bayt DEĞİL id kontrol ediyor.**
+  `draft_render_id` dolu ama dosyası olmayan bir kapı hâlâ "Onayla ve yayınla"
+  sunuyor ve POST geçiyor — tam da guard'ın önlemek için var olduğu kayıt.
+  Aynı turda doğru standart zaten yazıldı (`WorkflowController::onDisk()`);
+  `QueueController`'a `RenderRepository` + `MediaPaths` bağlanıp yeniden
+  kullanılmalı. Şablondaki `inline-player--pending` dalı da aynı şekilde
+  yalnız id'ye bakıyor.
+- **ux #3 — Trend Radar işaretsiz mock skor basıyor.** `TREND_MOCK=true` iken
+  `98/96/95/88/82/75/75/71` skorları ve `fresh · 31 min ago` tazelik iddiası
+  hiçbir `[SAMPLE]`/`mock` işareti taşımıyor (`trends__1280__en.png`).
+  Yakalamadaki TEK tamamen işaretsiz uydurma yüzey. `ZERNIO_MOCK` ile aynı
+  teardown kontrol listesine girmeli.
+- **M2 — demo `compliance_check` satırları kalite/slop penceresine giriyor.**
+  `QualityScore` son 20, `SlopScorer` son 10 okuyor; seed 8 tane yazıyor
+  (`digest`/`settings` ekranlarında `quality score: 88 · 20 checks`).
+  `manual` iken zararsız, **`auto`'da belirleyici** → ws2 `auto`'ya dönmeden
+  ÖNCE teardown (mevcut sıra kuralı zaten bunu söylüyor, kaçırma).
+
+## Orta
+
+- **M3 — panel "COST PER CONTENT" `[SAMPLE]` harcamayı işaretsiz bir KPI'a
+  topluyor** (`Cockpit.php` tüm zamanların `SUM(cost_cents)`'i). `/usage`
+  satırları dürüstçe `[SAMPLE]` etiketli, ama ortalama değil. Ya manifest'li
+  `usage_events` dışlanmalı ya o satırlar seed edilmemeli.
+- **ux #5 — PRODUCTION STEPS 1280'de kırpılıyor, kaydırma göstergesi yok** ve
+  kırpılan düğüm **PUBLISH**. 375/768'de dikey yığılıp tamamı okunuyor; yani
+  en geniş breakpoint en kötüsü.
+- **ux #7 — geri çekilen onay kartında `Reddet` birincil slotta.** Komşu dört
+  kart eli o x-konumuna alıştırıyor; orada tıklamak yıkıcı olan. `Çalışmayı
+  görüntüle` (ya da etkisiz bir Onayla) o slotu tutmalı. Ayrıca /queue'da
+  gerekçe cümlesi tile'dan ~1200px aşağıda, editörün altında.
+- **ux #6 — provider-backed hesap kartının tile'ı gradient.** Gerçek verisi
+  olan tek kart, yüklenememiş gibi duran tek kart. Kütüphanenin kesikli
+  çerçeveli placeholder muamelesi buraya da gelmeli.
+
+## Düşük
+
+- **L1 — `queue.approve_needs_preview` "hâlâ hazırlanıyor" diyor**, ki sayfa
+  bunu bilmiyor; kalıcı olarak önizlemesiz bir kapı olabilir. "İzlenecek bir
+  şey yok" daha doğru.
+- **L2 — iptal/başarısız run için run-detail fixture'ı yok**, yani "THE VIDEO"
+  o durumlarda ekran görüntüsüyle kanıtlanmadı (kod okumasıyla kabul edilebilir).
+- **ux #8 — TR'de sen/siz karışımı** (`dash.awaiting_more` "seni" vs
+  `queue.waiting_for_you` "sizi" vs `dash.needs_review` "incelemeni"), ayrıca
+  `dash.budget_of` ("bu ay $5.00 limitten") bozuk ve `{missed} kaçtı` yanlış
+  anlam veriyor.
+- **ux #10** — TR digest'te ham `plan.slot_missed` anahtarı; "Approved by ·"
+  sonrası boşta ayraç; takvim hücresindeki `<select>` `[SAMPLE] 22s d…` diye
+  kesiliyor; kütüphane döşemeleri 9:16 klipleri yatay kırpıyor.
+- **L4 / ux #10 — yayınlanmış demo run'da EVENT TIMELINE boş.** Doğru (seed
+  append-only log'a yazmaz) ama compliance-first bir vitrinde boş denetim izi
+  gibi fotoğraflanıyor. Gerçekten koşmuş bir run yakalamak daha iyi.
+
+## Yakalama talimatı (kod değil)
+
+- **`/runs/5` FIXTURE'A ÖZGÜ.** `tools/visual/routes.json` artık bunu yazıyor:
+  gerçek bir workspace'e doğrultulduğunda o yol oradaki 5 numaralı run'a düşer —
+  ws2'de bu, draft render'ı düz mock-stok rengi olan iptal edilmiş bir Haziran
+  run'ı. Kare dürüst, ama vitrinde bozuk döşeme gibi okunuyor. Gerçek workspace
+  yakalarken run id'sini veritabanından çöz.

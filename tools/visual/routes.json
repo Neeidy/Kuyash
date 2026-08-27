@@ -91,7 +91,7 @@
       "name": "run-detail-demo-published",
       "auth": true,
       "demo": true,
-      "_why": "the showcase seed's own finished+published run. Without it the gate photographs only visual-seed fixtures, so what the demo seed writes on a published run has no visual coverage. 'demo': true = only captured when VISUAL_DEMO=1 seeded it; otherwise this id does not exist and would 404."
+      "_why": "FIXTURE-DB ONLY. Run id 5 is the showcase run in the ISOLATED visual database; pointed at a real workspace this same path lands on whatever run happens to be #5 there — in ws2 that is a cancelled June run whose draft render is flat mock-stock colour, which reads as a broken tile in a capture even though the frame is honest. When screenshotting a real workspace, resolve the run id from the database first. The showcase seed's own finished+published run. Without it the gate photographs only visual-seed fixtures, so what the demo seed writes on a published run has no visual coverage. 'demo': true = only captured when VISUAL_DEMO=1 seeded it; otherwise this id does not exist and would 404."
     }
   ],
   "widths": [

@@ -45,6 +45,19 @@ use Kuyash\Core\View;
     <?php else: ?>
     <div class="approve-list">
       <?php foreach ($awaiting as $job): ?>
+      <?php
+        /* A render gate with nothing to watch.
+           "Approve & publish" writes an approval record with this operator's
+           name on it, and the thing it approves is a video. Offering that over
+           a "Preview pending" placeholder asks someone to vouch for footage
+           they have not seen — and the record afterwards is indistinguishable
+           from one where they did. The decision waits until it can be watched;
+           rejecting stays available, because refusing something you cannot see
+           is a safe answer and is often the right one. */
+        $isRenderGate = (string) ($job['type'] ?? '') === 'render_review';
+        $previewId = $job['result']['draft_render_id'] ?? $job['result']['library_asset_id'] ?? null;
+        $noPreview = $isRenderGate && $previewId === null;
+      ?>
       <article class="approve-card" data-approve-card id="run-<?= (int) $job['run_id'] ?>">
         <div class="approve-card__main">
           <h3><?= View::e(Messages::jobType((string) $job['type'])) ?> · <?= View::t('common.run_n', ['n' => (int) $job['run_id']]) ?></h3>
@@ -180,6 +193,9 @@ use Kuyash\Core\View;
           <?php if ($editorOpen): ?>
           <p class="field__hint approve-card__unsaved"><?= View::t($unsavedKey) ?></p>
           <?php endif; ?>
+          <?php if ($noPreview): ?>
+          <p class="field__hint approve-card__blocked"><?= View::t('queue.approve_needs_preview') ?></p>
+          <?php else: ?>
           <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/approve"
                 <?php if ($editorOpen): ?>data-needs-saved-text="<?= View::t($unsavedConfirm) ?>"<?php endif; ?>>
             <?= $csrfField ?>
@@ -238,6 +254,7 @@ use Kuyash\Core\View;
             <?php endif; ?>
             <button type="submit" class="btn btn--primary btn--sm"><?= $job['type'] === 'render_review' ? View::t('queue.approve_publish') : View::t('queue.approve') ?></button>
           </form>
+          <?php endif; ?>
           <form method="post" action="/queue/job/<?= (int) $job['id'] ?>/reject"
                 data-confirm="<?= View::t('queue.reject_confirm') ?>">
             <?= $csrfField ?>

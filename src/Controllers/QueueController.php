@@ -136,6 +136,15 @@ final class QueueController
                 return $this->backToQueue('error', $schedule['error']);
             }
             $scheduledAt = $schedule['at'];
+
+            // A render gate with nothing to watch cannot be approved. The two
+            // screens already withhold the button, but a hidden button is not a
+            // rule: this POST is one curl away, and what it writes is a record
+            // saying this person approved a video. Refusing here is what makes
+            // the record mean what it says.
+            if ($this->previewMissing((int) $id)) {
+                return $this->backToQueue('error', 'approval.no_preview');
+            }
         }
 
         $decision = $action === 'approve'
@@ -259,6 +268,33 @@ final class QueueController
         $cell = $this->occurrences->byRunIds($this->workspace, [(int) $job['run_id']])[(int) $job['run_id']] ?? null;
 
         return $cell !== null && (string) $cell['publish_at'] > gmdate('Y-m-d\TH:i:s\Z') ? $cell : null;
+    }
+
+    /**
+     * True when this is an OPEN render gate whose result names nothing to play.
+     *
+     * Deliberately narrow. It answers false for anything that is not an open
+     * `render_review` — a script draft is text and is approved by reading it,
+     * and a job that is already decided is the engine's business, not this
+     * guard's. It only ever blocks the one case the UI also blocks: a gate whose
+     * result carries neither a draft render nor a library clip, which is exactly
+     * what the card renders as "Preview pending".
+     */
+    private function previewMissing(int $jobId): bool
+    {
+        $row = $this->db->one(
+            "SELECT result_json FROM jobs
+             WHERE id = ? AND workspace_id = ? AND type = 'render_review' AND status = 'awaiting_approval'",
+            [$jobId, $this->workspace->id()],
+        );
+        if ($row === null) {
+            return false;
+        }
+        $result = json_decode((string) ($row['result_json'] ?? ''), true);
+        $result = is_array($result) ? $result : [];
+
+        return ($result['draft_render_id'] ?? null) === null
+            && ($result['library_asset_id'] ?? null) === null;
     }
 
     /** The instant the run behind this job is really gated on, or null. */

@@ -93,6 +93,29 @@ $nodeState = static function (string $node) use ($jobsByNode): string {
   </div>
 </div>
 
+<?php /* THE VIDEO. This page carried a run's steps, its text, its jobs and its
+         approval record, and nowhere on it a picture of the thing all of that
+         is about — not even on a published run, where the page is read as
+         evidence that it went out. The poster rides on the <video>, never a
+         sibling <img>: an absolutely-positioned <video preload="metadata">
+         paints black over anything stacked under it. */ ?>
+<?php $preview ??= null; ?>
+<?php if ($preview !== null): ?>
+<div class="card">
+  <div class="card__head"><h2><?= View::t('run.preview') ?></h2></div>
+  <div class="card__body">
+    <div class="inline-player run-player" data-inline-player>
+      <video class="inline-player__video" src="<?= View::e((string) $preview['src']) ?>"<?= $preview['poster'] !== null ? ' poster="' . View::e((string) $preview['poster']) . '"' : '' ?> preload="metadata" playsinline></video>
+      <button type="button" class="inline-player__play" aria-label="<?= View::t('player.play') ?>">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <span class="inline-player__badge"><span class="inline-player__badge-dot"></span><?= View::t('player.playing') ?></span>
+      <span class="inline-player__progress"></span>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
 <?php $editorShown = ($text ?? null) !== null; ?>
 <?php if ($editorShown): ?>
 <?php /* Phase 25 — the same editor the approval card shows. Placed above the

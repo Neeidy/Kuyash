@@ -116,6 +116,17 @@ final class FixtureMediaFactory implements MediaFactory
         return $ok ? $this->measure($target, 'photo', 'image/jpeg') : null;
     }
 
+
+    public function stillFrom(string $source, string $target): bool
+    {
+        if (!$this->ffmpeg->available() || !is_file($source)) {
+            return false;
+        }
+        $this->run(['-ss', '0.5', '-i', $source, '-frames:v', '1', '-q:v', '3', $target]);
+
+        return is_file($target) && filesize($target) > 0;
+    }
+
     /** @return array<string, mixed>|null */
     private function measure(string $path, string $kind, string $mime): ?array
     {
