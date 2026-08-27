@@ -6,12 +6,15 @@
 
 ## Son güncelleme
 
-- Tarih: 2026-08-26
-- Güncelleyen: Claude (**AÇIK İŞ DENETİMİ — `726f3ed` push'lu, 1104 PASS/0 FAIL,
-  99 PNG temiz. Takvim `<select>` caret örtüşmesi KAPANDI (pixel kanıtlı).
-  İki KARAR kullanıcıda: /workflows çerçevesi + "seni bekleyen"in TEK tanımı —
-  panelde aynı anda 7 / 4 / 4 yazıyor. Vitrin hâlâ ws2'de KURULU,
-  ön koşullar hâlâ GEÇİCİ.**)
+- Tarih: 2026-08-27
+- Güncelleyen: Claude (**SON CİLA BİTTİ — `2b0453f` push'lu, 1107 PASS/0 FAIL,
+  99 PNG + 24 sayfa önizleme-tabanını geçti. Gate artık GERÇEK stok fixture
+  kullanıyor (CANLI Pexels'e gidiyordu), önizleme-tabanı kontrolü SABOTAJLA
+  kırmızıya düştüğü kanıtlandı, K1 kapandı: KPI 7 = rozet 7 = /queue çipi 7 =
+  4 gösterilen + "3 tane daha". **demo-polish DURDU.** Vitrin hâlâ ws2'de
+  KURULU, ön koşullar hâlâ GEÇİCİ.**)
+- Önceki: Claude (**AÇIK İŞ DENETİMİ — `726f3ed`, 1104 PASS/0 FAIL.
+  Takvim `<select>` caret örtüşmesi kapandı.**)
 - Önceki: Claude (**CASE-STUDY VİTRİNİ TAMAM — `2f1537f`'ye kadar push'lu,
   1104 PASS / 0 FAIL, working tree temiz.** Poster'lar GERÇEK stok karesi,
   hesap kartlarında mock görüntü, görsel gate artık boyanmamış görseli
@@ -154,33 +157,23 @@
 
 ## Sıradaki adım
 
-**KARAR BEKLEYEN İKİ ÜRÜN SORUSU (denetimde kanıtlandı, 2026-08-26):**
+**DEMO-POLISH DURDU** (kullanıcı talimatı, 2026-08-27). Yeni cila işi
+başlatılmayacak; kalanlar `.claude/docs/demo-showcase-followups.md`'de.
 
-- **K1 — "seni bekleyen" için TEK tanım.** `dashboard__1280__en.png` tek karede
-  üç farklı sayı gösteriyor: KPI **7** (run), onay kartı rozeti **4**
-  (`Cockpit.php:76` `array_slice(...,0,4)` — rozet dilimi sayıyor,
-  `dashboard.php:151`), plan bandı **4** (haftanın hücreleri); ACTIVE RUNS
-  listesi aynı sayfada **7** "awaiting" satırı basıyor. Rozet düpedüz eksik
-  söylüyor ve "N tane daha" yok. Ama düzeltmek tanım seçmeyi gerektiriyor
-  (job mu run mu) — KPI'ı değiştirmek `business()` üzerinden bütçe/maliyet
-  yüzeylerine dokunur, o yüzden tek başıma seçmedim.
-- **K2 — /workflows.** `workflows__1280__en.png`: iki küçük kart + ~570px boşluk,
-  CTA yok, node graph yok, selection state yok, sağ ayar paneli yok.
-  `frontend.md` node graph için ikisini de şart koşuyor. Case study "görsel
-  workflow builder" diyecekse bu ekran onu yalanlıyor: ya panel yapılacak ya
-  sayfa yeniden çerçevelenecek.
-
-0. **Case study'yi yakala.** Ekranlar dolu, poster'lar gerçek kare.
-   Yakalama sırasında **bir demo run'ı gerçekten onayla** — teardown onu korur
-   (event pinler), böylece gerçek bir onay kaydı da fotoğraflanır.
-1. **Bitince SIRAYLA:** teardown → sonra `ZERNIO_MOCK=false` + ws2 `auto`.
-2. **Karar bekleyen tek ürün sorusu: /workflows.** `frontend.md` node graph için
-   "selection state + sağ ayar paneli" diyor; hiçbir ekran görüntüsünde yok.
-   Case study "görsel builder" iddia edecekse önce bu çözülmeli.
-3. Ertelenenler: `.claude/docs/demo-showcase-followups.md`. Öne çıkanlar:
-   onay önizlemesi 9:16 klibin ~%31'ini gösteriyor (16:9 kutu, Approve butonunun
-   üstünde); `/library/upload`'da rate limit yok (çok kiracılı UI'dan ÖNCE
-   zorunlu); "seni bekleyen" için hâlâ 3 farklı sayı.
+1. **Case study'yi yakala.** Ekranlar dolu, poster'lar gerçek stok karesi,
+   "seni bekleyen" tek sayı. Yakalama sırasında **bir demo run'ı gerçekten
+   onayla** — teardown onu korur (event pinler), böylece gerçek bir onay kaydı
+   da fotoğraflanır.
+2. **Bitince SIRAYLA:** `php bin/demo-teardown.php --yes` → SONRA `.env`
+   `ZERNIO_MOCK=false` + ws2 `approval_mode=auto`. Ters sırada kuyrukta 5
+   GERÇEK onay kapısı canlı yayın yoluna bakar kalır.
+3. **Karar bekleyen (K2, kapsam dışı bırakıldı): /workflows.** 1280'de iki kart
+   + ~570px boşluk; node graph, selection state, sağ ayar paneli — hiçbiri yok.
+   Case study "görsel workflow builder" iddia edecekse önce bu çözülmeli.
+4. **Son turun ertelediği iki P0** (followups'ta, render adlarıyla):
+   önizlemesi olmayan kapıda "Onayla ve yayınla" aktif; run-detail ekranlarının
+   hiçbiri medya basmıyor (vitrinin amiral gemisi dahil) ve o rotalarda
+   önizleme tabanı EKSİKLİKTEN kör.
 
 ## Açık konular / bekleyenler
 
@@ -227,6 +220,8 @@
 ## Oturum logu (en yeni üstte, en fazla 10 satır)
 
 
+- 2026-08-27 — **SON CİLA (3 iş) — `2b0453f` push'lu, 1107 PASS/0 FAIL, 99 PNG temiz.** (1) **Gate CANLI Pexels'e gidiyordu.** `bin/demo-seed.php` fixture'ları "görsel gate'in kullandığı yol" diye belgeliyordu ama `gate.sh` `DEMO_MEDIA`'yı hiç export etmiyordu → her koşu ağa çıkıyor, deterministik olmuyor, atılacak bir veritabanı için gerçek kota harcıyordu. `DEMO_MEDIA=fixture` export edildi; render'da İKİ kusur birden düzeldi: canlı yol "Still — profile" için mor bir wash, "Kitchen" için 9:16 OLMAYAN bir klip üretmişti (format çipi `other`). (2) **Gate'in düşemeyeceği taban.** Mevcut kontroller yalnız sayfanın İSTEDİĞİ öğede patlayabilir — hiç önizleme basmayan ekranın kıracak bir şeyi yok. `shot.mjs` artık gerçekten boyanan önizleme görsellerini SAYIYOR, `routes.json`'daki `minMediaDemo` altına düşen ekranı düşürüyor (library 10 / queue 6 / dashboard 5 / plan 4). **Sabotajla kanıtlandı:** /library'de poster `<img>`'ini bastırınca 6 yakalama da KIRMIZI ("only 2 preview image(s) painted, expected >= 10") — console/broken-image/overflow kontrolleri hâlâ yeşilken. İki sınırı `routes.json` yorumuna yazıldı: NİCELİK ölçer (gradient poster da decode olur — önizlemeleri fotoğrafik tutan şey fixture), ve sayfa-toplamıdır; run-detail rotaları bugün 0 basıyor, orada EKSİKLİKTEN kör. (3) **K1 kapandı.** Rozet dilimi sayıyordu (8 kapıda sonsuza kadar "4"), KPI 7, plan bandı 4 diyordu. Rozet artık KPI'ın kendi sayısı + aynı canlı hook (`live-client.js` artık `querySelectorAll`). Pencere **RUN bazında** dilimleniyor: 4 kartta kesmek bir run'ın ikinci kapısını içeride, birincisini dışarıda bırakıyordu, o yüzden "kart + N daha" rozete değil kuyruğun kart sayısına toplanıyordu. `/queue` çipi de kapı yerine run sayıyor (7 vs 8 tutarsızlığı bir tık ötedeydi). Render kanıtı: KPI 7 = rozet 7 = çip 7 = 4 gösterilen + "3 tane daha". **ux gate'ten ek düzeltme:** provider-backed hesap kartının gradient tile'ı `role="img" aria-label="video from @handle"` taşıyordu — o kanalın hiç yayınlamadığı bir gönderiyi ERİŞİLEBİLİRLİK katmanında iddia ediyordu; role artık yalnız gerçek kare varken. **Ertelenen 2 P0 followups'ta:** önizlemesiz kapıda "Onayla ve yayınla" aktif; run-detail'lerin hiçbiri medya basmıyor.
+
 - 2026-08-26 — **AÇIK İŞ DENETİMİ + 1 KAPANIŞ — `726f3ed` push'lu, 1104 PASS/0 FAIL, 99 PNG (0 console error / 0 taşma / 0 kırık görsel).** Doc okumak yerine gerçek render'dan denetim: izole görsel gate (`VISUAL_DEMO=1`) ile /dashboard, /plan, /workflows yakalandı. **Kapanan:** takvim video seçicisinin caret'i son harfin ÜSTÜNE biniyordu (`.cell__assign select` `padding-inline: 4px`; native caret kontrolün sağ iç kenarına boyanır) → `4px 15px`. Kanıt aynı koordinatlardan önce/sonra pixel crop; 1280'de `Talking-head intr`+ok-üstünde-"o" → ayrık caret. `text-overflow: ellipsis` denendi, **GERİ ALINDI** (görünen etiketi ~9→~5 karaktere düşürüyordu). **Dürüst uyarı:** görsel gate bu kusur ekrandayken 99 PNG boyunca yeşildi — glyph örtüşmesini ölçen kontrol YOK; guard yazmadan önce Chrome'da `select`'in kırpılmayı `scrollWidth`'le bildirip bildirmediği doğrulanmalı, yoksa assert kör-yeşil olur. **Kapanmayan, KARARA bağlı:** (K1) panelde "seni bekleyen" için tek karede 7/4/4 — rozet `array_slice` dilimini sayıyor, "N tane daha" yok, ama tek tanım seçmek KPI'ı ve `business()` üzerinden bütçe yüzeylerini etkiliyor; (K2) /workflows 1280'de iki kart + ~570px boşluk, node graph/selection/ayar paneli hiçbiri yok. **Değişmeyen:** vitrin ws2'de KURULU (134 kayıt), `ZERNIO_MOCK=true`, ws2 `manual` — geri alma SIRASI hâlâ geçerli (önce teardown, sonra flag'ler).
 
 - 2026-08-26 — **POSTER TURU: "görsel çalışmıyor" şikâyeti HAKLIYDI — `2f1537f`'ye kadar push'lu, 1104 PASS/0 FAIL.** Kullanıcı bağımsız olarak /library ve dashboard'un hâlâ düz gradient olduğunu bildirdi. **Kök-neden ikiliydi ve ikisi de benimdi:** (1) demo klipleri sentetik gradient test footage'ıydı → **doğru çıkarılmış kare de gradient**; önceki turda bunu yarım söyleyip hue kaydırmasıyla geçiştirmiştim (on aynı wash'ı birbirinden ayırdı, hiçbirini videoya benzetmedi). (2) Görsel gate aynı gradient fixture'ını kullandığı için **render edilen poster ile eksik poster'ı ayırt edemiyordu** — bozuk `<img>` console error da üretmediğinden beş tur yeşil geçti. **Düzeltmeler:** `StockMediaFactory` gerçek Pexels dikey klipleri indiriyor (öğe başına kendi arama terimi, sessiz fallback YOK); fixture'lar gerçek stok oldu (`stock/01..10.mp4`, kütüphane sırasıyla); harness lazy görselleri zorla yükleyip `naturalWidth`'e bakıyor. **UX gate ikinci bir körlük buldu:** ilk düzeltmem `i.complete && i.naturalWidth === 0` filtreliyordu — hiç yüklenmeye başlamamış lazy `<img>`'de `complete === false`, yani tam da önemli olan durum dışlanıyordu; 375px'te 8 poster lazy eşiğinin altında kalıp hiç boyanmıyordu ve gate boş döşemelere yeşil diyordu (sabotaj testim sadece 404 yolunu denemişti). Artık sadece zorlamayı kapatarak kırmızıya düştüğünü kanıtladım. **Ayrıca:** /plan hücrelerinde hiç poster yoktu → eklendi; "önizleme yok" döşemesi kesikli çerçeve oldu (gradient placeholder washy footage poster'ından ayırt edilemiyordu); hesap kartlarında örnek kartlara mock kare, **provider-backed karta ASLA**; `bin/refresh-legacy-demo-media.php` manifest'in sahip olmadığı eski `[SAMPLE]` asset baytlarını yeniliyor (#27'nin mor wash'ı) — **süreyi değiştirmiyor**, çünkü mevcut compliance kaydı ölçtüğü süreyi beyan ediyor (teyit: kayıt 22s, satır 22.0s). Fixture'a ilk kez provider-backed hesap eklendi: "gerçek kanala uydurma değer yazılmaz" kuralı kodda doğruydu ama 99 ekran görüntüsünün hiçbirinde gösterilmiyordu.
@@ -247,5 +242,3 @@
 - 2026-08-23 — **FAZ 23: PLANLI PAYLAŞIM (haftalık slot) — 924 PASS/0 FAIL (+28), görsel gate 69 PNG/0 hata/0 taşma, route 12/12 200.** Premis doğrulandı: tek-anlık zamanlama ZATEN uçtan uca çalışıyordu (onay → `runs.publish_after` → kuyruğun `run_after` gate'i → adapter `scheduledFor`), eksik olan tekrarlı plandı → bu faz onun ÜSTÜNE kuruldu, **ENGINE'E DOKUNULMADI**. **Yeni:** migration **0016** `publish_slots` (workspace_id, ops. account_id, weekday 1-7 ISO, time_hhmm 'HH:MM', enabled; UNIQUE `COALESCE(account_id,0)` çünkü SQLite NULL'ları ayrı sayar) + `workspaces.timezone`; **`SlotResolver`** (SAF: saat okumaz, DB'ye bakmaz — "Pzt 09:00 <dilim>" → sonraki UTC anı; **DST-doğru**: gün kaydırmasından sonra duvar-saati YENİDEN uygulanır, canlı kanıt NY kış `14:00Z` / yaz `13:00Z` / DST'yi AŞAN hafta `13:00Z` yani yerel 09:00 korunuyor); **`SlotRepository`** (tenant-scoped CRUD, başka workspace'in hesabına daraltma REDDEDİLİR); `WorkspaceSettings::timezone/setTimezone` (tzdata doğrulamalı). **UI:** /settings "Haftalık yayın planı" kartı (dilim seçici + slot listesi "sıradaki 15 sa içinde" + Duraklat/Kaldır + ekleme satırı), /queue onay formunda slot seçici (varsayılan "Onaylanır onaylanmaz yayınla"), dashboard "Sıradaki yayın" bandı + canlı geri sayım (**Faz-10 ertelemesi kapandı**; geri sayım data-* attribute'larından okur → i18n tek kaynak, JS kapalıyken sunucu ifadesi kalır). **BULUP DÜZELTTİĞİM TUTARSIZLIK:** zaman-dilimsiz `datetime-local` sessizce UTC sanılıyordu — workspace UTC+3 iken 09:00 yazan operatör 12:00 yerel saatte yayınlardı; artık slot da manuel giriş de workspace dilimini kullanıyor, etiket gerçek dilimi söylüyor ("saatler Europe/Istanbul"). **Görsel gate 375px'te 10px taşma YAKALADI** → tahmin etmek yerine tarayıcıda DOM zinciri ölçüldü → kök-neden `.approve-card__actions` `flex:none` (küçülemiyor, parent 317px < içerik 343px) → `max-width:100%` → ölçümle temiz (scrollWidth 375 = viewport). **KAPSAM DIŞI (gerekçeli):** adapter `timezone:'UTC'` hardcode'u KALDIRILMADI — `publish_after` zaten UTC instant, UTC+UTC tutarlı ve doğrulanmış; workspace dilimini adaptöre taşımak Zernio'nun doğrulanmamış scheduledFor+timezone semantiğine girip yanlış saatte yayın riski yaratırdı (integrations "never hallucinate"). Per-account farklı saat de kapsam dışı (engine fan-out) — şema `account_id` ile hazır. `bin/visual-seed.php`'ye 3 slot + dilim eklendi (slot = operatör yapılandırması, uydurma metrik değil).
 
 - 2026-08-23 — **FAZ 22 DÜZELTME TURU (yeni faz değil): 2 bug kapatıldı — 892 PASS/0 FAIL (+19).** **BUG1 nav pill rebound — İLK FIX YANLIŞ HEDEFLENMİŞTİ.** Gerçek kök-neden tarayıcıda ÖLÇÜLDÜ: Kuyash MPA → her nav tıklaması = tam sayfa yükleme → pill JS ile `translateY(0)`'da (en üst) doğuyor, sonra aktif item'a taşınıyor; base CSS'te transform transition ARMED olduğu için bu **başlangıç yerleşimi animasyona dönüşüyordu**. Kanıt (/settings, fix öncesi): aktif `offsetTop=351`, pill `translateY(0)`, `getAnimations()` → transform transition `playState:"running"`, `duration:250ms`. Yani gösterge her tıklamada yukarıdan aşağı uçuyordu = kullanıcının "başa atıp tekrar geliyor" şikayeti. Easing swap (`--spring`→`--ease-out`) bunu ASLA çözemezdi çünkü sorun eğri değil, **ilk yerleşimin animasyonlu olması**. FIX: `.nav-item__pill` base state'inde transform transition YOK → `moveTo(activeItem())` + `void pill.offsetHeight` (layout flush, konumu taban değer olarak commit et) → `.is-ready` transition'ı ARM eder (hover hâlâ akıcı). **Ek keşif:** `.is-ready` rAF içindeydi; rAF gizli sekmede askıya alınır → arka planda açılan sayfada pill hiç `.is-ready` almıyor, `opacity:0` kalıyordu (gösterge yok) → **senkron** yapıldı; opacity de transition'dan çıkarıldı (aynı nedenle takılıyordu). **GERÇEK TIKLAMA KANITI:** /accounts (aktif 211px) → Trends'e gerçek `click()` → /trends yüklendi → pill `translateY=70` = aktif `offsetTop=70`, `runningTransform=0`, `opacity=1`. Hover ölçümü: mouseenter → transform transition `running=1` (akıcılık korundu). **BUG2 gerçek hesapta uydurma engagement (COMPLIANCE).** Teşhis: @ai.neeidy (gerçek, connected, followers_count=7) kartı `9.5K/298/1.9K` **crc32 uydurma** engagement gösteriyordu ("sample" çipli olsa bile gerçek kanalda temsili sayı = yanlış beyan). FIX: tek sinyal `$providerBacked` (`followers_count !== null` = sync/chore bu hesabı canlı sağlayıcıdan okudu) TÜM kartı yönetiyor — gerçek hesap: engagement snapshot'tan gerçek değer, raporlanmayan `—` + nötr "veri yok" rozeti (stand-in HİÇ hesaplanmıyor); demo/seed hesap: deterministik stand-in + `[örnek]` çipi KORUNDU (ekranlar dolu kalır). `AccountRepository::listFor` en yeni `account_metrics` snapshot'ını LEFT JOIN ediyor (ws-scoped subquery), `shape()` NULL'ı NULL bırakıyor; yeni `acct.no_metrics` (en+tr) + `.acc-card__sample--empty` nötr stil (dürüst boşluk, stand-in rozetinin sesini ödünç almaz). **CANLI KANIT:** @ai.neeidy `— — — [no data yet]` + `7 followers`; @smoke_tt `7K 406 509 [sample]` + `61.2K [sample] +69 today`. Demo verisi SİLİNMEDİ (accounts 2 satır, posts 5), `.env` flag flip YOK, engine/şema-çekirdeği/node-graph dokunulmadı. Görsel gate 69 PNG/0 console-error/0 overflow; route 12/12 200.
-
-- 2026-08-23 — **FAZ 22: PANEL + GERÇEK VERİ — 6 görev tamam (873 PASS/0 FAIL, +34 test).** (1) **Analytics seam (K1):** `PublishProvider::accountMetrics()` (follower + per-post engagement BİRLİKTE — dar follower-only adapter yasaklıydı); gerçek `ZernioPublishProvider` impl GET /accounts (followersCount) + GET /analytics; **per-post alan adları canlıda BOŞ geldiği için UYDURULMADI** → defansif çok-anahtarlı map (views/viewCount/impressions…) + `raw_json`'da ham payload saklama (integrations "never hallucinate" kuralına dürüst yanıt); deterministik Mock impl. (2) **Snapshot chore:** yeni `src/Analytics/DailySnapshot.php` (worker sessionless → ws açıkça iterate, her write'ta workspace_id), migration **0014** `account_metrics` (UNIQUE ws+account+gün → INSERT OR IGNORE) + `accounts.followers_count/followers_synced_at`; **zero-cost** (usage/credit YAZMAZ); worker start + 300s chore'a bağlandı. (3) **Follower wiring:** `setFollowers()` + `sync()` tek turda ref reconcile + gerçek follower; raporlanmayan follower stored değeri EZMEZ. (4) **Dedup (K2):** `connect()` blind INSERT → revive-existing (case/@-insensitive); migration **0015** re-point posts → dup sil → UNIQUE index; dev DB'ye WAL-safe yedekle uygulandı (`kuyash.pre-p22-dedup.20260823T130328Z.bak.sqlite`) → **id2 silindi, 5 post hâlâ id3'te, 0 FK ihlali, id1 mock demo + etiketli demo verisi KORUNDU**. (5) **UI:** pill `--spring`(overshoot 1.56)→`--ease-out` = "geri sekme" bitti. (6) **Jargon:** `Messages::since()` → /trends "fresh · 3 min ago" (ham ISO yalnız title'da); 11 ekranda görünür ham ISO = 0. **CANLI KANIT:** account_metrics id1 `followers=7 GERÇEK`, `post_count=0 + views NULL` (dürüst boş), 0 usage satırı; dashboard `@ai.neeidy · 7 followers` (çipsiz) vs `@smoke_tt · 61.2K [örnek]`. **Kendi yakaladığım regresyon:** sample çipi `.acc-card__who` ellipsis'i içinde YUTULUYORDU (görsel gate PASS demişti) → çip dışarı alındı + `.acc-card__sample--foot` + regresyon testi. **K3:** phase-plan.md → Faz 22 + Faz 23 eklendi (14–21 KORUNDU; token `START PHASE 14` idi ama o numara i18n'e ait → kullanıcı onayıyla 22). 16 dosya + 3 yeni; secret yok.
