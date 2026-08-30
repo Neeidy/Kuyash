@@ -607,7 +607,11 @@ input[type="datetime-local"]:focus, input[type="date"]:focus, input[type="time"]
   border: 1px solid var(--border);
   border-radius: var(--r-card);
 }
-.trend-card__top { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.trend-card__top { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
+/* the sample marker belongs to the SCORE, so it sits beside it rather than
+   drifting to the far edge with the format chip when space-between spreads a
+   third child; margin-right:auto keeps the format chip on the right */
+.trend-card__sample { margin-right: auto; }
 .trend-card__score {
   font-family: var(--font-mono);
   font-weight: 500;

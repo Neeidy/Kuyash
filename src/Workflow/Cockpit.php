@@ -316,6 +316,21 @@ final class Cockpit
      *
      * @return array{balance_cents: int, spent_mtd_cents: int, charges_mtd: int, granted_week_cents: int, budget_cap_cents: int|null, remaining_budget_cents: int|null, cost_per_content_cents: int|null, awaiting: int}
      */
+    /**
+     * Is the showcase seed's manifest table present?
+     *
+     * Asked rather than assumed: a database behind on migrations does not have
+     * it, and referencing a missing table fails at PREPARE — which would take
+     * the whole dashboard down over a cosmetic average, the exact shape of the
+     * `slot_occurrences` outage ADR-024 was written for.
+     */
+    private function demoManifestExists(): bool
+    {
+        return $this->db->one(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'demo_seed_manifest'",
+        ) !== null;
+    }
+
     private function business(int $ws, string $now, int $awaiting, int $renders): array
     {
         $weekAgo = gmdate('Y-m-d\TH:i:s\Z', (strtotime($now . ' -7 days')) ?: time());
@@ -330,10 +345,32 @@ final class Cockpit
         $capRow = $this->db->one('SELECT budget_cap_cents FROM workspaces WHERE id = ?', [$ws]);
         $cap = isset($capRow['budget_cap_cents']) && $capRow['budget_cap_cents'] !== null
             ? (int) $capRow['budget_cap_cents'] : null;
-        // all-time REAL spend (usage ledger) for the honest per-content average
+        /* All-time spend and render count for the per-content average — with the
+           SHOWCASE SEED'S OWN ROWS TAKEN OUT of both.
+           This KPI is a bare dollar figure with nowhere to put a marker, so it
+           cannot say "some of this is sample data" the way /usage says it on
+           every row. On the workspace carrying the demo set, 18 of 25 cents and
+           3 of 20 renders were seeded — the tile read $0.01 and 72% of the
+           number behind it was invented. The seed's own rule (a balance is a
+           total, it cannot carry the marker, therefore no ledger row is written)
+           applies here in the other direction: what the marker cannot reach,
+           the average must not include.
+           BOTH sides come out, not just the spend: real money over an inflated
+           render count would understate the cost instead of overstating it. */
+        // the table name is BOUND, not interpolated — security.md says prepared
+        // statements only, and "the two call sites pass literals" is a property
+        // of today's callers, not of the query
+        $demoRows = $this->demoManifestExists();
+        $notSeeded = $demoRows
+            ? ' AND id NOT IN (SELECT row_id FROM demo_seed_manifest WHERE table_name = ?)'
+            : '';
         $spentAll = (int) ($this->db->one(
-            'SELECT COALESCE(SUM(cost_cents), 0) AS c FROM usage_events WHERE workspace_id = ?',
-            [$ws],
+            'SELECT COALESCE(SUM(cost_cents), 0) AS c FROM usage_events WHERE workspace_id = ?' . $notSeeded,
+            $demoRows ? [$ws, 'usage_events'] : [$ws],
+        )['c'] ?? 0);
+        $realRenders = (int) ($this->db->one(
+            'SELECT COUNT(*) AS c FROM renders WHERE workspace_id = ?' . $notSeeded,
+            $demoRows ? [$ws, 'renders'] : [$ws],
         )['c'] ?? 0);
 
         return [
@@ -343,7 +380,9 @@ final class Cockpit
             'granted_week_cents' => (int) ($grantedWeek['c'] ?? 0),
             'budget_cap_cents' => $cap,
             'remaining_budget_cents' => $cap === null ? null : max(0, $cap - $spentMtd),
-            'cost_per_content_cents' => ($renders > 0 && $spentAll > 0) ? intdiv($spentAll, $renders) : null,
+            // $renders (all rows, demo included) still drives every other caller;
+            // only the average uses the demo-free count
+            'cost_per_content_cents' => ($realRenders > 0 && $spentAll > 0) ? intdiv($spentAll, $realRenders) : null,
             'awaiting' => $awaiting,
         ];
     }

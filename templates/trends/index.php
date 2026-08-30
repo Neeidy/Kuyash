@@ -12,6 +12,24 @@ use Kuyash\Trend\TrendFeed;
 /** @var list<string> $niches */
 /** @var list<array{provider: string, units: int}> $quota */
 /** @var string $csrfField trusted generated HTML */
+
+/* Did a real provider produce these rows?
+ * Read from the BATCH's own source tag, not from the TREND_MOCK env flag: cached
+ * rows keep the provider that fetched them, so a workspace holding a genuine
+ * batch keeps showing it unmarked even after the flag is flipped, and a mock
+ * batch stays marked after it is flipped back. Provenance travels with the data.
+ *
+ * WHY THIS EXISTS: with TREND_MOCK=true this screen printed scores of 98/96/95
+ * and a "fresh · 31 min ago" badge over topics invented locally — the only
+ * surface in the product where a fabricated figure carried no marker at all.
+ * The score is the number an operator picks a video by.
+ *
+ * FAILS CLOSED: the test is "is this one of the providers that reads the real
+ * world?", not "is it the mock?". Keying on the mock's name would leave any
+ * future stub — a second mock, a fixture provider, a half-finished adapter —
+ * rendering as a measurement by default, and the default has to be the safe
+ * answer. */
+$simulated = !in_array($feed->source, ['youtube', 'google_trends'], true);
 ?>
 <div class="screen-head">
   <div>
@@ -36,6 +54,12 @@ use Kuyash\Trend\TrendFeed;
 <div class="card">
   <div class="card__head"><h2><?= View::t('trends.niche_word') ?></h2>
     <span class="card__action">
+      <?php if ($simulated): ?>
+      <?php /* before the freshness chip, so "fresh · just now" is read as "these
+               sample rows were generated just now" and not as a claim about the
+               world */ ?>
+      <span class="chip chip--warn"><span class="dot dot--warn"></span><?= View::t('trends.sample') ?></span>
+      <?php endif; ?>
       <?php if ($feed->fetchedAt !== null): ?>
       <span class="chip chip--<?= $feed->freshness === TrendFeed::FRESH ? 'ok' : 'warn' ?>"
             title="<?= View::e((string) $feed->fetchedAt) ?>">
@@ -87,6 +111,11 @@ use Kuyash\Trend\TrendFeed;
   <article class="trend-card" style="--i:<?= min((int) $i, 7) ?>">
     <div class="trend-card__top">
       <span class="trend-card__score num"><?= (int) $trend['score'] ?></span>
+      <?php if ($simulated): ?>
+      <?php /* on the score itself: it is the figure the card is chosen by, and
+               the only one here that looks like a measurement */ ?>
+      <span class="chip chip--warn trend-card__sample"><?= View::t('trends.sample') ?></span>
+      <?php endif; ?>
       <span class="chip chip--<?= $trend['format'] === 'face' ? 'info' : 'neutral' ?>">
         <?= $trend['format'] === 'face' ? View::t('trends.format_face') : View::t('trends.format_faceless') ?>
       </span>
@@ -104,5 +133,8 @@ use Kuyash\Trend\TrendFeed;
   </article>
   <?php endforeach; ?>
 </div>
+<?php if ($simulated): ?>
+<p class="note"><?= View::t('trends.sample_note') ?></p>
+<?php endif; ?>
 <p class="note"><?= View::t('trends.create_note') ?></p>
 <?php endif; ?>

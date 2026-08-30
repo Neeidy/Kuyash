@@ -203,7 +203,13 @@ $statusTone = ['connected' => 'ok', 'reauth_needed' => 'err'][$status] ?? 'neutr
              ellipsis, which would silently swallow the honesty marker and leave
              a fabricated number looking measured */ ?>
     <span class="acc-card__sample acc-card__sample--foot chip"><?= View::t('acct.sample') ?></span>
-    <span class="acc-card__grow num"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 14l7-7 7 7"/></svg> <?= View::t('acct.growth_today', ['n' => (int) $growth]) ?></span>
+    <?php /* ITS OWN marker, not the follower count's. This row is
+             `justify-content: space-between`, so the chip above becomes a middle
+             island and the growth figure sits alone at the far edge — and the
+             footnote on this very screen says a figure WITHOUT the mark came from
+             the connected account. One chip cannot govern two numbers it has been
+             pushed away from. */ ?>
+    <span class="acc-card__grow num"><span class="acc-card__sample chip"><?= View::t('acct.sample') ?></span> <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 14l7-7 7 7"/></svg> <?= View::t('acct.growth_today', ['n' => (int) $growth]) ?></span>
     <?php endif; ?>
   </div>
   <div class="acc-card__status">

@@ -319,3 +319,36 @@ kaynak klibe düşme (H1), `.run-player`'ın 9:16 olmaması. Aşağıdakiler AÇ
   ws2'de bu, draft render'ı düz mock-stok rengi olan iptal edilmiş bir Haziran
   run'ı. Kare dürüst, ama vitrinde bozuk döşeme gibi okunuyor. Gerçek workspace
   yakalarken run id'sini veritabanından çöz.
+
+
+---
+
+# İşaretleme turu — ertelenenler (2026-08-27)
+
+Tur "işaretsiz uydurma yüzey kalmasın" için yapıldı. compliance gate **NO-GO**
+verdi ve haklıydı: istenen iki yüzey (trend skorları, COST PER CONTENT) doğru
+kapandı ama aynı uydurma sayılar İKİ yüzeyde daha işaretsizdi. İkisi de aynı
+turda kapatıldı (panel drawer'ındaki trend skoru; hesap kartındaki `+N today`).
+Aşağıdakiler AÇIK.
+
+- **MEDIUM — `bin/visual-seed.php` ölçmediği süreyi ve boyutu yazıyor.**
+  `['own', 'Morning routine reset', 24.0, ...]` ve `1080, 1920, '9:16'` literal;
+  arkasında dosya yok. `library__1280__en.png` üst sırasında üç döşeme
+  "No preview yet" derken `0:24`/`0:31`/`0:18` ve yeşil `9:16` çipi taşıyor,
+  üstelik `[SAMPLE]` öneki OLMADAN. Operatör yüzeyi değil (atılan gate DB'si),
+  o yüzden bloklamıyor — ama `demo-seed`'in düzeltildiği kusurun aynısı ve süre,
+  compliance'ın 15-45sn bandını ölçtüğü alan. Sonuç tanıdık: gate ölçülmüş
+  süreyi uydurmadan ayırt edemiyor.
+- **LOW — kardeş toplamlara aynı koruma verilmedi.** `Cockpit` yalnız
+  `cost_per_content_cents`'i manifest'ten arındırıyor; `spent_mtd_cents`,
+  `remaining_budget_cents` ve preflight bütçe kapısı `usage_events`'i filtresiz
+  topluyor. Bugün dürüstler, ama **yalnızca** `ShowcaseSeed::seedSpendHistory()`
+  masrafları cari aydan ÖNCEYE tarihlediği için. O invaryant sayının
+  hesaplandığı yerde değil, seed'de yaşıyor.
+- **LOW — `COST PER CONTENT $0.00` doğru ama "bedava" gibi okunuyor.**
+  `intdiv(7, 17)` 0.41 kuruşu sıfıra yuvarlıyor. Ölçüm gerçek; sunum
+  (`<$0.01`) yanlış okumayı önlerdi.
+- **HARNESS KÖRLÜĞÜ — görsel gate hiçbir drawer'ı AÇMIYOR.** Panel üretim
+  hattındaki düğüm çekmecesi yalnız tıklanınca görünür, o yüzden içindeki
+  işaretsiz trend skoru 99 ekran görüntüsünde hiç fotoğraflanmadı ve tam da bu
+  konuya ayrılmış bir turu atlattı. Ürünün her drawer'ı bu körlükte.

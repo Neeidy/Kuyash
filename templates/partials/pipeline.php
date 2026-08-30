@@ -68,12 +68,21 @@ $outputHtml = static function (string $name, array $results) use ($fmtDur): stri
             if ($r === null || !isset($r['trend'])) {
                 return '';
             }
+            /* The SCORE is the number the operator picked this video by, and with
+               no trend provider switched on it was invented locally. The trend
+               wall marks it; this drawer prints the same figure one click away
+               and used to strip the marking off. TrendExecutor already writes
+               the provenance into this very array, so the answer was in hand. */
+            $realTrend = in_array((string) ($r['source'] ?? ''), ['youtube', 'google_trends'], true);
+
             return '<p class="drawer-out__lead">' . View::e((string) $r['trend']) . '</p>'
                 . $line(View::t('node.out.trend_meta', [
                     'score' => (string) ($r['score'] ?? '?'),
                     'niche' => (string) ($r['niche'] ?? '—'),
                     'region' => (string) ($r['region'] ?? '—'),
-                ]));
+                ]))
+                . ($realTrend ? '' : '<p class="drawer-out__line"><span class="chip chip--warn">'
+                    . View::t('trends.sample') . '</span> ' . View::e(View::t('trends.sample_score')) . '</p>');
 
         case 'IDEA':
             $r = $results['idea_generation'] ?? null;

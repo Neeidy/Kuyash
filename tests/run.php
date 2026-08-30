@@ -7476,7 +7476,11 @@ check('p22/card: a REAL follower count renders bare — no "sample" chip beside 
     str_contains($p22Real, '>7</span> ' . View::t('acct.followers'))
     && substr_count($p22Real, 'acc-card__sample chip') === 0);   // no stand-in badge anywhere on a real account
 check('p22/card: a stand-in follower count is CHIPPED as sample (every fabricated number is marked)',
-    substr_count($p22Sample, 'acc-card__sample chip') === 1        // engagement strip
+    // TWO of them now: the engagement strip, and the growth figure. `+88 today`
+    // was fabricated and unmarked through three rounds of fixes to this card —
+    // the follower chip could not cover it, because `.acc-card__foot` is
+    // space-between and pushes the two apart at every width.
+    substr_count($p22Sample, 'acc-card__sample chip') === 2        // engagement strip + growth
     && substr_count($p22Sample, 'acc-card__sample--foot') === 1    // the follower marker
     && !str_contains($p22Sample, '>7</span> ' . View::t('acct.followers')));
 // REGRESSION GUARD: the chip briefly lived inside __who, which truncates with an
@@ -7542,7 +7546,7 @@ check('p22/compliance: real reported engagement renders as a plain number with N
             && !str_contains($html, 'acc-card__sample chip');   // unmarked == measured
     })());
 check('p22/compliance: a demo (non-provider) account KEEPS its chipped stand-ins — screens stay populated',
-    substr_count($p22Sample, 'acc-card__sample chip') === 1
+    substr_count($p22Sample, 'acc-card__sample chip') === 2
     && !str_contains($p22Sample, View::t('acct.no_metrics'))
     && substr_count($p22Sample, '>—</span>') === 0);
 // A mock provider invents its figures. If those reach the card unmarked they read
@@ -7735,6 +7739,159 @@ check('p22/jargon: the trends freshness chip renders the relative phrase, not th
         $tpl = (string) file_get_contents($basePath . '/templates/trends/index.php');
         return str_contains($tpl, 'Messages::since((string) $feed->fetchedAt)')
             && preg_match('/·\s*<\?=\s*View::e\(\(string\)\s*\$feed->fetchedAt\)/', $tpl) !== 1;
+    })());
+
+// ── Marking: no unmarked fabricated figure may reach a screen ──────────────
+// The trend wall was the last one. With TREND_MOCK=true it printed scores of
+// 98/96/95 and a "fresh · 31 min ago" badge over topics invented locally — the
+// score being the number an operator picks a video by.
+$trendCard = static fn (string $source): string => (new View($basePath . '/templates'))->render('trends/index', [
+    'feed' => new \Kuyash\Trend\TrendFeed(
+        [[
+            'id' => 1, 'topic' => 'one-pan dinner ideas', 'score' => 98, 'format' => 'faceless',
+            'source' => $source, 'niche' => 'general', 'region' => 'US', 'fetched_at' => '2026-08-27T10:00:00Z',
+        ]],
+        \Kuyash\Trend\TrendFeed::FRESH,
+        '2026-08-27T10:00:00Z',
+        $source,
+    ),
+    'niche' => 'general', 'region' => 'US', 'niches' => ['general'], 'quota' => [], 'csrfField' => '',
+]);
+check('marking: a mock-sourced trend batch marks its scores AND says the wall is not a reading',
+    (static function () use ($trendCard): bool {
+        $html = $trendCard('mock');
+
+        return substr_count($html, 'trend-card__sample') === 1        // on the score, per card
+            && str_contains($html, View::t('trends.sample_note'))     // and once under the grid
+            && str_contains($html, 'chip--warn');                     // beside the freshness badge too
+    })());
+check('marking: a REAL trend batch is left unmarked — the chip means something only if it is absent sometimes',
+    (static function () use ($trendCard): bool {
+        $html = $trendCard('youtube');
+
+        return !str_contains($html, 'trend-card__sample')
+            && !str_contains($html, View::t('trends.sample_note'))
+            && str_contains($html, '>98</span>');                     // the measured score still shows
+    })());
+check('marking: provenance is read from the BATCH, never from the env flag', (static function () use ($basePath): bool {
+    $tpl = (string) file_get_contents($basePath . '/templates/trends/index.php');
+
+    // cached rows keep the provider that fetched them, so a real batch stays
+    // unmarked after TREND_MOCK is switched on, and a mock batch stays marked
+    // after it is switched off
+    // the flag is NAMED in the comment that explains this rule; what must not
+    // happen is the template READING it
+    return str_contains($tpl, '$simulated = !in_array($feed->source,')
+        && !str_contains($tpl, 'getenv(')
+        && !str_contains($tpl, 'Config::env(');
+})());
+check('marking: the mock trend score is marked on the RUN page too, not only on the wall',
+    (static function () use ($basePath): bool {
+        $render = static fn (string $source): string => (new View($basePath . '/templates'))->render('partials/pipeline', [
+            'pipeline' => [
+                'run_id' => 1,
+                'template' => 'full',
+                'nodes' => [[
+                    'name' => 'TREND',
+                    'state' => 'done',
+                    'results' => ['trend_fetch' => [
+                        'trend' => 'free productivity apps', 'score' => 88,
+                        'niche' => 'tech', 'region' => 'EN', 'source' => $source,
+                    ]],
+                ]],
+            ],
+        ]);
+
+        // the same fabricated 88 the wall now marks, one click away
+        $mock = $render('mock');
+        $real = $render('youtube');
+
+        return str_contains($mock, '88') && str_contains($mock, View::t('trends.sample_score'))
+            && str_contains($real, '88') && !str_contains($real, View::t('trends.sample_score'));
+    })());
+check('marking: an unknown provider is marked, because "not the mock" is not proof of a reading',
+    (static function () use ($basePath): bool {
+        $tpl = (string) file_get_contents($basePath . '/templates/trends/index.php');
+
+        // fails CLOSED: a future stub named anything but 'mock' must not render
+        // as a measurement by default
+        return str_contains($tpl, 'in_array($feed->source, ' . "['youtube', 'google_trends'], true)");
+    })());
+check('marking: the invented follower growth carries its own chip, never the neighbour\'s',
+    (static function () use ($basePath): bool {
+        $card = (string) file_get_contents($basePath . '/templates/partials/account-card.php');
+        $i = strpos($card, 'acc-card__grow');
+
+        // `.acc-card__foot` is space-between, so the follower count's chip is
+        // pushed away from the growth figure — the mark has to be inside the
+        // growth span itself, and the screen's own footnote says an unmarked
+        // figure came from the connected account
+        return $i !== false
+            && str_contains(substr($card, $i, 200), 'acc-card__sample chip');
+    })());
+check('marking: the per-content average leaves the showcase seed OUT of both sides',
+    (static function () use ($basePath, $argonHash, $TEST_MEDIA_ROOT): bool {
+        $db = migratedDb($basePath);
+        [$user, $ws] = seedUser($db, 'avg@example.com', $argonHash, 'AVG WS');
+        $now = gmdate(NOW_ISO);
+        $db->run('INSERT INTO workflows (workspace_id, name, template, nodes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [$ws, 'Full', 'full', '[]', $now, $now]);
+        $wf = (int) $db->lastInsertId();
+        $db->run("INSERT INTO runs (workspace_id, workflow_id, entity_type, nodes_json, status, current_node, created_by, created_at, updated_at) VALUES (?, ?, 'trend', '[]', 'completed', 'PUBLISH', ?, ?, ?)", [$ws, $wf, $user, $now, $now]);
+        $run = (int) $db->lastInsertId();
+
+        // one real charge + one real render, then a demo charge and a demo
+        // render four times the size — the shape ws2 actually carried, where 72%
+        // of the money behind the tile was seeded
+        // usage_events requires a job (UNIQUE per job), so each charge gets one
+        $charge = static function (int $cents) use ($db, $ws, $run, $now): int {
+            $db->run(
+                "INSERT INTO jobs (workspace_id, run_id, node, step, type, status, payload_json, max_retries, priority, run_after, created_at)
+                 VALUES (?, ?, 'SCRIPT', 1, 'script_draft', 'ready', '{}', 3, 0, ?, ?)",
+                [$ws, $run, $now, $now],
+            );
+            $jobId = (int) $db->lastInsertId();
+            $db->run(
+                "INSERT INTO usage_events (workspace_id, run_id, job_id, provider, category, model, units, cost_cents, created_at)
+                 VALUES (?, ?, ?, 'openai', 'ai_text', 'm', 1, ?, ?)",
+                [$ws, $run, $jobId, $cents, $now],
+            );
+
+            return (int) $db->lastInsertId();
+        };
+        $render = static function () use ($db, $ws, $run, $now): int {
+            $db->run(
+                "INSERT INTO renders (workspace_id, run_id, kind, stored_name, mime, created_at)
+                 VALUES (?, ?, 'final', ?, 'video/mp4', ?)",
+                [$ws, $run, bin2hex(random_bytes(16)) . '.mp4', $now],
+            );
+
+            return (int) $db->lastInsertId();
+        };
+        $charge(10);
+        $render();
+        $demoCharge = $charge(40);
+        $demoRender = $render();
+        foreach ([['usage_events', $demoCharge], ['renders', $demoRender]] as [$table, $rowId]) {
+            $db->run(
+                'INSERT INTO demo_seed_manifest (table_name, row_id, created_at) VALUES (?, ?, ?)',
+                [$table, $rowId, $now],
+            );
+        }
+
+        $ctx = new WorkspaceContext($db);
+        $ctx->set($ws);
+        $paths = new MediaPaths(['asset' => "$TEST_MEDIA_ROOT/a", 'cache' => "$TEST_MEDIA_ROOT/c", 'render' => "$TEST_MEDIA_ROOT/r", 'work' => "$TEST_MEDIA_ROOT/w"]);
+        $cockpit = new \Kuyash\Workflow\Cockpit(
+            $db, new AssetCache($db, $paths), new CreditLedger($db), new UsageRepository($db),
+            new AccountRepository($db), new \Kuyash\Workflow\JobRepository($db),
+        );
+        $snap = $cockpit->snapshot($ctx, $now);
+
+        // 10c over 1 real render = 10, NOT 50c over 2 renders = 25. This tile is
+        // a bare dollar figure with nowhere to put a marker, so what the marker
+        // cannot reach must not be counted.
+        return $snap['business']['cost_per_content_cents'] === 10
+            && $snap['kpis']['renders'] === 2;   // the honest row count is unchanged for every other caller
     })());
 
 echo "== Phase 23: Planned publishing (weekly slots) ==\n";
