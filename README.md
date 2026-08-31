@@ -71,6 +71,9 @@ php bin/worker.php              # job queue worker (separate process)
 php tests/run.php               # the test suite
 ```
 
+Creating your first login, working the approval queue, the guardrails, and running
+it always-on are covered in the **[Operator's Guide](USAGE.md)**.
+
 ## Repository layout
 
 ```
