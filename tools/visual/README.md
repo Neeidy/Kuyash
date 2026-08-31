@@ -54,7 +54,7 @@ motion rules and the pass/fail checklist. The exact gate prompts live in
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PHP_BIN` | `/opt/homebrew/opt/php@8.3/bin/php` | PHP 8.3 binary |
+| `PHP_BIN` | `php` (from `PATH`) | PHP 8.3 binary — set this to pin a specific build |
 | `NODE_BIN` | `node` | Node (≥ v22 for built-in `WebSocket`/`fetch`) |
 | `CHROME_PATH` | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` | Chrome binary |
 | `VISUAL_PORT` | `8099` | dev-server port (dodges the busy 8080/8082) |

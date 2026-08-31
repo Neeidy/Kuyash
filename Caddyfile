@@ -6,7 +6,7 @@
 # documented production shape and reviewed by hand.
 #
 # Local dev today uses PHP's built-in server instead:
-#   /opt/homebrew/opt/php@8.3/bin/php -S 127.0.0.1:8080 -t public public/index.php
+#   php -S 127.0.0.1:8080 -t public public/index.php
 #
 # Production shape: Caddy behind Cloudflare Tunnel (no exposed ports, TLS at the
 # edge). php_fastcgi expects php-fpm from the php@8.3 Homebrew keg.

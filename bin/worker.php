@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Queue worker process. Thin: the loop, flags, signals and maintenance
  * cadence live here; all queue logic is in Worker::tick() (testable).
  *
- * Run: cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/worker.php
+ * Run: php bin/worker.php
  *
  * Flags:
  *   --once          drain the queue (process due jobs until empty), then exit

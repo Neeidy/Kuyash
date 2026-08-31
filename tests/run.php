@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * Phase 1+2 smoke tests — plain PHP asserts, no test framework (no-package rule).
- * Run: cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php
+ * Run: php tests/run.php
  * Exit code 0 = all PASS, 1 = at least one failure.
  *
  * DB-backed groups use :memory: SQLite + the real Migrator (instant, isolated);
@@ -1039,8 +1039,10 @@ final class RecordingExecutor implements JobExecutor
 
 // Real ffmpeg when present; a stub otherwise so the engine e2e stays portable.
 // Produced files go under a per-run temp media root, cleaned at suite end.
-$ffmpegBin = (string) (getenv('FFMPEG_BIN') ?: '/opt/homebrew/bin/ffmpeg');
-$ffprobeBin = (string) (getenv('FFPROBE_BIN') ?: '/opt/homebrew/bin/ffprobe');
+// same resolution the product uses: a bare name off PATH unless FFMPEG_BIN /
+// FFPROBE_BIN pins one, so the suite runs on any machine rather than on one
+$ffmpegBin = Ffmpeg::resolveBinary((string) (getenv('FFMPEG_BIN') ?: 'ffmpeg'));
+$ffprobeBin = Ffmpeg::resolveBinary((string) (getenv('FFPROBE_BIN') ?: 'ffprobe'));
 $TEST_MEDIA_ROOT = $basePath . '/storage/_test_media/' . bin2hex(random_bytes(4));
 $mediaReady = (new Ffmpeg($ffmpegBin, $ffprobeBin, 60))->available();
 
@@ -3178,6 +3180,92 @@ check('engine cf: worker emits the pinned topic into trend_fetch', (static funct
 })());
 
 /* ================== Phase 7: Media Production ================== */
+
+echo "== Media: binary resolution ==\n";
+
+// The configured default used to be one machine's Homebrew path — no default at
+// all on any other machine, and a bare name could not simply replace it because
+// available() asks is_executable(), which against a bare name tests the CURRENT
+// WORKING DIRECTORY.
+check('ffmpeg/bin: an explicit path is taken as given', (static function (): bool {
+    return Ffmpeg::resolveBinary('/usr/bin/whatever-ffmpeg') === '/usr/bin/whatever-ffmpeg'
+        && Ffmpeg::resolveBinary('./local/ffmpeg') === './local/ffmpeg';
+})());
+check('ffmpeg/bin: a name that is nowhere on PATH comes back unchanged (available() then says false)',
+    (static function (): bool {
+        $name = 'kuyash-no-such-binary-' . bin2hex(random_bytes(4));
+
+        // unresolved must stay unresolved: available() answers false and callers
+        // degrade, rather than something else being executed under this name
+        return Ffmpeg::resolveBinary($name) === $name
+            && !(new Ffmpeg($name, $name, 5))->available();
+    })());
+// THE SECURITY PROPERTY, asserted without needing ffmpeg installed: a planted
+// binary in the working directory must never win the lookup. An empty PATH entry
+// and `.` both MEAN the working directory in POSIX, and a relative entry resolves
+// against it — this server executes whatever comes back.
+check('ffmpeg/bin: the working directory can never win — not in the resolver, and not in execvp either',
+    (static function (): bool {
+        // The planted binary WRITES A FILE when it runs, so this asserts the
+        // property in the test's name rather than the resolver's return value.
+        // The first version of this test checked only the string that came back
+        // — and passed while proc_open handed the bare name to execvp(), whose
+        // own PATH search honours '.', empty and relative entries and executed
+        // this file. Resolving strictly is only half of it; refusing to execute
+        // an unresolved name is the other half.
+        $dir = tempDir('bin-hijack');
+        $planted = $dir . '/kuyash-fake-ffmpeg';
+        $proof = $dir . '/it-ran';
+        file_put_contents($planted, "#!/bin/sh\ntouch " . escapeshellarg($proof) . "\nexit 0\n");
+        chmod($planted, 0755);
+
+        $cwd = getcwd();
+        $path = (string) getenv('PATH');
+        chdir($dir);
+        putenv('PATH=.' . PATH_SEPARATOR . PATH_SEPARATOR . 'relative/bin');
+
+        $resolved = Ffmpeg::resolveBinary('kuyash-fake-ffmpeg');
+        $ff = new Ffmpeg('kuyash-fake-ffmpeg', 'kuyash-fake-ffmpeg', 5);
+        $available = $ff->available();
+        $threw = false;
+        try {
+            $ff->run(['-version']);
+        } catch (\Kuyash\Media\FfmpegException) {
+            $threw = true;
+        }
+        $probed = $ff->probeDuration($planted);
+
+        putenv('PATH=' . $path);
+        chdir((string) $cwd);
+
+        return $resolved === 'kuyash-fake-ffmpeg'   // the resolver refused it
+            && $available === false                 // available() does not answer from the cwd
+            && $threw                               // run() refuses before proc_open
+            && $probed === null                     // and so does the probe
+            && !is_file($proof);                    // THE POINT: it never executed
+    })());
+check('ffmpeg/bin: an absolute PATH entry IS used, and yields an executable absolute path',
+    (static function (): bool {
+        $dir = tempDir('bin-ok');
+        $binary = $dir . '/kuyash-real-ffmpeg';
+        file_put_contents($binary, "#!/bin/sh\nexit 0\n");
+        chmod($binary, 0755);
+
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $dir);
+        $resolved = Ffmpeg::resolveBinary('kuyash-real-ffmpeg');
+        putenv('PATH=' . $path);
+
+        return $resolved === $binary && is_executable($resolved);
+    })());
+check('ffmpeg/bin: the shipped default is a bare name, not somebody\'s machine',
+    (static function () use ($basePath): bool {
+        $cfg = (string) file_get_contents($basePath . '/config/media.php');
+
+        return str_contains($cfg, "Config::env('FFMPEG_BIN', 'ffmpeg')")
+            && str_contains($cfg, "Config::env('FFPROBE_BIN', 'ffprobe')")
+            && !str_contains($cfg, '/opt/homebrew');
+    })());
 
 echo "== Media: WavWriter ==\n";
 
@@ -11443,16 +11531,16 @@ check('demo-seed: a seeded clip stores the duration the FILE has, measured', (st
 
     // whatever MediaProbe says the fixture is, ffprobe must agree — this is the
     // seam the seeder now relies on instead of a literal
-    $bin = '/opt/homebrew/bin/ffprobe';
-    if (!is_file($bin)) {
-        return $measured['duration_s'] !== null;
+    global $ffprobeBin;
+    $ff = new Ffmpeg($ffprobeBin, $ffprobeBin, 30);
+    if (!$ff->available()) {
+        return $measured['duration_s'] !== null;   // no ffprobe here; nothing to cross-check against
     }
-    $out = (string) shell_exec(
-        escapeshellarg($bin) . ' -v error -show_entries format=duration -of csv=p=0 ' . escapeshellarg($fixture),
-    );
+    $probed = $ff->probeDuration($fixture);
 
     return $measured['duration_s'] !== null
-        && abs((float) $out - (float) $measured['duration_s']) < 0.05
+        && $probed !== null
+        && abs($probed - (float) $measured['duration_s']) < 0.05
         // …and the fixture really is OUTSIDE the band, which is why the seeder
         // has to build a second clip rather than relabel this one
         && (float) $measured['duration_s'] < \Kuyash\Compliance\CompliancePolicy::DURATION_MIN_S;

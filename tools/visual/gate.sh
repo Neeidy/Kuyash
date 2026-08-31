@@ -20,7 +20,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-PHP_BIN="${PHP_BIN:-/opt/homebrew/opt/php@8.3/bin/php}"
+# from PATH by default (this repo is public — one machine's Homebrew path is not
+# a default anywhere else). Export PHP_BIN to pin a specific 8.3 build.
+PHP_BIN="${PHP_BIN:-php}"
 NODE_BIN="${NODE_BIN:-node}"
 PORT="${VISUAL_PORT:-8099}"
 DB_FILE="storage/database/kuyash-visual.sqlite"

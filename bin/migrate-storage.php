@@ -8,8 +8,8 @@ declare(strict_types=1);
  * each copy on the target before flipping; NEVER deletes the local copy.
  *
  * Run:
- *   cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/migrate-storage.php --disk=r2 --workspace=all --dry-run
- *   cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/migrate-storage.php --disk=r2 --workspace=3 --batch=200
+ *   php bin/migrate-storage.php --disk=r2 --workspace=all --dry-run
+ *   php bin/migrate-storage.php --disk=r2 --workspace=3 --batch=200
  *
  * Flags:
  *   --disk=r2            target disk (default r2)

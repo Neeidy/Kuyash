@@ -7,8 +7,13 @@ use Kuyash\Core\Config;
 return [
     // ffmpeg/ffprobe are LOCAL binaries (not a network API). Real by default —
     // the mock providers below feed REAL ffmpeg real inputs (user decision).
-    'ffmpeg' => (string) Config::env('FFMPEG_BIN', '/opt/homebrew/bin/ffmpeg'),
-    'ffprobe' => (string) Config::env('FFPROBE_BIN', '/opt/homebrew/bin/ffprobe'),
+    //
+    // A BARE NAME, resolved from PATH by Ffmpeg::resolveBinary() at construction
+    // (absolute PATH entries only — never the working directory). The default was
+    // one machine's Homebrew path, which is not a default anywhere else. Set
+    // FFMPEG_BIN/FFPROBE_BIN to an absolute path to pin a specific build.
+    'ffmpeg' => (string) Config::env('FFMPEG_BIN', 'ffmpeg'),
+    'ffprobe' => (string) Config::env('FFPROBE_BIN', 'ffprobe'),
     'ffmpeg_timeout' => (int) Config::env('FFMPEG_TIMEOUT', 900), // matches the assembly job watchdog
     // A single -frames:v 1 grab, NOT a render. It shares the upload request with
     // the user who triggered it, so it must not inherit the 900s assembly

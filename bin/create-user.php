@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * One-shot user + default workspace seeder (the ONLY way accounts are
  * created in V1 — no self-registration, no web setup surface).
- * Run: cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/create-user.php
+ * Run: php bin/create-user.php
  *
  * The password is read from STDIN with echo disabled — NEVER from argv
  * (argv leaks via process lists and shell history).

@@ -33,10 +33,10 @@ final class FixtureMediaFactory implements MediaFactory
         private readonly MediaProbe $probe,
         // The SERVICE, not a shell string. exec() with escapeshellcmd had no
         // timeout at all (a hung ffmpeg hung the seed forever), quoted the binary
-        // wrongly so a path with a space word-split, and defaulted to bare
-        // 'ffmpeg' from $PATH instead of the configured FFMPEG_BIN the rest of
-        // the system uses. Ffmpeg gives the arg array, the wall-clock kill and
-        // the configured binary for free.
+        // wrongly so a path with a space word-split, and reached for its own
+        // binary instead of the one the rest of the system is configured with.
+        // Ffmpeg gives the arg array, the wall-clock kill, and one resolved
+        // binary for free.
         private readonly Ffmpeg $ffmpeg,
     ) {
     }

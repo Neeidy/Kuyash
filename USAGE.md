@@ -8,9 +8,12 @@ architecture, the stack, the guarantees — see [README.md](README.md).
 ## 1. Before you start
 
 - **PHP 8.3**, with `ext-pdo_sqlite` and `ext-curl`. No Composer, no build step.
-- **ffmpeg** — this is what actually renders video. It is not looked up on `PATH`:
-  set `FFMPEG_BIN` in `.env` to its absolute path (the built-in default assumes a
-  Homebrew install on macOS).
+- **ffmpeg** (with `ffprobe`) — this is what actually renders video. Both are looked
+  up on `PATH`, so a normal macOS or Linux install needs no configuration for the
+  CLI worker and `php -S`. **In production, pin them:** set `FFMPEG_BIN` and
+  `FFPROBE_BIN` in `.env` to absolute paths. Under php-fpm the child environment is
+  wiped by default (`clear_env = yes`), so `PATH` is empty and the lookup finds
+  nothing — Kuyash then refuses to run either binary rather than guessing.
 - Every external provider is **mock-first**. Copy `.env.example` to `.env` and Kuyash
   runs end to end with **no API keys at all**: it still writes real files and real
   9:16 renders, it just doesn't call anyone or publish anything.

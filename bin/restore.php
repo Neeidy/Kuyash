@@ -5,8 +5,8 @@ declare(strict_types=1);
 /**
  * Restore a backup produced by bin/backup.php (Phase 13 hardening).
  *
- * Run:  cd ~/Desktop/Kuyash && php bin/restore.php storage/backups/<UTC>          # DRY-RUN
- *       cd ~/Desktop/Kuyash && php bin/restore.php storage/backups/<UTC> --force  # apply
+ * Run:  php bin/restore.php storage/backups/<UTC>          # DRY-RUN
+ *       php bin/restore.php storage/backups/<UTC> --force  # apply
  *
  * Safety:
  *   - Without --force it is a DRY-RUN: it validates the backup (integrity_check)

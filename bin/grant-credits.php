@@ -8,7 +8,7 @@ declare(strict_types=1);
  * money-denominated display layer over real cents; the enforced control is the
  * monthly budget cap on /settings, not this balance.
  *
- *   cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/grant-credits.php <workspace_id> <amount_usd> [reason...]
+ *   php bin/grant-credits.php <workspace_id> <amount_usd> [reason...]
  *
  * A positive amount is a 'grant'; a negative amount is a signed 'adjust'
  * (correction / claw-back). Amounts are plain dollars, e.g. 25 or 25.50.

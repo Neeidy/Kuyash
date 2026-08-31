@@ -19,7 +19,7 @@ declare(strict_types=1);
  * under a dedicated key and never touches real data. Exit codes:
  *   0 = PASS (safe to enable r2)   1 = FAIL (do NOT enable)   2 = not configured
  *
- *   cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/r2-smoke.php
+ *   php bin/r2-smoke.php
  */
 
 use Kuyash\Core\Container;

@@ -12,7 +12,7 @@ declare(strict_types=1);
  * Run against the visual DB (NEVER the real dev DB) — gate.sh sets this:
  *   DB_PATH=storage/database/kuyash-visual.sqlite \
  *   APP_ENV=dev OPENAI_MOCK=true STORAGE_DRIVER=local \
- *   /opt/homebrew/opt/php@8.3/bin/php bin/visual-seed.php
+ *   php bin/visual-seed.php
  *
  * Deterministic credentials come from the environment (shared with the harness
  * so login matches), with dev-only defaults. The password is read but NEVER

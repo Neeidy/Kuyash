@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * WAL-aware backup of the SQLite database + local media (Phase 13 hardening).
  *
- * Run:  cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/backup.php
+ * Run:  php bin/backup.php
  *       … bin/backup.php --db-only          # skip the (large) media tree
  *       … bin/backup.php --out=/path/to/dir # custom destination root
  *

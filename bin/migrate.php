@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * Forward-only migration runner.
- * Run: cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/migrate.php
+ * Run: php bin/migrate.php
  */
 
 use Kuyash\Core\Database;
