@@ -157,12 +157,12 @@ asset shuffle varyasyonu (Faz 7) · auto-approval / compliance skorlama (Faz 9) 
 
 ## Manuel test adımları
 
-`cd ~/Desktop/Kuyash && php bin/migrate.php` → login → /workflows → full run başlat →
+`php bin/migrate.php` → login → /workflows → full run başlat →
 `php bin/worker.php --once` tekrarları → /queue: script onayında durur, kart artık per-platform
 caption + hashtag + prompt_version gösterir → approve → worker → render review → approve →
 published; /runs/{id}'de içerik özeti + timeline. **Opsiyonel gerçek yol** (kullanıcı isterse):
 `.env`'de OPENAI_MOCK=false + OPENAI_API_KEY=... → tek run → cost_cents > 0 ve provider 'openai'
-(varsayılan akış mock'tur). (php = /opt/homebrew/opt/php@8.3/bin/php)
+(varsayılan akış mock'tur).
 
 ## Riskler
 

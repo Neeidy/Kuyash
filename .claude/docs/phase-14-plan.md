@@ -48,7 +48,7 @@ session-cached — SaaS-ready.
 
 ## Verification / acceptance criteria
 
-- Suite green (**693** + new tests); `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
+- Suite green (**693** + new tests); `php tests/run.php`.
 - New tests: I18n fallback (tr→en→key) + interpolation; migration 0012 (column/CHECK/default);
   locale resolution (user honored; anon→default); `/locale` route (CSRF, updates column+session);
   TR-render smoke ≥2 screens; **compliance-string truthfulness in BOTH languages**; no-bare-literal scan.

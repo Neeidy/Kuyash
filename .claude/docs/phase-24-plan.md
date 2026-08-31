@@ -516,7 +516,7 @@ En riskli iddiayı önce kanıtla: *worker doğru yerel anda ateşliyor ve o an
 Zernio'ya `scheduledFor` olarak birebir gidiyor.* Sahte saatle DST'yi aşan bir
 `America/New_York` slotu materyalize et, `Worker::tick()`'i sür, spy provider'ın
 aldığı `PublishRequest.scheduledFor`'u beklenen UTC anıyla karşılaştır.
-→ `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`
+→ `php tests/run.php`
 
 **Görev 1 — Saf katman + şema**
 `SlotResolver::occurrencesBetween`, `OccurrenceMaterializer`, migration 0017,

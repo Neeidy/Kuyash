@@ -71,7 +71,7 @@ TR text. **PASS** = 0 blockers.
 **Task template:**
 > Review Phase `<N>` (plan: `.claude/state/phase-<N>-plan.md`; diff: the phase
 > branch vs main). Confirm:
-> 1. `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php` →
+> 1. `php tests/run.php` →
 >    the full existing suite stays green (no regression) plus any new tests this
 >    phase added.
 > 2. Acceptance criteria from the plan are met (self-check, point by point).

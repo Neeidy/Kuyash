@@ -117,7 +117,7 @@ score and its thresholds implemented and tested."*
 
 ## Manual test steps (phase close)
 
-1. `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php` → 0 FAIL.
+1. `php tests/run.php` → 0 FAIL.
 2. Live smoke ([Terminal-1] `php -S 127.0.0.1:8082`, [Terminal-2] `php bin/worker.php`, smoke4@kuyash.local): default Manual full run → unchanged flow, compliance chip visible.
 3. Settings → enable Auto → clean run auto-approves; badge truthful; digest shows it.
 4. Run same topic repeatedly → slop warn lands in manual queue; force near-identical → block cancels run with reasons.

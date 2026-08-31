@@ -4,7 +4,7 @@ A consolidated map of what the automated suite covers per subsystem, plus the
 manual smoke steps to run before a release. The suite is the source of truth;
 this doc is the human-readable index + the things a machine can't assert.
 
-**Run the suite:** `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`
+**Run the suite:** `php tests/run.php`
 → expect `… PASS, 0 FAIL` (exit 0). Currently **693 PASS / 0 FAIL**.
 
 The suite uses `:memory:` / temp-file SQLite + the real Migrator, fake HTTP
@@ -44,8 +44,8 @@ absent). No secrets, no external calls.
 
 Default config is mock-first — no keys needed. Real paths are doc/flag-gated.
 
-1. **[Terminal-1]** server: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php -S 127.0.0.1:8082 -t public public/index.php` (8080 may be busy).
-2. **[Terminal-2]** worker: `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php bin/worker.php` (single tick: `--once`).
+1. **[Terminal-1]** server: `php -S 127.0.0.1:8082 -t public public/index.php` (8080 may be busy).
+2. **[Terminal-2]** worker: `php bin/worker.php` (single tick: `--once`).
 3. Log in (smoke user: `smoke4@kuyash.local` / `SmokePassword123`), start a run from a workflow, watch the queue advance, approve at render_review, confirm publish (mock).
 4. Quick Create: `/quick` → pick a photo + prompt → run → AI-label notice + ~$7 estimate.
 5. Settings: toggle Auto mode, set a budget cap, flip the kill switch — confirm guardrails on `/digest`.

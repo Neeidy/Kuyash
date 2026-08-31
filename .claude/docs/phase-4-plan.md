@@ -241,12 +241,12 @@ DAG/branching (ASLA — lineer track ürünün kendisi) · library pagination + 
 
 ## Manuel test adımları
 
-`cd ~/Desktop/Kuyash && php bin/migrate.php` → login → /workflows (default'lar belirir) →
+`php bin/migrate.php` → login → /workflows (default'lar belirir) →
 distribution run başlat (asset seç) → `php bin/worker.php --once` tekrarları → /queue
 render review'da durur → approve → worker → published; /runs/{id} timeline + /logs
 chip'leri → sqlite3 ile bir processing job'ı yaşlandır → worker → watchdog requeue →
 zorla fail → retry butonu → full run ile script onayı → `--sleep-ms` worker'a SIGTERM →
-temiz çıkış. (php = /opt/homebrew/opt/php@8.3/bin/php)
+temiz çıkış.
 
 ## Riskler
 

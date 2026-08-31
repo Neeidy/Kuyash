@@ -107,7 +107,7 @@ screen with live single-workspace data.
 - **security-auditor MANDATORY before close** (phase-plan). Plus `php-architect` + `ux-reviewer`.
 
 ### Manual test
-- `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php` → all green.
+- `php tests/run.php` → all green.
 - Apply `0009`; run a stock workflow (mock) → Usage page renders, $0 real spend (mock truthful).
 - With `.env` `OPENAI_MOCK=false` + key, run a real script job → exactly one `ai_text` usage_event +
   spend appears on `/usage`.

@@ -72,7 +72,7 @@ cumulative security review and produces a go-live checklist.
 ## Verification / acceptance criteria
 
 - Full suite **green (≥ 675 PASS / 0 FAIL)** incl. the two new regression tests;
-  `cd ~/Desktop/Kuyash && /opt/homebrew/opt/php@8.3/bin/php tests/run.php`.
+  `php tests/run.php`.
 - `security-auditor` = **GO / 0 blockers** (mandatory). `ux-reviewer` run; final `compliance-reviewer`
   sanity pass (truthful records, AI labels, caps still intact).
 - Backup→restore round-trip works: `integrity_check = ok` + row-count parity on the restored DB.
