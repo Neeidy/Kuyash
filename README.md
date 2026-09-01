@@ -4,13 +4,13 @@
 
 Kuyash discovers trends, drafts scripts and captions, assembles 15–45s vertical (9:16) videos, runs **every** output through a compliance agent, and schedules/publishes to Instagram Reels, TikTok and YouTube Shorts — with full operational visibility (jobs, logs, costs, guardrails). It is the anti-slop studio: no template-identical mass output, no fabricated approval records, no unlabelled AI media.
 
-![PHP 8.3](https://img.shields.io/badge/PHP-8.3-777bb4) ![No frameworks](https://img.shields.io/badge/frameworks-none-2ea043) ![Tests](https://img.shields.io/badge/tests-~1126%20passing-2ea043) ![SQLite WAL](https://img.shields.io/badge/db-SQLite%20WAL-003b57) ![License](https://img.shields.io/badge/license-see%20below-lightgrey)
+![PHP 8.3](https://img.shields.io/badge/PHP-8.3-777bb4) ![No frameworks](https://img.shields.io/badge/frameworks-none-2ea043) ![Tests](https://img.shields.io/badge/tests-~1127%20passing-2ea043) ![SQLite WAL](https://img.shields.io/badge/db-SQLite%20WAL-003b57) ![License](https://img.shields.io/badge/license-see%20below-lightgrey)
 
 ---
 
 ## Status — honestly
 
-This is a **personal-first V1**, built by a single operator to run their own content loop. It is **not** an enterprise product and there are **no paying customers**. What it *is*: a real, running system with ~1126 tests, hard guardrails, a compliance agent, and a strict prod/demo boundary — and it has **published a real AI-assisted Reel to Instagram end-to-end**.
+This is a **personal-first V1**, built by a single operator to run their own content loop. It is **not** an enterprise product and there are **no paying customers**. What it *is*: a real, running system with ~1127 tests, hard guardrails, a compliance agent, and a strict prod/demo boundary — and it has **published a real AI-assisted Reel to Instagram end-to-end**.
 
 The honest limitation: V1 produces **stock + text-to-speech** video. That is functional, not cinematic — AI text-to-video generation is a deliberately deferred direction (credit-gated Quick Create / V2), not a claim made here. There is **no public hosted demo**: Kuyash runs locally behind Caddy + Cloudflare Tunnel, so the case study shows real screenshots and this code, not a click-through URL. I won't overstate it.
 
@@ -54,7 +54,7 @@ Deliberately dependency-light and inspectable — **no frameworks, no build step
 
 ## Proof, not claims
 
-- **~1126** automated tests (happy paths **and** failure states — failed jobs, API errors, blocked compliance, tenant isolation).
+- **~1127** automated tests (happy paths **and** failure states — failed jobs, API errors, blocked compliance, tenant isolation).
 - **26** Architecture Decision Records; **18** migrations; a phase-disciplined build (Phase 0 static demo → Phase 13 hardening, plus an experience layer, real integrations, and a demo-showcase pass).
 - **Review-agent gates** at every phase close: security, UX and compliance reviewers must all sign off — and repeatedly caught real defects and over-claims before merge.
 - A **prod/demo boundary you can verify:** the showcase dataset is labelled, **inert** (it never triggers the worker, spends money, or publishes) and **one-command reversible** (`bin/demo-teardown.php`) — real account data is never touched.
