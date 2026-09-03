@@ -29,6 +29,13 @@ declare(strict_types=1);
  * Usage (refuses without the confirmation, so it cannot run by accident):
  *   php bin/demo-seed.php --yes
  *   DEMO_WORKSPACE=2 php bin/demo-seed.php --yes
+ *
+ * Three refusals, each with a flag that says the operator accepts the hazard:
+ *   --auto-mode-ok        the workspace approves automatically, and demo runs are
+ *                         read as evidence by the quality and slop windows
+ *   --live-publish-ok     ZERNIO_MOCK=false, so the queue's approval gates are real
+ *   --pinned-residue-ok   a previous demo run is named by an append-only guardrail
+ *                         event and therefore cannot be removed
  */
 
 use Kuyash\Core\Config;
@@ -143,15 +150,37 @@ $manifest = new SeedManifest($db);
 if (!$manifest->isEmpty()) {
     $teardown = new ShowcaseTeardown($db);
     $blockers = $teardown->blockers();
-    if ($blockers !== []) {
+
+    // ── the residue a long-installed showcase leaves behind ─────────────────
+    // A demo run whose planned day has passed gets a `plan.slot_missed` guardrail
+    // line from the worker — a TRUE record of what the system did, in a table
+    // that is append-only by trigger. That line names the run, so the run can
+    // never be deleted, and neither can the assets and jobs hanging off it.
+    //
+    // There is no clean way out of this and there should not be: erasing the
+    // audit line to tidy the library would be the product lying about its own
+    // behaviour to make a screenshot nicer. So the choice is the operator's, and
+    // it is stated in as many words — the teardown still removes everything it
+    // CAN (ShowcaseTeardown::run() keeps only the pinned runs and their files),
+    // and what stays behind stays [SAMPLE]-marked and in the manifest.
+    if ($blockers !== [] && !in_array('--pinned-residue-ok', $args, true)) {
         fwrite(STDERR, "demo-seed: a previous demo set cannot be removed cleanly:\n  - "
             . implode("\n  - ", $blockers) . "\n"
-            . "  Resolve that first (bin/demo-teardown.php --dry-run explains it), then re-run.\n");
+            . "  Those events are append-only: the runs they name cannot be deleted, and\n"
+            . "  deleting the events instead would erase a true record of what the worker did.\n"
+            . "  Re-run with --pinned-residue-ok to seed anyway and leave them in place\n"
+            . "  (they stay marked, tracked and visible), or inspect them first with\n"
+            . "  bin/demo-teardown.php --dry-run.\n");
         exit(1);
     }
     $undone = $teardown->run();
     fwrite(STDOUT, '  reset: removed the previous demo set ('
         . array_sum($undone['rows']) . " row(s), {$undone['files']} file(s))\n");
+    if ($blockers !== []) {
+        fwrite(STDOUT, "  KEPT (audit-pinned, --pinned-residue-ok):\n    - "
+            . implode("\n    - ", $blockers) . "\n"
+            . "    Their library items stay in the workspace, still [SAMPLE]-marked.\n");
+    }
 }
 
 // ── where the demo footage comes from ───────────────────────────────────────

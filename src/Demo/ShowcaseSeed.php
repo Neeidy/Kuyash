@@ -62,16 +62,29 @@ final class ShowcaseSeed
      * cell at 768px is ~68px wide (see Format::splitTag).
      */
     private const LIBRARY = [
-        ['seconds' => 16, 'type' => 'own', 'title' => 'Kitchen', 'tags' => ['kitchen', 'morning'], 'query' => 'kitchen cooking'],
-        ['seconds' => 19, 'type' => 'own', 'title' => 'Desk reset', 'tags' => ['desk', 'workspace'], 'query' => 'desk workspace'],
-        ['seconds' => 23, 'type' => 'own', 'title' => 'Coffee pour', 'tags' => ['coffee', 'closeup'], 'query' => 'coffee pour'],
-        ['seconds' => 27, 'type' => 'face', 'title' => 'Intro take', 'tags' => ['face', 'intro'], 'query' => 'person talking portrait'],
-        ['seconds' => 31, 'type' => 'own', 'title' => 'Street walk', 'tags' => ['street', 'golden'], 'query' => 'city street walking'],
-        ['seconds' => 35, 'type' => 'own', 'title' => 'Notebook', 'tags' => ['notebook', 'detail'], 'query' => 'notebook writing'],
-        ['seconds' => 39, 'type' => 'own', 'title' => 'Window light', 'tags' => ['light', 'slow'], 'query' => 'window light plant'],
-        ['seconds' => 43, 'type' => 'own', 'title' => 'Desk lamp', 'tags' => ['evening', 'desk'], 'query' => 'evening lamp room'],
-        ['still' => true, 'type' => 'own', 'title' => 'Still — front', 'tags' => ['reference'], 'query' => 'portrait studio'],
-        ['still' => true, 'type' => 'face', 'title' => 'Still — profile', 'tags' => ['reference', 'face'], 'query' => 'portrait profile'],
+        // FACELESS b-roll, on purpose. A demo library is looked at by people who
+        // did not consent to being in it, and a recognisable face in seeded
+        // content is a claim about a person the same way a seeded follower count
+        // is a claim about a channel. Hands are fine; faces are not. The `face`
+        // type stays on ONE item because it means REFERENCE-SUBJECT (ADR-012) —
+        // the subject a run is built around — and that subject is a photo or clip
+        // of anything, not necessarily a person. It sits on the take that is
+        // actually shot as a subject, and NOT on the water still: the library
+        // renders the type as a visible chip reading "Face" (library.type_face),
+        // and that word over a clip of the sea is the product describing its own
+        // content wrongly — the exact failure the rest of this list avoids.
+        // Each query matches the committed fixture at the same index, so the live
+        // path (DEMO_MEDIA=live) and the offline path show the same kind of thing.
+        ['seconds' => 16, 'type' => 'own', 'title' => 'Kitchen', 'tags' => ['kitchen', 'prep'], 'query' => 'chopping vegetables cutting board'],
+        ['seconds' => 19, 'type' => 'own', 'title' => 'Desk reset', 'tags' => ['desk', 'workspace'], 'query' => 'desk workspace flat lay'],
+        ['seconds' => 23, 'type' => 'own', 'title' => 'Coffee pour', 'tags' => ['coffee', 'closeup'], 'query' => 'coffee pouring cup closeup'],
+        ['seconds' => 27, 'type' => 'face', 'title' => 'Reference take', 'tags' => ['reference', 'hands'], 'query' => 'hands typing keyboard closeup'],
+        ['seconds' => 31, 'type' => 'own', 'title' => 'Street lights', 'tags' => ['street', 'night'], 'query' => 'city traffic timelapse aerial'],
+        ['seconds' => 35, 'type' => 'own', 'title' => 'Notebook', 'tags' => ['notebook', 'detail'], 'query' => 'writing notebook hands closeup'],
+        ['seconds' => 39, 'type' => 'own', 'title' => 'Window light', 'tags' => ['light', 'slow'], 'query' => 'houseplant leaves window light'],
+        ['seconds' => 43, 'type' => 'own', 'title' => 'Desk lamp', 'tags' => ['evening', 'desk'], 'query' => 'warm lamp evening interior'],
+        ['still' => true, 'type' => 'own', 'title' => 'Still — beans', 'tags' => ['reference'], 'query' => 'coffee beans macro'],
+        ['still' => true, 'type' => 'own', 'title' => 'Still — water', 'tags' => ['reference', 'texture'], 'query' => 'ocean waves aerial'],
     ];
 
     /** @return list<string> the search term per library item, in order */
@@ -240,7 +253,7 @@ final class ShowcaseSeed
 
         foreach ($plan as $i => $item) {
             $isStill = ($item['still'] ?? false) === true;
-            $name = self::storedName($workspaceId, 'lib', $i, $isStill ? 'jpg' : 'mp4');
+            $name = $this->storedName($workspaceId, 'lib', $i, $isStill ? 'jpg' : 'mp4');
             $dest = $this->paths->pathFor('asset', $workspaceId, $name);
             @mkdir(dirname($dest), 0775, true);
             // The path is a hash of (workspace, role, index), so a file already
@@ -288,8 +301,8 @@ final class ShowcaseSeed
             if (!is_string($source) || ($library[$i]['kind'] ?? '') !== 'video') {
                 continue;
             }
-            $videoName = self::storedName($workspaceId, 'ren', $i, 'mp4');
-            $posterName = self::storedName($workspaceId, 'pos', $i, 'jpg');
+            $videoName = $this->storedName($workspaceId, 'ren', $i, 'mp4');
+            $posterName = $this->storedName($workspaceId, 'pos', $i, 'jpg');
             $videoPath = $this->paths->pathFor('render', $workspaceId, $videoName);
             $posterPath = $this->paths->pathFor('render', $workspaceId, $posterName);
             @mkdir(dirname($videoPath), 0775, true);
@@ -360,7 +373,17 @@ final class ShowcaseSeed
      * so re-running after a teardown reuses the same paths instead of littering
      * media storage with a new set every time.
      */
-    private static function storedName(int $workspaceId, string $role, int $index, string $ext): string
+    /**
+     * A stored name for one seeded file — a pure function of (workspace, role,
+     * index), so installing the showcase twice produces the same dataset.
+     *
+     * That reproducibility is load-bearing (the suite fingerprints it, the visual
+     * gate depends on it), which is why this is NOT salted per install. The cost
+     * is that an item whose row survived a partial teardown keeps its name: the
+     * next install finds the row still there and, rather than colliding, skips
+     * that item with a note. See reclaim().
+     */
+    private function storedName(int $workspaceId, string $role, int $index, string $ext): string
     {
         return substr(hash('sha256', "kuyash-demo|{$workspaceId}|{$role}|{$index}"), 0, 32) . '.' . $ext;
     }
