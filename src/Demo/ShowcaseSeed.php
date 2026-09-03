@@ -328,9 +328,12 @@ final class ShowcaseSeed
      */
     private function reclaim(int $workspaceId, string $name, string $path, array &$notes, string $table = 'assets'): bool
     {
-        if (!file_exists($path)) {
-            return true;
-        }
+        // THE ROW IS ASKED ABOUT FIRST, and whether the file is there does not
+        // change the answer. This used to return early when the file was absent,
+        // so a surviving row with a deleted file (what a partial teardown leaves
+        // behind) sailed past the check and the seed died on the UNIQUE index
+        // over (workspace_id, stored_name) — a crash where this method already
+        // had a graceful, honest answer to give.
         $owner = $this->db->one(
             "SELECT id FROM {$table} WHERE workspace_id = ? AND stored_name = ?",
             [$workspaceId, $name],
@@ -339,6 +342,9 @@ final class ShowcaseSeed
             $notes[] = "{$name} belongs to {$table} #{$owner['id']} — left alone, that item is not seeded";
 
             return false;
+        }
+        if (!file_exists($path)) {
+            return true;
         }
         if (!@unlink($path)) {
             $notes[] = "could not replace the leftover file {$name} — that item is not seeded";
